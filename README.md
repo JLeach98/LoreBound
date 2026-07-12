@@ -1,0 +1,2 @@
+# LoreBound
+Investigate Every Story.
