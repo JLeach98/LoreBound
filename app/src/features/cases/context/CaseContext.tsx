@@ -60,6 +60,11 @@ export function CaseProvider({ children }: { children: ReactNode }) {
           null)
         : null;
 
+      if (activeCaseId && !storedActiveCase) {
+        await clearActiveCase();
+        console.warn('Cleared an invalid active Case reference.');
+      }
+
       setCases(sortedCases);
       setActiveCase(storedActiveCase);
       setErrorMessage(null);

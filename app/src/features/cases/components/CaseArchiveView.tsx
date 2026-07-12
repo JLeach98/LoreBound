@@ -9,9 +9,10 @@ import { DeleteCaseDialog } from './DeleteCaseDialog';
 
 type CaseArchiveViewProps = {
   onClose: () => void;
+  onCaseOpened?: () => void;
 };
 
-export function CaseArchiveView({ onClose }: CaseArchiveViewProps) {
+export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps) {
   const {
     cases,
     isLoading,
@@ -57,6 +58,7 @@ export function CaseArchiveView({ onClose }: CaseArchiveViewProps) {
   async function handleOpenCase(id: string) {
     try {
       await openExistingCase(id);
+      onCaseOpened?.();
       onClose();
     } catch (error) {
       console.error(error);

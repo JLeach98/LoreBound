@@ -230,6 +230,198 @@ button {
   line-height: 1.5;
 }
 
+.scene-overlay--compact {
+  top: clamp(8rem, 16vh, 10rem);
+  width: min(22rem, 34vw);
+  padding: 0.95rem 1.1rem;
+}
+
+.scene-overlay--compact h1 {
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+}
+
+.scene-overlay__secondary {
+  margin-top: 0.65rem !important;
+  font-size: 0.85rem !important;
+}
+
+.active-case-file {
+  position: fixed;
+  z-index: 22;
+  right: clamp(1rem, 4vw, 4rem);
+  bottom: clamp(1rem, 5vh, 2.75rem);
+  display: grid;
+  width: min(23rem, 34vw);
+  grid-template-columns: 5.8rem minmax(0, 1fr);
+  gap: 0.9rem;
+  border: 1px solid rgb(92 58 38 / 0.24);
+  border-radius: var(--radius-lg);
+  background: rgb(217 199 168 / 0.92);
+  padding: 1rem;
+  color: var(--color-text-primary);
+  box-shadow:
+    0 18px 36px rgb(31 26 23 / 0.3),
+    inset 0 1px 0 rgb(255 250 241 / 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.active-case-file::before,
+.active-case-file::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  border-radius: var(--radius-lg);
+  background: rgb(185 160 116 / 0.8);
+}
+
+.active-case-file::before {
+  inset: 0.32rem -0.32rem -0.32rem 0.32rem;
+}
+
+.active-case-file::after {
+  inset: 0.62rem -0.62rem -0.62rem 0.62rem;
+  background: rgb(158 127 82 / 0.72);
+}
+
+.active-case-file__tab {
+  position: absolute;
+  top: -0.7rem;
+  left: 1rem;
+  border: 1px solid rgb(92 58 38 / 0.18);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: rgb(217 199 168 / 0.94);
+  padding: 0.25rem 0.6rem;
+  color: var(--color-deep-crimson);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.active-case-file__cover {
+  display: grid;
+  height: 5.8rem;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(92 58 38 / 0.2);
+  border-radius: var(--radius-md);
+  background: rgb(246 240 230 / 0.5);
+}
+
+.active-case-file__cover img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.active-case-file__cover span {
+  color: rgb(92 58 38 / 0.5);
+  font-family: Georgia, Cambria, "Times New Roman", serif;
+  font-size: 2rem;
+  font-weight: 900;
+}
+
+.active-case-file p {
+  margin: 0;
+  color: var(--color-deep-crimson);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.active-case-file h2 {
+  margin: 0.35rem 0 0;
+  color: var(--color-deep-graphite);
+  font-family: Georgia, Cambria, "Times New Roman", serif;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.05;
+}
+
+.active-case-file span {
+  display: block;
+  margin-top: 0.45rem;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.investigation-section {
+  position: fixed;
+  z-index: 24;
+  top: clamp(11rem, 29vh, 18rem);
+  left: 50%;
+  width: min(31rem, 42vw);
+  transform: translateX(-50%);
+  border: 1px solid rgb(246 240 230 / 0.18);
+  border-radius: var(--radius-xl);
+  background: rgb(23 21 20 / 0.74);
+  padding: clamp(1rem, 2vw, 1.3rem);
+  color: var(--color-warm-ivory);
+  box-shadow: 0 20px 48px rgb(0 0 0 / 0.28);
+  backdrop-filter: blur(14px);
+}
+
+.investigation-section__eyebrow {
+  margin: 0;
+  color: var(--color-brass-gold);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.investigation-section h2 {
+  margin: 0.45rem 0 0;
+  font-family: Georgia, Cambria, "Times New Roman", serif;
+  font-size: clamp(1.7rem, 2.6vw, 2.5rem);
+  line-height: 1;
+}
+
+.investigation-section p {
+  margin: 0.8rem 0 0;
+  color: rgb(246 240 230 / 0.82);
+  line-height: 1.55;
+}
+
+.investigation-section__note {
+  color: var(--color-sidebar-muted) !important;
+  font-size: 0.9rem;
+}
+
+.investigation-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.case-settings-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+}
+
+.case-settings-list div {
+  border-top: 1px solid rgb(246 240 230 / 0.12);
+  padding-top: 0.65rem;
+}
+
+.case-settings-list dt {
+  color: var(--color-brass-gold);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.case-settings-list dd {
+  margin: 0.25rem 0 0;
+  color: var(--color-warm-ivory);
+  line-height: 1.45;
+}
+
 .case-archive {
   position: fixed;
   z-index: 60;
@@ -615,6 +807,18 @@ button {
     bottom: 1rem;
   }
 
+  .scene-overlay {
+    width: min(23rem, 46vw);
+  }
+
+  .investigation-section {
+    width: min(29rem, 52vw);
+  }
+
+  .active-case-file {
+    width: min(21rem, 42vw);
+  }
+
   .case-archive__header {
     display: grid;
   }
@@ -631,6 +835,10 @@ button {
 
   .office-shell {
     min-width: 700px;
+  }
+
+  .active-case-file {
+    right: 1rem;
   }
 
   .case-form__grid {
