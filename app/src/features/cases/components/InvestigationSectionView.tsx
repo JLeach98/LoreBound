@@ -1,15 +1,18 @@
 import { Button } from '../../../components/ui/Button';
 import type { InvestigationSection } from '../types/investigationSections';
 import { sectionEmptyStates } from '../types/investigationSections';
+import { DossierSectionView } from './DossierSectionView';
 
 type InvestigationSectionViewProps = {
   section: InvestigationSection;
+  hasActiveCase: boolean;
   onReturnToBoard: () => void;
   onOpenCaseArchive: () => void;
 };
 
 export function InvestigationSectionView({
   section,
+  hasActiveCase,
   onReturnToBoard,
   onOpenCaseArchive,
 }: InvestigationSectionViewProps) {
@@ -17,6 +20,66 @@ export function InvestigationSectionView({
 
   if (section === 'Board' || section === 'Case Settings') {
     return null;
+  }
+
+  if (section === 'Characters') {
+    return (
+      <DossierSectionView
+        dossierType="Character"
+        title={emptyState.heading}
+        emptyMessage={emptyState.message}
+        hasActiveCase={hasActiveCase}
+        onReturnToBoard={onReturnToBoard}
+      />
+    );
+  }
+
+  if (section === 'Locations') {
+    return (
+      <DossierSectionView
+        dossierType="Location"
+        title={emptyState.heading}
+        emptyMessage={emptyState.message}
+        hasActiveCase={hasActiveCase}
+        onReturnToBoard={onReturnToBoard}
+      />
+    );
+  }
+
+  if (section === 'Events') {
+    return (
+      <DossierSectionView
+        dossierType="Event"
+        title={emptyState.heading}
+        emptyMessage={emptyState.message}
+        hasActiveCase={hasActiveCase}
+        onReturnToBoard={onReturnToBoard}
+      />
+    );
+  }
+
+  if (section === 'Organizations') {
+    return (
+      <DossierSectionView
+        dossierType="Organization"
+        title={emptyState.heading}
+        emptyMessage={emptyState.message}
+        hasActiveCase={hasActiveCase}
+        onReturnToBoard={onReturnToBoard}
+      />
+    );
+  }
+
+  if (section === 'Theories') {
+    return (
+      <DossierSectionView
+        dossierType="Theory"
+        title={emptyState.heading}
+        emptyMessage={emptyState.message}
+        hasActiveCase={hasActiveCase}
+        onReturnToBoard={onReturnToBoard}
+      />
+    );
   }
 
   return (

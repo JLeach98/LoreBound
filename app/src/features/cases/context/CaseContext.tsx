@@ -11,6 +11,7 @@ import {
   clearActiveCase,
   createCase,
   deleteCase,
+  deleteDossiersByCaseId,
   openCase,
   readActiveCaseId,
   readAllCases,
@@ -154,6 +155,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
   const deleteExistingCase = useCallback(
     async (id: string) => {
       try {
+        await deleteDossiersByCaseId(id);
         await deleteCase(id);
         setCases((currentCases) => currentCases.filter((loreCase) => loreCase.id !== id));
 

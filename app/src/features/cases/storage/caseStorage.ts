@@ -1,8 +1,10 @@
 import type { CaseFormValues, LoreCase } from '../types/caseTypes';
+import type { Dossier, DossierFormValues } from '../types/dossierTypes';
 
 const databaseName = 'lorebound-local-archive';
-const databaseVersion = 1;
+const databaseVersion = 2;
 const caseStoreName = 'cases';
+const dossierStoreName = 'dossiers';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
 
@@ -25,6 +27,10 @@ function openDatabase() {
 
       if (!database.objectStoreNames.contains(caseStoreName)) {
         database.createObjectStore(caseStoreName, { keyPath: 'id' });
+      }
+
+      if (!database.objectStoreNames.contains(dossierStoreName)) {
+        database.createObjectStore(dossierStoreName, { keyPath: 'id' });
       }
 
       if (!database.objectStoreNames.contains(metaStoreName)) {
@@ -75,9 +81,64 @@ function createCaseId() {
   return `case-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function createDossierId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `dossier-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function cleanOptional(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function cleanDossierValues(values: DossierFormValues) {
+  const commonValues = {
+    coverImage: values.coverImage,
+    summary: cleanOptional(values.summary),
+    notes: cleanOptional(values.notes),
+  };
+
+  if (values.dossierType === 'Character') {
+    return {
+      ...commonValues,
+      alias: cleanOptional(values.alias),
+      characterStatus: values.characterStatus,
+      affiliation: cleanOptional(values.affiliation),
+    };
+  }
+
+  if (values.dossierType === 'Location') {
+    return {
+      ...commonValues,
+      region: cleanOptional(values.region),
+      world: cleanOptional(values.world),
+    };
+  }
+
+  if (values.dossierType === 'Event') {
+    return {
+      ...commonValues,
+      eventDate: cleanOptional(values.eventDate),
+      era: cleanOptional(values.era),
+    };
+  }
+
+  if (values.dossierType === 'Organization') {
+    return {
+      ...commonValues,
+      leader: cleanOptional(values.leader),
+      organizationType: cleanOptional(values.organizationType),
+    };
+  }
+
+  return {
+    ...commonValues,
+    theoryConfidence: values.theoryConfidence,
+    theoryStatus: values.theoryStatus,
+  };
 }
 
 export async function createCase(values: CaseFormValues) {
@@ -169,4 +230,64 @@ export async function openCase(id: string) {
   await runTransaction(caseStoreName, 'readwrite', (store) => store.put(openedCase));
   await recordActiveCase(id);
   return openedCase;
+}
+
+export async function createDossier(caseId: string, values: DossierFormValues) {
+  const now = new Date().toISOString();
+  const dossier: Dossier = {
+    id: createDossierId(),
+    caseId,
+    dossierType: values.dossierType,
+    name: values.name.trim(),
+    dateCreated: now,
+    dateModified: now,
+    ...cleanDossierValues(values),
+  };
+
+  await runTransaction(dossierStoreName, 'readwrite', (store) => store.add(dossier));
+  return dossier;
+}
+
+export async function readDossiersByCaseId(caseId: string) {
+  const dossiers = await runTransaction<Dossier[]>(dossierStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return dossiers.filter((dossier) => dossier.caseId === caseId);
+}
+
+export function readDossierById(id: string) {
+  return runTransaction<Dossier | undefined>(dossierStoreName, 'readonly', (store) =>
+    store.get(id),
+  );
+}
+
+export async function updateDossier(id: string, values: DossierFormValues) {
+  const existingDossier = await readDossierById(id);
+
+  if (!existingDossier) {
+    throw new Error('The selected Dossier could not be found.');
+  }
+
+  const updatedDossier: Dossier = {
+    ...existingDossier,
+    dossierType: values.dossierType,
+    name: values.name.trim(),
+    dateModified: new Date().toISOString(),
+    ...cleanDossierValues(values),
+  };
+
+  await runTransaction(dossierStoreName, 'readwrite', (store) => store.put(updatedDossier));
+  return updatedDossier;
+}
+
+export function deleteDossier(id: string) {
+  return runTransaction<undefined>(dossierStoreName, 'readwrite', (store) =>
+    store.delete(id),
+  );
+}
+
+export async function deleteDossiersByCaseId(caseId: string) {
+  const dossiers = await readDossiersByCaseId(caseId);
+  await Promise.all(dossiers.map((dossier) => deleteDossier(dossier.id)));
 }

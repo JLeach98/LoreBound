@@ -49,12 +49,14 @@ export function InvestigatorOffice() {
       <SceneOverlay
         activeSection={activeSection}
         onOpenCaseArchive={openCaseArchive}
+        onSelectSection={setActiveSection}
       />
       {activeCase ? <ActiveCaseFile activeCase={activeCase} /> : null}
       {activeCase ? (
         <>
           <InvestigationSectionView
             section={activeSection}
+            hasActiveCase={Boolean(activeCase)}
             onReturnToBoard={() => setActiveSection('Board')}
             onOpenCaseArchive={openCaseArchive}
           />
