@@ -10,18 +10,23 @@ const navigationItems = [
   { label: 'Case Settings', marker: 'CS', status: 'disabled' },
 ];
 
-export function CompactNavigation() {
+type CompactNavigationProps = {
+  onOpenCaseArchive: () => void;
+};
+
+export function CompactNavigation({ onOpenCaseArchive }: CompactNavigationProps) {
   return (
     <nav className="compact-navigation" aria-label="Primary navigation">
       <details className="compact-navigation__details">
         <summary className="compact-navigation__summary">Navigate</summary>
         <div className="compact-navigation__items">
           {navigationItems.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className="compact-navigation__item"
-              aria-current={item.status === 'active' ? 'page' : undefined}
+          <button
+            key={item.label}
+            type="button"
+            className="compact-navigation__item"
+            onClick={item.label === 'Case Archive' ? onOpenCaseArchive : undefined}
+            aria-current={item.status === 'active' ? 'page' : undefined}
               disabled={item.status === 'disabled'}
               title={
                 item.status === 'disabled'
