@@ -1,0 +1,26 @@
+{
+  "name": "LoreBound",
+  "short_name": "LoreBound",
+  "description": "Investigate every story with Cases, Dossiers, Bonds, and evidence boards.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#171514",
+  "theme_color": "#171514",
+  "categories": ["productivity", "books", "entertainment"],
+  "icons": [
+    {
+      "src": "/icons/lorebound-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/lorebound-maskable-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

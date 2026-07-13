@@ -44,6 +44,11 @@
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
   --radius-2xl: 1.25rem;
+  --breakpoint-phone: 760px;
+  --breakpoint-tablet: 1100px;
+  --layout-gutter: clamp(1rem, 3vw, 2rem);
+  --layout-readable: 72ch;
+  --layout-panel: min(58rem, calc(100vw - var(--layout-gutter) * 2));
   --font-display: Georgia, Cambria, "Times New Roman", serif;
   --text-label: 0.72rem;
   --text-body: 0.95rem;
@@ -142,6 +147,37 @@ textarea {
   opacity: 0.9;
 }
 
+.library-status-badge {
+  position: fixed;
+  z-index: 21;
+  top: 4.8rem;
+  left: clamp(1rem, 2vw, 1.5rem);
+  display: grid;
+  gap: 0.08rem;
+  border: 1px solid rgb(246 240 230 / 0.12);
+  border-radius: var(--radius-sm);
+  background: rgb(23 21 20 / 0.52);
+  padding: 0.38rem 0.56rem;
+  color: var(--color-warm-ivory);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 0.18);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.library-status-badge span {
+  color: rgb(246 240 230 / 0.68);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.library-status-badge strong {
+  color: var(--color-brass-light);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .office-icon-control {
   display: inline-flex;
   min-height: 2rem;
@@ -182,6 +218,19 @@ textarea {
   left: clamp(1rem, 2vw, 1.5rem);
   top: 6.4rem;
   width: auto;
+}
+
+.layout-shell {
+  width: min(100% - var(--layout-gutter) * 2, 72rem);
+  margin-inline: auto;
+}
+
+.layout-readable {
+  max-width: var(--layout-readable);
+}
+
+.hide-on-phone {
+  display: initial;
 }
 
 .compact-navigation__trigger {
@@ -2508,8 +2557,16 @@ textarea {
     overflow: auto;
   }
 
+  :root {
+    --layout-gutter: 1rem;
+  }
+
   .office-shell {
     min-width: 700px;
+  }
+
+  .hide-on-phone {
+    display: none !important;
   }
 
   .active-case-file {
