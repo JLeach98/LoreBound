@@ -16,6 +16,11 @@ const investigationCameraTarget = new Vector3(0, 2.16, -1.45);
 export function CameraRig({ mode }: CameraRigProps) {
   const { camera, size } = useThree();
   const currentTarget = useRef(officeCameraTarget.clone());
+  const transitionProgress = useRef(1);
+  const startPosition = useRef(officeCameraPosition.clone());
+  const startTarget = useRef(officeCameraTarget.clone());
+  const destinationPosition = useRef(officeCameraPosition.clone());
+  const destinationTarget = useRef(officeCameraTarget.clone());
   const prefersReducedMotion = useMemo(
     () =>
       typeof window !== 'undefined' &&
@@ -34,19 +39,39 @@ export function CameraRig({ mode }: CameraRigProps) {
     }
   }, [camera, mode, size.width, size.height]);
 
-  useFrame((_, delta) => {
-    const targetPosition =
-      mode === 'investigation' ? investigationCameraPosition : officeCameraPosition;
-    const targetLookAt =
-      mode === 'investigation' ? investigationCameraTarget : officeCameraTarget;
+  useEffect(() => {
+    startPosition.current.copy(camera.position);
+    startTarget.current.copy(currentTarget.current);
+    destinationPosition.current.copy(
+      mode === 'investigation' ? investigationCameraPosition : officeCameraPosition,
+    );
+    destinationTarget.current.copy(
+      mode === 'investigation' ? investigationCameraTarget : officeCameraTarget,
+    );
+    transitionProgress.current = prefersReducedMotion ? 1 : 0;
+  }, [camera.position, mode, prefersReducedMotion]);
 
+  useFrame((_, delta) => {
     if (prefersReducedMotion) {
-      camera.position.copy(targetPosition);
-      currentTarget.current.copy(targetLookAt);
+      camera.position.copy(destinationPosition.current);
+      currentTarget.current.copy(destinationTarget.current);
     } else {
-      const blend = 1 - Math.exp(-delta * 5.5);
-      camera.position.lerp(targetPosition, blend);
-      currentTarget.current.lerp(targetLookAt, blend);
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta * 0.92);
+      const progress = transitionProgress.current;
+      const eased = progress * progress * (3 - 2 * progress);
+      const lift = Math.sin(progress * Math.PI) * (mode === 'investigation' ? 0.12 : 0.06);
+
+      camera.position.lerpVectors(
+        startPosition.current,
+        destinationPosition.current,
+        eased,
+      );
+      camera.position.y += lift;
+      currentTarget.current.lerpVectors(
+        startTarget.current,
+        destinationTarget.current,
+        eased,
+      );
     }
 
     camera.lookAt(currentTarget.current);

@@ -120,6 +120,7 @@ export function BoardEvidenceLayer({
   const [selectedBond, setSelectedBond] = useState<Bond | null>(null);
   const [editingBond, setEditingBond] = useState<Bond | null>(null);
   const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
+  const [settlingPinIds, setSettlingPinIds] = useState<Set<string>>(new Set());
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
   const [dragPreviewPositions, setDragPreviewPositions] = useState<
     Record<string, { x: number; y: number }>
@@ -383,6 +384,14 @@ export function BoardEvidenceLayer({
         [pin.id]: nextPosition,
       }));
       await movePin(pin.id, nextPosition);
+      setSettlingPinIds((currentPinIds) => new Set(currentPinIds).add(pin.id));
+      window.setTimeout(() => {
+        setSettlingPinIds((currentPinIds) => {
+          const nextPinIds = new Set(currentPinIds);
+          nextPinIds.delete(pin.id);
+          return nextPinIds;
+        });
+      }, 220);
       setDragPreviewPositions((positions) => {
         const nextPositions = { ...positions };
         delete nextPositions[pin.id];
@@ -665,10 +674,12 @@ export function BoardEvidenceLayer({
                       <path
                         className="board-bond__shadow"
                         d={pathDefinition}
+                        pathLength={1}
                       />
                       <path
                         className="board-bond__thread"
                         d={pathDefinition}
+                        pathLength={1}
                         markerEnd={bond.bondBehavior === 'Directional' ? 'url(#bond-arrow)' : undefined}
                       />
                       <text
@@ -702,6 +713,7 @@ export function BoardEvidenceLayer({
                   className={`board-card board-card--${dossier.dossierType.toLowerCase()}`}
                   data-dragging={draggingPinId === pin.id ? 'true' : 'false'}
                   data-selected={selectedPinIds.has(pin.id) ? 'true' : 'false'}
+                  data-settling={settlingPinIds.has(pin.id) ? 'true' : 'false'}
                   tabIndex={0}
                   role="button"
                   aria-pressed={selectedPinIds.has(pin.id)}

@@ -1,12 +1,12 @@
 export function OfficeLighting() {
   return (
     <>
-      <hemisphereLight args={['#f4e3c8', '#241711', 0.72]} />
+      <hemisphereLight args={['#f2dfc1', '#21140f', 0.66]} />
       <directionalLight
         castShadow
         color="#efbd73"
-        intensity={2.25}
-        position={[3.6, 5.2, 3.5]}
+        intensity={2.4}
+        position={[3.45, 5.45, 3.25]}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
         shadow-camera-left={-5}
@@ -16,7 +16,7 @@ export function OfficeLighting() {
         shadow-camera-near={0.5}
         shadow-camera-far={12}
       />
-      <directionalLight color="#fff1d5" intensity={0.36} position={[-3, 2.2, 4]} />
+      <directionalLight color="#fff1d5" intensity={0.28} position={[-3, 2.2, 4]} />
     </>
   );
 }
