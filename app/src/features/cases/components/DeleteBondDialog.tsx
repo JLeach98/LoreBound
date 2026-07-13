@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../../components/ui/Button';
+import type { Bond } from '../types/bondTypes';
 import type { Dossier } from '../types/dossierTypes';
 
-type DeleteDossierDialogProps = {
-  dossier: Dossier;
-  bondCount?: number;
+type DeleteBondDialogProps = {
+  bond: Bond;
+  sourceDossier?: Dossier;
+  targetDossier?: Dossier;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 };
 
-export function DeleteDossierDialog({
-  dossier,
-  bondCount = 0,
+export function DeleteBondDialog({
+  bond,
+  sourceDossier,
+  targetDossier,
   onCancel,
   onConfirm,
-}: DeleteDossierDialogProps) {
+}: DeleteBondDialogProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -42,10 +45,13 @@ export function DeleteDossierDialog({
       await onConfirm();
     } catch (error) {
       console.error(error);
-      setErrorMessage('The Dossier could not be deleted. Try again.');
+      setErrorMessage('The Bond could not be deleted. Try again.');
       setIsDeleting(false);
     }
   }
+
+  const sourceName = sourceDossier?.name ?? 'Unknown source';
+  const targetName = targetDossier?.name ?? 'Unknown target';
 
   return (
     <div className="case-dialog-backdrop" role="presentation">
@@ -53,20 +59,16 @@ export function DeleteDossierDialog({
         className="case-dialog case-dialog--narrow"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="delete-dossier-title"
+        aria-labelledby="delete-bond-title"
       >
         <div className="case-dialog__header">
-          <p>Delete Dossier</p>
-          <h2 id="delete-dossier-title">Delete {dossier.name}?</h2>
+          <p>Delete Bond</p>
+          <h2 id="delete-bond-title">Delete {bond.bondType}?</h2>
         </div>
         <p className="case-dialog__copy">
-          This removes "{dossier.name}" from this Case. This cannot be undone.
+          This removes the Bond between "{sourceName}" and "{targetName}". The Dossiers
+          remain in the Case.
         </p>
-        {bondCount > 0 ? (
-          <p className="case-dialog__copy case-dialog__copy--warning">
-            This will also remove {bondCount} connected Bond{bondCount === 1 ? '' : 's'}.
-          </p>
-        ) : null}
         {errorMessage ? <p className="case-form__error">{errorMessage}</p> : null}
         <div className="case-dialog__actions">
           <Button
@@ -84,7 +86,7 @@ export function DeleteDossierDialog({
             onClick={handleConfirm}
             disabled={isDeleting}
           >
-            {isDeleting ? 'Deleting...' : 'Delete Dossier'}
+            {isDeleting ? 'Deleting...' : 'Delete Bond'}
           </button>
         </div>
       </section>

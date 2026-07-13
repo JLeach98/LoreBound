@@ -10,6 +10,7 @@ import {
 import {
   clearActiveCase,
   createCase,
+  deleteBondsByCaseId,
   deleteBoardPinsByCaseId,
   deleteCase,
   deleteDossiersByCaseId,
@@ -157,6 +158,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       try {
         await deleteDossiersByCaseId(id);
+        await deleteBondsByCaseId(id);
         await deleteBoardPinsByCaseId(id);
         await deleteCase(id);
         setCases((currentCases) => currentCases.filter((loreCase) => loreCase.id !== id));

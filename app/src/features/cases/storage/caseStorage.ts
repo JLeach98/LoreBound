@@ -1,12 +1,14 @@
 import type { CaseFormValues, LoreCase } from '../types/caseTypes';
+import type { Bond, BondEvidence, BondFormValues } from '../types/bondTypes';
 import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import type { Dossier, DossierFormValues } from '../types/dossierTypes';
 
 const databaseName = 'lorebound-local-archive';
-const databaseVersion = 3;
+const databaseVersion = 4;
 const caseStoreName = 'cases';
 const dossierStoreName = 'dossiers';
 const boardPinStoreName = 'boardPins';
+const bondStoreName = 'bonds';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
 
@@ -37,6 +39,10 @@ function openDatabase() {
 
       if (!database.objectStoreNames.contains(boardPinStoreName)) {
         database.createObjectStore(boardPinStoreName, { keyPath: 'id' });
+      }
+
+      if (!database.objectStoreNames.contains(bondStoreName)) {
+        database.createObjectStore(bondStoreName, { keyPath: 'id' });
       }
 
       if (!database.objectStoreNames.contains(metaStoreName)) {
@@ -101,6 +107,14 @@ function createBoardPinId() {
   }
 
   return `pin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createBondId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `bond-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function cleanOptional(value?: string) {
@@ -170,6 +184,35 @@ function cleanDossierValues(values: DossierFormValues) {
     ...commonValues,
     theoryConfidence: values.theoryConfidence,
     theoryStatus: values.theoryStatus,
+  };
+}
+
+function cleanBondEvidence(evidence?: BondEvidence) {
+  if (!evidence) {
+    return undefined;
+  }
+
+  const cleanedEvidence = {
+    sourceTitle: cleanOptional(evidence.sourceTitle),
+    sourceType: cleanOptional(evidence.sourceType),
+    reference: cleanOptional(evidence.reference),
+    evidenceNotes: cleanOptional(evidence.evidenceNotes),
+  };
+
+  return Object.values(cleanedEvidence).some(Boolean) ? cleanedEvidence : undefined;
+}
+
+function cleanBondValues(values: BondFormValues) {
+  return {
+    sourceDossierId: values.sourceDossierId,
+    targetDossierId: values.targetDossierId,
+    bondType: values.bondType.trim(),
+    bondBehavior: values.bondBehavior,
+    sourceLabel: cleanOptional(values.sourceLabel),
+    targetLabel: cleanOptional(values.targetLabel),
+    status: values.status,
+    notes: cleanOptional(values.notes),
+    evidence: cleanBondEvidence(values.evidence),
   };
 }
 
@@ -314,6 +357,7 @@ export async function updateDossier(id: string, values: DossierFormValues) {
 }
 
 export async function deleteDossier(id: string) {
+  await deleteBondsByDossierId(id);
   await deleteBoardPinsByDossierId(id);
   return runTransaction<undefined>(dossierStoreName, 'readwrite', (store) =>
     store.delete(id),
@@ -419,4 +463,126 @@ export async function deleteBoardPinsByDossierId(dossierId: string) {
 export async function deleteBoardPinsByCaseId(caseId: string) {
   const pins = await readBoardPinsByCaseId(caseId);
   await Promise.all(pins.map((pin) => removeBoardPin(pin.id)));
+}
+
+export async function readBondsByCaseId(caseId: string) {
+  const bonds = await runTransaction<Bond[]>(bondStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return bonds
+    .filter((bond) => bond.caseId === caseId)
+    .sort(
+      (left, right) =>
+        new Date(right.dateModified).getTime() - new Date(left.dateModified).getTime(),
+    );
+}
+
+export function readBondById(id: string) {
+  return runTransaction<Bond | undefined>(bondStoreName, 'readonly', (store) =>
+    store.get(id),
+  );
+}
+
+export async function readBondsByDossierId(dossierId: string) {
+  const bonds = await runTransaction<Bond[]>(bondStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return bonds.filter(
+    (bond) => bond.sourceDossierId === dossierId || bond.targetDossierId === dossierId,
+  );
+}
+
+async function validateBond(caseId: string, values: BondFormValues, currentBondId?: string) {
+  if (values.sourceDossierId === values.targetDossierId) {
+    throw new Error('A Dossier cannot be Bonded to itself.');
+  }
+
+  const [sourceDossier, targetDossier, existingBonds] = await Promise.all([
+    readDossierById(values.sourceDossierId),
+    readDossierById(values.targetDossierId),
+    readBondsByCaseId(caseId),
+  ]);
+
+  if (!sourceDossier || !targetDossier) {
+    throw new Error('Both connected Dossiers must exist before creating a Bond.');
+  }
+
+  if (sourceDossier.caseId !== caseId || targetDossier.caseId !== caseId) {
+    throw new Error('Bonds cannot connect Dossiers from different Cases.');
+  }
+
+  const labels = [
+    cleanOptional(values.sourceLabel) ?? '',
+    cleanOptional(values.targetLabel) ?? '',
+  ].join('|');
+  const duplicate = existingBonds.find((bond) => {
+    const samePair =
+      (bond.sourceDossierId === values.sourceDossierId &&
+        bond.targetDossierId === values.targetDossierId) ||
+      (bond.sourceDossierId === values.targetDossierId &&
+        bond.targetDossierId === values.sourceDossierId);
+    const bondLabels = [bond.sourceLabel ?? '', bond.targetLabel ?? ''].join('|');
+
+    return (
+      bond.id !== currentBondId &&
+      samePair &&
+      bond.bondType === values.bondType &&
+      bondLabels === labels
+    );
+  });
+
+  if (duplicate) {
+    throw new Error('This Bond already exists for these Dossiers.');
+  }
+}
+
+export async function createBond(caseId: string, values: BondFormValues) {
+  await validateBond(caseId, values);
+  const now = new Date().toISOString();
+  const bond: Bond = {
+    id: createBondId(),
+    caseId,
+    dateCreated: now,
+    dateModified: now,
+    ...cleanBondValues(values),
+  };
+
+  await runTransaction(bondStoreName, 'readwrite', (store) => store.add(bond));
+  return bond;
+}
+
+export async function updateBond(id: string, values: BondFormValues) {
+  const existingBond = await readBondById(id);
+
+  if (!existingBond) {
+    throw new Error('The selected Bond could not be found.');
+  }
+
+  await validateBond(existingBond.caseId, values, id);
+  const updatedBond: Bond = {
+    ...existingBond,
+    ...cleanBondValues(values),
+    dateModified: new Date().toISOString(),
+  };
+
+  await runTransaction(bondStoreName, 'readwrite', (store) => store.put(updatedBond));
+  return updatedBond;
+}
+
+export function deleteBond(id: string) {
+  return runTransaction<undefined>(bondStoreName, 'readwrite', (store) =>
+    store.delete(id),
+  );
+}
+
+export async function deleteBondsByDossierId(dossierId: string) {
+  const bonds = await readBondsByDossierId(dossierId);
+  await Promise.all(bonds.map((bond) => deleteBond(bond.id)));
+}
+
+export async function deleteBondsByCaseId(caseId: string) {
+  const bonds = await readBondsByCaseId(caseId);
+  await Promise.all(bonds.map((bond) => deleteBond(bond.id)));
 }

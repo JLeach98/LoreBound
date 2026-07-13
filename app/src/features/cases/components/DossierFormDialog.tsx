@@ -14,6 +14,7 @@ import { CoverImageInput } from './CoverImageInput';
 type DossierFormDialogProps = {
   dossierType: DossierType;
   initialDossier?: Dossier;
+  initialName?: string;
   onCancel: () => void;
   onSubmit: (values: DossierFormValues) => Promise<void>;
 };
@@ -21,10 +22,11 @@ type DossierFormDialogProps = {
 export function DossierFormDialog({
   dossierType,
   initialDossier,
+  initialName = '',
   onCancel,
   onSubmit,
 }: DossierFormDialogProps) {
-  const [name, setName] = useState(initialDossier?.name ?? '');
+  const [name, setName] = useState(initialDossier?.name ?? initialName);
   const [coverImage, setCoverImage] = useState<string | undefined>(
     initialDossier?.coverImage,
   );

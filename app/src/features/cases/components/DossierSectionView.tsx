@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
+import { useBonds } from '../context/BondContext';
 import { useBoard } from '../context/BoardContext';
 import { useDossiers } from '../context/DossierContext';
 import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
@@ -39,6 +40,7 @@ export function DossierSectionView({
     deleteExistingDossier,
     clearError,
   } = useDossiers();
+  const { bondsForDossier, refreshBonds } = useBonds();
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
@@ -85,6 +87,7 @@ export function DossierSectionView({
 
     await deleteExistingDossier(deletingDossier.id);
     await removeDossierFromBoard(deletingDossier.id);
+    await refreshBonds();
     setDeletingDossier(null);
     setSelectedDossier(null);
   }
@@ -296,6 +299,7 @@ export function DossierSectionView({
           onDelete={setDeletingDossier}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveFromBoard}
+          onOpenDossier={setSelectedDossier}
         />
       ) : null}
 
@@ -311,6 +315,7 @@ export function DossierSectionView({
       {deletingDossier ? (
         <DeleteDossierDialog
           dossier={deletingDossier}
+          bondCount={bondsForDossier(deletingDossier.id).length}
           onCancel={() => setDeletingDossier(null)}
           onConfirm={handleDeleteDossier}
         />

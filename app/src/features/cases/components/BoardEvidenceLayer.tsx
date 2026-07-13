@@ -6,11 +6,16 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from 'react';
+import { useBonds } from '../context/BondContext';
 import { useBoard } from '../context/BoardContext';
 import { useDossiers } from '../context/DossierContext';
+import type { Bond, BondFormValues } from '../types/bondTypes';
 import type { BoardPin } from '../types/boardTypes';
 import type { LoreCase } from '../types/caseTypes';
 import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
+import { getBondDisplayLabel } from '../utils/bondLabels';
+import { BondFormDialog } from './BondFormDialog';
+import { DeleteBondDialog } from './DeleteBondDialog';
 import { DeleteDossierDialog } from './DeleteDossierDialog';
 import { DossierFormDialog } from './DossierFormDialog';
 import { DossierSheet } from './DossierSheet';
@@ -86,6 +91,14 @@ export function BoardEvidenceLayer({
 }: BoardEvidenceLayerProps) {
   const { dossiers, updateExistingDossier, deleteExistingDossier } = useDossiers();
   const {
+    bonds,
+    bondsForDossier,
+    createNewBond,
+    updateExistingBond,
+    deleteExistingBond,
+    refreshBonds,
+  } = useBonds();
+  const {
     boardPins,
     isLoading,
     errorMessage,
@@ -101,6 +114,12 @@ export function BoardEvidenceLayer({
   const [isTrayOpen, setIsTrayOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<DossierType>('Character');
   const [selectedPinIds, setSelectedPinIds] = useState<Set<string>>(new Set());
+  const [isShowingBonds, setIsShowingBonds] = useState(true);
+  const [bondSourcePinId, setBondSourcePinId] = useState<string | null>(null);
+  const [bondTargetPinId, setBondTargetPinId] = useState<string | null>(null);
+  const [selectedBond, setSelectedBond] = useState<Bond | null>(null);
+  const [editingBond, setEditingBond] = useState<Bond | null>(null);
+  const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
   const [dragPreviewPositions, setDragPreviewPositions] = useState<
     Record<string, { x: number; y: number }>
@@ -143,6 +162,32 @@ export function BoardEvidenceLayer({
         ),
     [boardPins, dossiers],
   );
+  const pinnedDossierById = useMemo(
+    () =>
+      new Map(
+        pinnedDossiers.map((entry) => [
+          entry.dossier.id,
+          {
+            ...entry,
+            position: dragPreviewPositions[entry.pin.id] ?? entry.pin.position,
+          },
+        ]),
+      ),
+    [dragPreviewPositions, pinnedDossiers],
+  );
+  const visibleBonds = useMemo(
+    () =>
+      bonds.filter(
+        (bond) =>
+          pinnedDossierById.has(bond.sourceDossierId) &&
+          pinnedDossierById.has(bond.targetDossierId),
+      ),
+    [bonds, pinnedDossierById],
+  );
+  const selectedPin = useMemo(() => {
+    const [selectedPinId] = Array.from(selectedPinIds);
+    return boardPins.find((pin) => pin.id === selectedPinId) ?? null;
+  }, [boardPins, selectedPinIds]);
 
   function openDossier(dossier: Dossier, opener: HTMLElement) {
     if (suppressedOpenDossierIdsRef.current.has(dossier.id)) {
@@ -162,6 +207,10 @@ export function BoardEvidenceLayer({
     window.setTimeout(() => lastOpenedControlRef.current?.focus(), 0);
   }
 
+  function getDossierById(dossierId: string) {
+    return dossiers.find((candidate) => candidate.id === dossierId) ?? null;
+  }
+
   async function handleUpdateDossier(values: DossierFormValues) {
     if (!editingDossier) {
       return;
@@ -179,6 +228,7 @@ export function BoardEvidenceLayer({
 
     await deleteExistingDossier(deletingDossier.id);
     await removeDossierFromBoard(deletingDossier.id);
+    await refreshBonds();
     setDeletingDossier(null);
     setSelectedDossier(null);
   }
@@ -191,6 +241,33 @@ export function BoardEvidenceLayer({
   async function handleAddToInvestigation(dossier: Dossier, position?: { x: number; y: number }) {
     const pin = await pinDossier(dossier.id, position);
     selectPin(pin.id);
+  }
+
+  async function handleCreateBond(values: BondFormValues) {
+    const createdBond = await createNewBond(values);
+    setSelectedBond(createdBond);
+    setBondSourcePinId(null);
+    setBondTargetPinId(null);
+  }
+
+  async function handleUpdateBond(values: BondFormValues) {
+    if (!editingBond) {
+      return;
+    }
+
+    const updatedBond = await updateExistingBond(editingBond.id, values);
+    setSelectedBond(updatedBond);
+    setEditingBond(null);
+  }
+
+  async function handleDeleteBond() {
+    if (!deletingBond) {
+      return;
+    }
+
+    await deleteExistingBond(deletingBond.id);
+    setDeletingBond(null);
+    setSelectedBond(null);
   }
 
   function clampPosition(position: { x: number; y: number }) {
@@ -320,6 +397,12 @@ export function BoardEvidenceLayer({
     }
 
     event.stopPropagation();
+
+    if (bondSourcePinId && bondSourcePinId !== pin.id) {
+      setBondTargetPinId(pin.id);
+      return;
+    }
+
     selectPin(pin.id);
   }
 
@@ -352,6 +435,11 @@ export function BoardEvidenceLayer({
     const delta = keyMovement[event.key];
 
     if (event.key === 'Enter') {
+      if (bondSourcePinId && bondSourcePinId !== pin.id) {
+        setBondTargetPinId(pin.id);
+        return;
+      }
+
       const dossier = dossiers.find((candidate) => candidate.id === pin.dossierId);
 
       if (dossier) {
@@ -454,6 +542,30 @@ export function BoardEvidenceLayer({
             {activeCase.authorOrCreator ? ` / ${activeCase.authorOrCreator}` : ''}
           </span>
         </div>
+        <div className="investigation-mode-actions">
+          <button
+            type="button"
+            className="board-control-button"
+            disabled={!selectedPin}
+            aria-pressed={Boolean(bondSourcePinId)}
+            onClick={() => {
+              setBondSourcePinId((currentPinId) =>
+                currentPinId ? null : selectedPin?.id ?? null,
+              );
+              setBondTargetPinId(null);
+            }}
+          >
+            {bondSourcePinId ? 'Cancel Connect' : 'Connect'}
+          </button>
+          <button
+            type="button"
+            className="board-control-button"
+            aria-pressed={isShowingBonds}
+            onClick={() => setIsShowingBonds((currentValue) => !currentValue)}
+          >
+            {isShowingBonds ? 'Hide Bonds' : 'Show Bonds'}
+          </button>
+        </div>
         <button type="button" className="return-office-button" onClick={onReturnToOffice}>
           Return to Office
         </button>
@@ -465,6 +577,12 @@ export function BoardEvidenceLayer({
         data-drop-target={trayDragState?.isOverBoard ? 'true' : 'false'}
         onClick={() => setSelectedPinIds(new Set())}
       >
+        {bondSourcePinId ? (
+          <div className="board-evidence__connect-hint" role="status">
+            Select a second pinned Dossier to create a Bond.
+          </div>
+        ) : null}
+
         {errorMessage ? (
           <div className="board-evidence__alert" role="alert">
             <p>{errorMessage}</p>
@@ -489,6 +607,94 @@ export function BoardEvidenceLayer({
         ) : null}
 
         <div className="board-evidence__surface" ref={boardSurfaceRef}>
+          <svg className="board-bonds" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <defs>
+              <marker
+                id="bond-arrow"
+                markerWidth="6"
+                markerHeight="6"
+                refX="5"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0,0 L6,3 L0,6 Z" />
+              </marker>
+            </defs>
+            {isShowingBonds
+              ? visibleBonds.map((bond) => {
+                  const sourceEntry = pinnedDossierById.get(bond.sourceDossierId);
+                  const targetEntry = pinnedDossierById.get(bond.targetDossierId);
+
+                  if (!sourceEntry || !targetEntry) {
+                    return null;
+                  }
+
+                  const x1 = sourceEntry.position.x + 5.5;
+                  const y1 = sourceEntry.position.y + 7;
+                  const x2 = targetEntry.position.x + 5.5;
+                  const y2 = targetEntry.position.y + 7;
+                  const midX = (x1 + x2) / 2;
+                  const midY = (y1 + y2) / 2;
+                  const sag = Math.min(5.5, Math.max(2, Math.abs(x2 - x1) * 0.08));
+                  const controlY = midY + sag;
+                  const pathDefinition = `M ${x1} ${y1} Q ${midX} ${controlY} ${x2} ${y2}`;
+
+                  return (
+                    <g
+                      key={bond.id}
+                      className={`board-bond board-bond--${(bond.status ?? 'unknown').toLowerCase()}`}
+                      data-selected={selectedBond?.id === bond.id ? 'true' : 'false'}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${getBondDisplayLabel(bond)} Bond between ${sourceEntry.dossier.name} and ${targetEntry.dossier.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedBond(bond);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedBond(bond);
+                        }
+                      }}
+                    >
+                      <path
+                        className="board-bond__hit-area"
+                        d={pathDefinition}
+                      />
+                      <path
+                        className="board-bond__shadow"
+                        d={pathDefinition}
+                      />
+                      <path
+                        className="board-bond__thread"
+                        d={pathDefinition}
+                        markerEnd={bond.bondBehavior === 'Directional' ? 'url(#bond-arrow)' : undefined}
+                      />
+                      <text
+                        className="board-bond__label"
+                        x={midX}
+                        y={controlY - 1.4}
+                        textAnchor="middle"
+                      >
+                        {getBondDisplayLabel(bond)}
+                      </text>
+                    </g>
+                  );
+                })
+              : null}
+          </svg>
+          {visibleBonds.length > 0 ? (
+            <ul className="sr-only" aria-label="Visible board Bonds">
+              {visibleBonds.map((bond) => (
+                <li key={bond.id}>
+                  {getBondDisplayLabel(bond)} between{' '}
+                  {getDossierById(bond.sourceDossierId)?.name ?? 'unknown source'} and{' '}
+                  {getDossierById(bond.targetDossierId)?.name ?? 'unknown target'}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {pinnedDossiers.length > 0
             ? pinnedDossiers.map(({ pin, dossier }, index) => (
                 <article
@@ -550,6 +756,29 @@ export function BoardEvidenceLayer({
         onTrayDragCancel={handleTrayDragCancel}
       />
 
+      {selectedBond ? (
+        <aside className="bond-inspector" aria-label="Selected Bond">
+          <p>Selected Bond</p>
+          <h2>{getBondDisplayLabel(selectedBond)}</h2>
+          <span>
+            {getDossierById(selectedBond.sourceDossierId)?.name ?? 'Unknown'} /{' '}
+            {getDossierById(selectedBond.targetDossierId)?.name ?? 'Unknown'}
+          </span>
+          {selectedBond.status ? <small>{selectedBond.status}</small> : null}
+          <div className="bond-inspector__actions">
+            <button type="button" onClick={() => setEditingBond(selectedBond)}>
+              Edit
+            </button>
+            <button type="button" onClick={() => setDeletingBond(selectedBond)}>
+              Delete
+            </button>
+            <button type="button" onClick={() => setSelectedBond(null)}>
+              Close
+            </button>
+          </div>
+        </aside>
+      ) : null}
+
       {trayDragState?.didMove ? (
         <div
           className="tray-drag-preview"
@@ -579,6 +808,7 @@ export function BoardEvidenceLayer({
           onDelete={setDeletingDossier}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveDossierFromBoard}
+          onOpenDossier={setSelectedDossier}
         />
       ) : null}
 
@@ -594,8 +824,42 @@ export function BoardEvidenceLayer({
       {deletingDossier ? (
         <DeleteDossierDialog
           dossier={deletingDossier}
+          bondCount={bondsForDossier(deletingDossier.id).length}
           onCancel={() => setDeletingDossier(null)}
           onConfirm={handleDeleteDossier}
+        />
+      ) : null}
+
+      {bondSourcePinId && bondTargetPinId ? (
+        <BondFormDialog
+          dossiers={dossiers}
+          initialSourceDossierId={
+            boardPins.find((pin) => pin.id === bondSourcePinId)?.dossierId
+          }
+          initialTargetDossierId={
+            boardPins.find((pin) => pin.id === bondTargetPinId)?.dossierId
+          }
+          onCancel={() => setBondTargetPinId(null)}
+          onSubmit={handleCreateBond}
+        />
+      ) : null}
+
+      {editingBond ? (
+        <BondFormDialog
+          dossiers={dossiers}
+          initialBond={editingBond}
+          onCancel={() => setEditingBond(null)}
+          onSubmit={handleUpdateBond}
+        />
+      ) : null}
+
+      {deletingBond ? (
+        <DeleteBondDialog
+          bond={deletingBond}
+          sourceDossier={getDossierById(deletingBond.sourceDossierId) ?? undefined}
+          targetDossier={getDossierById(deletingBond.targetDossierId) ?? undefined}
+          onCancel={() => setDeletingBond(null)}
+          onConfirm={handleDeleteBond}
         />
       ) : null}
     </>
