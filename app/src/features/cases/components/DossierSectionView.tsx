@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
+import { useBoard } from '../context/BoardContext';
 import { useDossiers } from '../context/DossierContext';
 import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
 import { dossierTypeLabels } from '../types/dossierTypes';
@@ -13,6 +14,7 @@ type DossierSectionViewProps = {
   emptyMessage: string;
   hasActiveCase: boolean;
   onReturnToBoard: () => void;
+  managerTabs?: ReactNode;
 };
 
 export function DossierSectionView({
@@ -21,7 +23,13 @@ export function DossierSectionView({
   emptyMessage,
   hasActiveCase,
   onReturnToBoard,
+  managerTabs,
 }: DossierSectionViewProps) {
+  const {
+    pinDossier,
+    removeDossierFromBoard,
+    isDossierPinned,
+  } = useBoard();
   const {
     dossiers,
     isLoading,
@@ -36,6 +44,7 @@ export function DossierSectionView({
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
   const [editingDossier, setEditingDossier] = useState<Dossier | null>(null);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
+  const [pinningDossierId, setPinningDossierId] = useState<string | null>(null);
   const lastOpenedControlRef = useRef<HTMLButtonElement | null>(null);
 
   const sectionDossiers = useMemo(
@@ -75,8 +84,23 @@ export function DossierSectionView({
     }
 
     await deleteExistingDossier(deletingDossier.id);
+    await removeDossierFromBoard(deletingDossier.id);
     setDeletingDossier(null);
     setSelectedDossier(null);
+  }
+
+  async function handlePinDossier(dossier: Dossier) {
+    setPinningDossierId(dossier.id);
+
+    try {
+      await pinDossier(dossier.id);
+    } finally {
+      setPinningDossierId(null);
+    }
+  }
+
+  async function handleRemoveFromBoard(dossier: Dossier) {
+    await removeDossierFromBoard(dossier.id);
   }
 
   function getDossierSecondaryText(dossier: Dossier) {
@@ -124,7 +148,9 @@ export function DossierSectionView({
       <section className="dossier-section" aria-labelledby="dossier-section-heading">
         <div className="dossier-section__header">
           <div>
-            <p className="dossier-section__eyebrow">Active Investigation</p>
+            <p className="dossier-section__eyebrow">
+              {managerTabs ? 'Dossier Manager' : 'Active Investigation'}
+            </p>
             <h2 id="dossier-section-heading">{title}</h2>
           </div>
           <Button
@@ -136,6 +162,8 @@ export function DossierSectionView({
             Create {dossierType}
           </Button>
         </div>
+
+        {managerTabs}
 
         {!hasActiveCase ? (
           <p className="dossier-section__empty">
@@ -213,6 +241,27 @@ export function DossierSectionView({
                       >
                         Open File
                       </button>
+                      {isDossierPinned(dossier.id) ? (
+                        <>
+                          <span className="dossier-card__status">Pinned</span>
+                          <button
+                            type="button"
+                            className="dossier-card__quiet-action"
+                            onClick={() => handleRemoveFromBoard(dossier)}
+                          >
+                            Remove
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="dossier-card__quiet-action"
+                          onClick={() => handlePinDossier(dossier)}
+                          disabled={pinningDossierId === dossier.id}
+                        >
+                          Add
+                        </button>
+                      )}
                       <button type="button" onClick={() => setEditingDossier(dossier)}>
                         Edit
                       </button>
@@ -245,6 +294,8 @@ export function DossierSectionView({
           onClose={closeDossier}
           onEdit={setEditingDossier}
           onDelete={setDeletingDossier}
+          isPinned={isDossierPinned(selectedDossier.id)}
+          onRemoveFromBoard={handleRemoveFromBoard}
         />
       ) : null}
 

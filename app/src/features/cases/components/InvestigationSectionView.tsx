@@ -1,7 +1,8 @@
 import { Button } from '../../../components/ui/Button';
 import type { InvestigationSection } from '../types/investigationSections';
 import { sectionEmptyStates } from '../types/investigationSections';
-import { DossierSectionView } from './DossierSectionView';
+import type { DossierType } from '../types/dossierTypes';
+import { DossierManagerView } from './DossierManagerView';
 
 type InvestigationSectionViewProps = {
   section: InvestigationSection;
@@ -17,65 +18,23 @@ export function InvestigationSectionView({
   onOpenCaseArchive,
 }: InvestigationSectionViewProps) {
   const emptyState = sectionEmptyStates[section];
+  const dossierSectionTypes: Partial<Record<InvestigationSection, DossierType>> = {
+    Characters: 'Character',
+    Locations: 'Location',
+    Events: 'Event',
+    Organizations: 'Organization',
+    Theories: 'Theory',
+  };
+  const dossierType = dossierSectionTypes[section];
 
   if (section === 'Board' || section === 'Case Settings') {
     return null;
   }
 
-  if (section === 'Characters') {
+  if (dossierType) {
     return (
-      <DossierSectionView
-        dossierType="Character"
-        title={emptyState.heading}
-        emptyMessage={emptyState.message}
-        hasActiveCase={hasActiveCase}
-        onReturnToBoard={onReturnToBoard}
-      />
-    );
-  }
-
-  if (section === 'Locations') {
-    return (
-      <DossierSectionView
-        dossierType="Location"
-        title={emptyState.heading}
-        emptyMessage={emptyState.message}
-        hasActiveCase={hasActiveCase}
-        onReturnToBoard={onReturnToBoard}
-      />
-    );
-  }
-
-  if (section === 'Events') {
-    return (
-      <DossierSectionView
-        dossierType="Event"
-        title={emptyState.heading}
-        emptyMessage={emptyState.message}
-        hasActiveCase={hasActiveCase}
-        onReturnToBoard={onReturnToBoard}
-      />
-    );
-  }
-
-  if (section === 'Organizations') {
-    return (
-      <DossierSectionView
-        dossierType="Organization"
-        title={emptyState.heading}
-        emptyMessage={emptyState.message}
-        hasActiveCase={hasActiveCase}
-        onReturnToBoard={onReturnToBoard}
-      />
-    );
-  }
-
-  if (section === 'Theories') {
-    return (
-      <DossierSectionView
-        dossierType="Theory"
-        title={emptyState.heading}
-        emptyMessage={emptyState.message}
+      <DossierManagerView
+        initialDossierType={dossierType}
         hasActiveCase={hasActiveCase}
         onReturnToBoard={onReturnToBoard}
       />

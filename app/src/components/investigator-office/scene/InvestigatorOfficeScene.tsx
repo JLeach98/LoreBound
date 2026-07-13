@@ -8,12 +8,16 @@ import { OfficeLighting } from './OfficeLighting';
 import { OfficeRoom } from './OfficeRoom';
 import { useOfficeMaterials } from './materials';
 
-export function InvestigatorOfficeScene() {
+type InvestigatorOfficeSceneProps = {
+  mode: 'office' | 'investigation';
+};
+
+export function InvestigatorOfficeScene({ mode }: InvestigatorOfficeSceneProps) {
   const materials = useOfficeMaterials();
 
   return (
     <>
-      <CameraRig />
+      <CameraRig mode={mode} />
       <OfficeLighting />
       <OfficeRoom materials={materials} />
       <CorkBoard3D materials={materials} />

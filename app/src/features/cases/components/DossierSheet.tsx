@@ -8,6 +8,8 @@ type DossierSheetProps = {
   onClose: () => void;
   onEdit: (dossier: Dossier) => void;
   onDelete: (dossier: Dossier) => void;
+  isPinned?: boolean;
+  onRemoveFromBoard?: (dossier: Dossier) => void;
 };
 
 type DisplayField = {
@@ -61,7 +63,14 @@ function formatRecordDate(value: string) {
   }).format(new Date(value));
 }
 
-export function DossierSheet({ dossier, onClose, onEdit, onDelete }: DossierSheetProps) {
+export function DossierSheet({
+  dossier,
+  onClose,
+  onEdit,
+  onDelete,
+  isPinned = false,
+  onRemoveFromBoard,
+}: DossierSheetProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
   const keyFacts = useMemo(
@@ -193,6 +202,15 @@ export function DossierSheet({ dossier, onClose, onEdit, onDelete }: DossierShee
             <Button ref={closeButtonRef} type="button" variant="ghost" onClick={onClose}>
               Close
             </Button>
+            {isPinned && onRemoveFromBoard ? (
+              <Button
+                type="button"
+                variant="plaque"
+                onClick={() => onRemoveFromBoard(dossier)}
+              >
+                Remove from Investigation
+              </Button>
+            ) : null}
             <Button type="button" variant="brass" onClick={() => onEdit(dossier)}>
               Edit
             </Button>

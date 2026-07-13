@@ -6,6 +6,7 @@ import { OfficeCanvas } from './scene/OfficeCanvas';
 import { SceneOverlay } from './SceneOverlay';
 import { CaseArchiveView } from '../../features/cases/components/CaseArchiveView';
 import { ActiveCaseFile } from '../../features/cases/components/ActiveCaseFile';
+import { BoardEvidenceLayer } from '../../features/cases/components/BoardEvidenceLayer';
 import { CaseSettingsView } from '../../features/cases/components/CaseSettingsView';
 import { InvestigationSectionView } from '../../features/cases/components/InvestigationSectionView';
 import { useCases } from '../../features/cases/context/CaseContext';
@@ -14,13 +15,18 @@ import type { InvestigationSection } from '../../features/cases/types/investigat
 export function InvestigatorOffice() {
   const [isCaseArchiveOpen, setIsCaseArchiveOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<InvestigationSection>('Board');
+  const [workspaceMode, setWorkspaceMode] = useState<'office' | 'investigation'>('office');
   const { activeCase } = useCases();
 
   useEffect(() => {
     if (!activeCase && activeSection !== 'Board') {
       setActiveSection('Board');
     }
-  }, [activeCase, activeSection]);
+
+    if (!activeCase && workspaceMode !== 'office') {
+      setWorkspaceMode('office');
+    }
+  }, [activeCase, activeSection, workspaceMode]);
 
   function openCaseArchive() {
     setIsCaseArchiveOpen(true);
@@ -32,27 +38,46 @@ export function InvestigatorOffice() {
 
   function handleCaseOpened() {
     setActiveSection('Board');
+    setWorkspaceMode('office');
     closeCaseArchive();
   }
 
+  function enterInvestigationMode() {
+    setActiveSection('Board');
+    setWorkspaceMode('investigation');
+  }
+
   return (
-    <div className="office-shell">
-      <OfficeCanvas />
-      <CompactNavigation
-        activeSection={activeSection}
+    <div className={`office-shell office-shell--${workspaceMode}`}>
+      <OfficeCanvas mode={workspaceMode} />
+      {workspaceMode === 'office' ? (
+        <CompactNavigation
+          activeSection={activeSection}
         hasActiveCase={Boolean(activeCase)}
         onOpenCaseArchive={openCaseArchive}
         onSelectSection={setActiveSection}
+        onFocusBoard={enterInvestigationMode}
       />
+      ) : null}
       <BrandMark />
-      <OfficeControls />
+      {workspaceMode === 'office' ? <OfficeControls /> : null}
       <SceneOverlay
         activeSection={activeSection}
         onOpenCaseArchive={openCaseArchive}
         onSelectSection={setActiveSection}
+        workspaceMode={workspaceMode}
+        onEnterInvestigationMode={enterInvestigationMode}
       />
-      {activeCase ? <ActiveCaseFile activeCase={activeCase} /> : null}
-      {activeCase ? (
+      {activeCase && workspaceMode === 'investigation' ? (
+        <BoardEvidenceLayer
+          activeCase={activeCase}
+          onReturnToOffice={() => setWorkspaceMode('office')}
+        />
+      ) : null}
+      {activeCase && workspaceMode === 'office' ? (
+        <ActiveCaseFile activeCase={activeCase} />
+      ) : null}
+      {activeCase && workspaceMode === 'office' ? (
         <>
           <InvestigationSectionView
             section={activeSection}

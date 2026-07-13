@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type {
   InvestigationSection,
   NavigationSection,
@@ -25,6 +26,7 @@ type CompactNavigationProps = {
   hasActiveCase: boolean;
   onOpenCaseArchive: () => void;
   onSelectSection: (section: InvestigationSection) => void;
+  onFocusBoard: () => void;
 };
 
 export function CompactNavigation({
@@ -32,11 +34,54 @@ export function CompactNavigation({
   hasActiveCase,
   onOpenCaseArchive,
   onSelectSection,
+  onFocusBoard,
 }: CompactNavigationProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const navigationRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        navigationRef.current &&
+        event.target instanceof Node &&
+        !navigationRef.current.contains(event.target)
+      ) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   return (
-    <nav className="compact-navigation" aria-label="Primary navigation">
-      <details className="compact-navigation__details">
-        <summary className="compact-navigation__summary">Navigate</summary>
+    <nav ref={navigationRef} className="compact-navigation" aria-label="Primary navigation">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="compact-navigation__trigger"
+        aria-label="Navigation"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((currentValue) => !currentValue)}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+        <span>Navigation</span>
+      </button>
+      {isOpen ? (
         <div className="compact-navigation__items">
           {navigationItems.map((item) => {
             const isArchive = item.label === 'Case Archive';
@@ -51,29 +96,37 @@ export function CompactNavigation({
                 onClick={() => {
                   if (isArchive) {
                     onOpenCaseArchive();
+                    setIsOpen(false);
+                    return;
+                  }
+
+                  if (item.label === 'Board' && hasActiveCase) {
+                    onFocusBoard();
+                    setIsOpen(false);
                     return;
                   }
 
                   if (isInvestigationSection(item.label)) {
                     onSelectSection(item.label);
+                    setIsOpen(false);
                   }
                 }}
                 aria-current={isActive ? 'page' : undefined}
                 disabled={isDisabled}
-              title={
-                isDisabled
-                  ? `${item.label} is unavailable until a case is open`
-                  : item.label
-              }
+                title={
+                  isDisabled
+                    ? `${item.label} is unavailable until a case is open`
+                    : item.label
+                }
                 data-active={isActive ? 'true' : 'false'}
               >
                 <span aria-hidden="true">{item.marker}</span>
-                {item.label}
+                {item.label === 'Board' ? 'Focus on Board' : item.label}
               </button>
             );
           })}
         </div>
-      </details>
+      ) : null}
     </nav>
   );
 }

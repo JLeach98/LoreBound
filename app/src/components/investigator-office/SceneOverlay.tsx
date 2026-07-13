@@ -1,34 +1,28 @@
 import { Button } from '../ui/Button';
 import { useCases } from '../../features/cases/context/CaseContext';
-import { useDossiers } from '../../features/cases/context/DossierContext';
 import type { InvestigationSection } from '../../features/cases/types/investigationSections';
 
 type SceneOverlayProps = {
   activeSection: InvestigationSection;
   onOpenCaseArchive: () => void;
   onSelectSection: (section: InvestigationSection) => void;
+  workspaceMode: 'office' | 'investigation';
+  onEnterInvestigationMode: () => void;
 };
-
-const dossierNavigationItems: Array<{
-  section: InvestigationSection;
-  label: string;
-  countKey: 'Character' | 'Location' | 'Event' | 'Organization' | 'Theory';
-}> = [
-  { section: 'Characters', label: 'Character Dossiers', countKey: 'Character' },
-  { section: 'Locations', label: 'Location Dossiers', countKey: 'Location' },
-  { section: 'Events', label: 'Event Dossiers', countKey: 'Event' },
-  { section: 'Organizations', label: 'Organization Dossiers', countKey: 'Organization' },
-  { section: 'Theories', label: 'Theory Dossiers', countKey: 'Theory' },
-];
 
 export function SceneOverlay({
   activeSection,
   onOpenCaseArchive,
   onSelectSection,
+  workspaceMode,
+  onEnterInvestigationMode,
 }: SceneOverlayProps) {
   const { activeCase } = useCases();
-  const { dossierCounts } = useDossiers();
   const isBoardSelected = activeSection === 'Board';
+
+  if (workspaceMode === 'investigation') {
+    return null;
+  }
 
   if (activeCase && !isBoardSelected) {
     return (
@@ -51,30 +45,28 @@ export function SceneOverlay({
             {activeCase.universeType}
             {activeCase.authorOrCreator ? ` / ${activeCase.authorOrCreator}` : ''}
           </p>
-          <div className="scene-overlay__dossier-nav" aria-label="Dossier sections">
-            {dossierNavigationItems.map((item) => {
-              const count = dossierCounts[item.countKey];
-
-              return (
-                <button
-                  key={item.section}
-                  type="button"
-                  onClick={() => onSelectSection(item.section)}
-                  aria-current={activeSection === item.section ? 'page' : undefined}
-                >
-                  <span>{item.label}</span>
-                  <strong>
-                    {count} {count === 1 ? 'record' : 'records'}
-                  </strong>
-                </button>
-              );
-            })}
+          <div className="scene-overlay__actions">
+            <Button type="button" variant="brass" onClick={onEnterInvestigationMode}>
+              Focus on Board
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onSelectSection('Characters')}
+            >
+              Manage Dossiers
+            </Button>
           </div>
         </>
       ) : (
         <p>Open or create a Case to begin.</p>
       )}
-      <Button type="button" variant="brass" className="mt-4" onClick={onOpenCaseArchive}>
+      <Button
+        type="button"
+        variant={activeCase ? 'ghost' : 'brass'}
+        className="mt-4"
+        onClick={onOpenCaseArchive}
+      >
         Open Case Archive
       </Button>
     </section>

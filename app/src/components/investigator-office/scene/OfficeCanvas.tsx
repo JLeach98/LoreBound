@@ -2,7 +2,11 @@ import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import { InvestigatorOfficeScene } from './InvestigatorOfficeScene';
 
-export function OfficeCanvas() {
+type OfficeCanvasProps = {
+  mode: 'office' | 'investigation';
+};
+
+export function OfficeCanvas({ mode }: OfficeCanvasProps) {
   return (
     <Canvas
       className="office-canvas"
@@ -12,7 +16,7 @@ export function OfficeCanvas() {
       gl={{ antialias: true, powerPreference: 'high-performance' }}
     >
       <Suspense fallback={null}>
-        <InvestigatorOfficeScene />
+        <InvestigatorOfficeScene mode={mode} />
       </Suspense>
     </Canvas>
   );

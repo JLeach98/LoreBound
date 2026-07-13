@@ -1,10 +1,12 @@
 import type { CaseFormValues, LoreCase } from '../types/caseTypes';
+import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import type { Dossier, DossierFormValues } from '../types/dossierTypes';
 
 const databaseName = 'lorebound-local-archive';
-const databaseVersion = 2;
+const databaseVersion = 3;
 const caseStoreName = 'cases';
 const dossierStoreName = 'dossiers';
+const boardPinStoreName = 'boardPins';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
 
@@ -31,6 +33,10 @@ function openDatabase() {
 
       if (!database.objectStoreNames.contains(dossierStoreName)) {
         database.createObjectStore(dossierStoreName, { keyPath: 'id' });
+      }
+
+      if (!database.objectStoreNames.contains(boardPinStoreName)) {
+        database.createObjectStore(boardPinStoreName, { keyPath: 'id' });
       }
 
       if (!database.objectStoreNames.contains(metaStoreName)) {
@@ -89,9 +95,35 @@ function createDossierId() {
   return `dossier-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function createBoardPinId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `pin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function cleanOptional(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function createBoardPinPosition(order: number): BoardPinPosition {
+  const columns = 4;
+  const column = order % columns;
+  const row = Math.floor(order / columns);
+
+  return {
+    x: 6 + column * 18,
+    y: 8 + row * 22,
+  };
+}
+
+function clampBoardPosition(position: BoardPinPosition): BoardPinPosition {
+  return {
+    x: Math.min(84, Math.max(0, position.x)),
+    y: Math.min(82, Math.max(0, position.y)),
+  };
 }
 
 function cleanDossierValues(values: DossierFormValues) {
@@ -281,7 +313,8 @@ export async function updateDossier(id: string, values: DossierFormValues) {
   return updatedDossier;
 }
 
-export function deleteDossier(id: string) {
+export async function deleteDossier(id: string) {
+  await deleteBoardPinsByDossierId(id);
   return runTransaction<undefined>(dossierStoreName, 'readwrite', (store) =>
     store.delete(id),
   );
@@ -290,4 +323,100 @@ export function deleteDossier(id: string) {
 export async function deleteDossiersByCaseId(caseId: string) {
   const dossiers = await readDossiersByCaseId(caseId);
   await Promise.all(dossiers.map((dossier) => deleteDossier(dossier.id)));
+}
+
+export async function readBoardPinsByCaseId(caseId: string) {
+  const pins = await runTransaction<BoardPin[]>(boardPinStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+  const casePins = pins.filter((pin) => pin.caseId === caseId);
+  const migratedPins = await Promise.all(
+    casePins.map(async (pin, index) => {
+      if (pin.position) {
+        return pin;
+      }
+
+      const migratedPin: BoardPin = {
+        ...pin,
+        position: createBoardPinPosition(pin.order ?? index),
+      };
+
+      await runTransaction(boardPinStoreName, 'readwrite', (store) =>
+        store.put(migratedPin),
+      );
+      return migratedPin;
+    }),
+  );
+
+  return migratedPins.sort((left, right) => left.order - right.order);
+}
+
+export async function pinDossierToBoard(
+  caseId: string,
+  dossierId: string,
+  position?: BoardPinPosition,
+) {
+  const existingPins = await readBoardPinsByCaseId(caseId);
+  const existingPin = existingPins.find((pin) => pin.dossierId === dossierId);
+
+  if (existingPin) {
+    if (position) {
+      return updateBoardPinPosition(existingPin.id, position);
+    }
+
+    return existingPin;
+  }
+
+  const order = existingPins.length;
+  const pin: BoardPin = {
+    id: createBoardPinId(),
+    caseId,
+    dossierId,
+    order,
+    position: clampBoardPosition(position ?? createBoardPinPosition(order)),
+    datePinned: new Date().toISOString(),
+  };
+
+  await runTransaction(boardPinStoreName, 'readwrite', (store) => store.add(pin));
+  return pin;
+}
+
+export function removeBoardPin(id: string) {
+  return runTransaction<undefined>(boardPinStoreName, 'readwrite', (store) =>
+    store.delete(id),
+  );
+}
+
+export async function updateBoardPinPosition(id: string, position: BoardPinPosition) {
+  const existingPin = await runTransaction<BoardPin | undefined>(
+    boardPinStoreName,
+    'readonly',
+    (store) => store.get(id),
+  );
+
+  if (!existingPin) {
+    throw new Error('The selected Board card could not be found.');
+  }
+
+  const updatedPin: BoardPin = {
+    ...existingPin,
+    position: clampBoardPosition(position),
+  };
+
+  await runTransaction(boardPinStoreName, 'readwrite', (store) => store.put(updatedPin));
+  return updatedPin;
+}
+
+export async function deleteBoardPinsByDossierId(dossierId: string) {
+  const pins = await runTransaction<BoardPin[]>(boardPinStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+  const matchingPins = pins.filter((pin) => pin.dossierId === dossierId);
+
+  await Promise.all(matchingPins.map((pin) => removeBoardPin(pin.id)));
+}
+
+export async function deleteBoardPinsByCaseId(caseId: string) {
+  const pins = await readBoardPinsByCaseId(caseId);
+  await Promise.all(pins.map((pin) => removeBoardPin(pin.id)));
 }
