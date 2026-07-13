@@ -18,7 +18,7 @@ class MigrationManager {
       plans: [
         {
           id: 'indexeddb-to-cloud',
-          title: 'IndexedDB to Cloud Library',
+          title: 'Local Archive to LoreBound Online Archive',
           source: 'indexeddb',
           target: 'cloud',
           status: 'planned',

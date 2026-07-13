@@ -23,11 +23,14 @@ class LoreBoundSyncService implements SyncService {
       return {
         mode: 'local',
         state: 'local-only',
-        label: environment.cloud.provider === 'supabase' ? 'Supabase Ready' : 'Local Mode',
+        label:
+          environment.cloud.provider === 'supabase'
+            ? 'Connected to LoreBound Online, Local Archive Active'
+            : 'Offline Mode',
         detail:
           environment.cloud.provider === 'supabase'
-            ? 'Supabase is configured. Cloud synchronization is not active until migration is implemented.'
-            : 'No cloud synchronization available.',
+            ? 'LoreBound Online is configured. Synchronize Investigation is not active yet.'
+            : 'LoreBound Online is not available.',
         lastSyncedAt: null,
       };
     }
@@ -35,8 +38,8 @@ class LoreBoundSyncService implements SyncService {
     return {
       mode: 'cloud',
       state: 'idle',
-      label: 'Cloud Library',
-      detail: 'Cloud synchronization is ready.',
+      label: 'LoreBound Online Archive',
+      detail: 'Synchronize Investigation is ready.',
       lastSyncedAt: null,
     };
   }

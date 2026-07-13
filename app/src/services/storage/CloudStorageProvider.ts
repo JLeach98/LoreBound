@@ -1,13 +1,13 @@
 import type { StorageProvider } from './StorageProvider';
 
 function unavailableCloudStorage(): never {
-  throw new Error('Cloud storage is not configured. LoreBound is running in Local Mode.');
+  throw new Error('LoreBound Online Archive is not configured. LoreBound is using Offline Mode.');
 }
 
 export const cloudStorageProvider: StorageProvider = {
   getStatus: () => ({
     mode: 'cloud',
-    label: 'Cloud Library Unconfigured',
+    label: 'LoreBound Online Archive Unavailable',
     isAvailable: false,
   }),
   createCase: unavailableCloudStorage,

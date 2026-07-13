@@ -28,6 +28,10 @@ export function LibraryStatusBadge() {
 
     const updateOnlineStatus = () =>
       setConnectivity(navigator.onLine ? 'online' : 'offline');
+    const subscription = authService.onAuthStateChanged((nextAuthStatus) => {
+      setAuthStatus(nextAuthStatus);
+      void syncService.getStatus().then(setSyncStatus);
+    });
 
     void refreshStatus();
     window.addEventListener('online', updateOnlineStatus);
@@ -35,16 +39,17 @@ export function LibraryStatusBadge() {
 
     return () => {
       isMounted = false;
+      subscription.unsubscribe();
       window.removeEventListener('online', updateOnlineStatus);
       window.removeEventListener('offline', updateOnlineStatus);
     };
   }, []);
 
-  const label = authStatus?.label ?? 'Local Library';
+  const label = authStatus?.label ?? 'Local Archive';
   const detail =
     connectivity === 'offline'
-      ? 'Offline'
-      : (syncStatus?.label ?? 'Local Mode');
+      ? 'Offline Mode'
+      : (syncStatus?.label ?? 'Offline Mode');
 
   return (
     <aside className="library-status-badge" aria-label="Library status">

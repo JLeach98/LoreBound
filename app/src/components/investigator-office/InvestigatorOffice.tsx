@@ -11,6 +11,7 @@ import { CaseSettingsView } from '../../features/cases/components/CaseSettingsVi
 import { InvestigationSectionView } from '../../features/cases/components/InvestigationSectionView';
 import { useCases } from '../../features/cases/context/CaseContext';
 import type { InvestigationSection } from '../../features/cases/types/investigationSections';
+import { AuthAccessPanel } from '../application-shell/AuthAccessPanel';
 import { LibraryStatusBadge } from '../application-shell/LibraryStatusBadge';
 
 export function InvestigatorOffice() {
@@ -62,6 +63,7 @@ export function InvestigatorOffice() {
       ) : null}
       <BrandMark />
       <LibraryStatusBadge />
+      {workspaceMode === 'office' ? <AuthAccessPanel /> : null}
       {workspaceMode === 'office' ? <OfficeControls /> : null}
       <SceneOverlay
         activeSection={activeSection}

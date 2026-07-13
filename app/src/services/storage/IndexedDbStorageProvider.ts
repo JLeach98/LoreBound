@@ -4,7 +4,7 @@ import type { StorageProvider } from './StorageProvider';
 export const indexedDbStorageProvider: StorageProvider = {
   getStatus: () => ({
     mode: 'local',
-    label: 'IndexedDB Local Library',
+    label: 'Local Archive',
     isAvailable: true,
   }),
   createCase: caseStorage.createCase,

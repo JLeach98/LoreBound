@@ -5,6 +5,10 @@ const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.tr
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
+function getSupabaseProjectUrl(url: string) {
+  return new URL(url).origin;
+}
+
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl as string, supabasePublishableKey as string)
+  ? createClient(getSupabaseProjectUrl(supabaseUrl as string), supabasePublishableKey as string)
   : null;
