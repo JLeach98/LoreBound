@@ -13,6 +13,7 @@ import {
   readDossiersByCaseId,
   updateDossier,
 } from '../storage/caseStorage';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
 import { dossierTypes } from '../types/dossierTypes';
 import { useCases } from './CaseContext';
@@ -100,6 +101,7 @@ export function DossierProvider({ children }: { children: ReactNode }) {
 
       try {
         const createdDossier = await createDossier(activeCase.id, values);
+        requestAutomaticSynchronization('dossier created');
         setDossiers((currentDossiers) =>
           sortDossiers([createdDossier, ...currentDossiers]),
         );
@@ -118,6 +120,7 @@ export function DossierProvider({ children }: { children: ReactNode }) {
     async (id: string, values: DossierFormValues) => {
       try {
         const updatedDossier = await updateDossier(id, values);
+        requestAutomaticSynchronization('dossier updated');
         setDossiers((currentDossiers) =>
           sortDossiers(
             currentDossiers.map((dossier) =>
@@ -139,6 +142,7 @@ export function DossierProvider({ children }: { children: ReactNode }) {
   const deleteExistingDossier = useCallback(async (id: string) => {
     try {
       await deleteDossier(id);
+      requestAutomaticSynchronization('dossier deleted');
       setDossiers((currentDossiers) =>
         currentDossiers.filter((dossier) => dossier.id !== id),
       );

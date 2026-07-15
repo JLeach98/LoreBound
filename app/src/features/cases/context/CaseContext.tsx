@@ -20,6 +20,7 @@ import {
   readCaseById,
   updateCase,
 } from '../storage/caseStorage';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { CaseFormValues, LoreCase } from '../types/caseTypes';
 import { sortCasesByRecentActivity } from '../utils/caseSorting';
 
@@ -87,6 +88,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
   const createNewCase = useCallback(async (values: CaseFormValues) => {
     try {
       const createdCase = await createCase(values);
+      requestAutomaticSynchronization('case created');
       setCases((currentCases) =>
         sortCasesByRecentActivity([createdCase, ...currentCases]),
       );
@@ -103,6 +105,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
     async (id: string, values: CaseFormValues) => {
       try {
         const updatedCase = await updateCase(id, values);
+        requestAutomaticSynchronization('case updated');
         setCases((currentCases) =>
           sortCasesByRecentActivity(
             currentCases.map((loreCase) =>
@@ -161,6 +164,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
         await deleteBondsByCaseId(id);
         await deleteBoardPinsByCaseId(id);
         await deleteCase(id);
+        requestAutomaticSynchronization('case deleted');
         setCases((currentCases) => currentCases.filter((loreCase) => loreCase.id !== id));
 
         if (activeCase?.id === id) {

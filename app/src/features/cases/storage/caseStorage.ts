@@ -318,6 +318,7 @@ export type LocalSyncState = {
     boardPins: string[];
   };
   synchronizedUpdatedAt: Record<string, string>;
+  synchronizedFingerprints?: Record<string, string>;
   cloudImagePaths?: {
     cases: Record<string, string>;
     dossiers: Record<string, string>;

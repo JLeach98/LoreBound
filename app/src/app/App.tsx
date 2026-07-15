@@ -5,6 +5,8 @@ import { CaseProvider } from '../features/cases/context/CaseContext';
 import { DossierProvider } from '../features/cases/context/DossierContext';
 import { FieldKitShell } from '../features/field-kit/components/FieldKitShell';
 import { OperationsConsoleProvider } from '../services/preferences/OperationsConsoleContext';
+import { InvestigatorProfileProvider } from '../services/profile/InvestigatorProfileContext';
+import { AutomaticSyncProvider } from '../services/sync/AutomaticSyncContext';
 import { useDeviceExperience } from './useDeviceExperience';
 
 const InvestigatorOffice = lazy(() =>
@@ -37,15 +39,19 @@ function LoreBoundExperience() {
 export function App() {
   return (
     <OperationsConsoleProvider>
-      <CaseProvider>
-        <DossierProvider>
-          <BoardProvider>
-            <BondProvider>
-              <LoreBoundExperience />
-            </BondProvider>
-          </BoardProvider>
-        </DossierProvider>
-      </CaseProvider>
+      <InvestigatorProfileProvider>
+        <AutomaticSyncProvider>
+          <CaseProvider>
+            <DossierProvider>
+              <BoardProvider>
+                <BondProvider>
+                  <LoreBoundExperience />
+                </BondProvider>
+              </BoardProvider>
+            </DossierProvider>
+          </CaseProvider>
+        </AutomaticSyncProvider>
+      </InvestigatorProfileProvider>
     </OperationsConsoleProvider>
   );
 }

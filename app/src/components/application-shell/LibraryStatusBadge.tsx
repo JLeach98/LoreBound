@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { authService, type AuthStatus } from '../../services/auth/AuthService';
+import { useInvestigatorProfile } from '../../services/profile/InvestigatorProfileContext';
 import { syncService, type SyncStatus } from '../../services/sync/SyncService';
 
 type ConnectivityState = 'online' | 'offline';
 
 export function LibraryStatusBadge() {
+  const { profile } = useInvestigatorProfile();
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [connectivity, setConnectivity] = useState<ConnectivityState>(
@@ -45,7 +47,10 @@ export function LibraryStatusBadge() {
     };
   }, []);
 
-  const label = authStatus?.label ?? 'Local Archive';
+  const label =
+    authStatus?.state === 'signed-in' && profile
+      ? profile.username
+      : (authStatus?.label ?? 'Local Archive');
   const detail =
     connectivity === 'offline'
       ? 'Offline Mode'

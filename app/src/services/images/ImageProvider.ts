@@ -5,7 +5,7 @@ export type StoredImage = {
   storageMode: 'local' | 'cloud';
 };
 
-export type CloudImageEntityType = 'investigations' | 'dossiers';
+export type CloudImageEntityType = 'investigations' | 'dossiers' | 'profiles';
 
 export type LocalImageCandidate = {
   entityType: CloudImageEntityType;
@@ -39,7 +39,7 @@ export interface ImageProvider {
   resolveImage: (storedImage: StoredImage | string) => Promise<string>;
 }
 
-const imageBucketName = 'lorebound-images';
+export const imageBucketName = 'lorebound-images';
 const maxCloudImageDimension = 1800;
 const maxCloudImageBytes = 5_000_000;
 const webpQuality = 0.86;
@@ -49,7 +49,15 @@ function sanitizePathSegment(value: string) {
 }
 
 function getImageFilename(entityType: CloudImageEntityType) {
-  return entityType === 'investigations' ? 'cover.webp' : 'image.webp';
+  if (entityType === 'investigations') {
+    return 'cover.webp';
+  }
+
+  if (entityType === 'profiles') {
+    return 'profile-photo.webp';
+  }
+
+  return 'image.webp';
 }
 
 export function createCloudImagePath(

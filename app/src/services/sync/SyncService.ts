@@ -34,6 +34,7 @@ import type {
   SyncPlanSection,
   SyncProgress,
   SyncResult,
+  SyncEntityType,
   SyncStage,
 } from './SyncTypes';
 
@@ -66,12 +67,20 @@ export interface SyncService {
 const emptyPlanSection: SyncPlanSection = {
   newRecords: 0,
   existingRecords: 0,
+  unchangedRecords: 0,
+  updatedRecords: 0,
+  cloudUpdatesAvailable: 0,
+  conflictRecords: 0,
+  unsupportedRecords: 0,
+  invalidRecords: 0,
   itemsRequiringReview: 0,
   localOnly: 0,
   onlineOnly: 0,
   matchingIds: 0,
   localNewer: 0,
   onlineNewer: 0,
+  conflicts: 0,
+  requiresReview: 0,
   sameTimestampDifferingContents: 0,
 };
 
@@ -150,6 +159,13 @@ function createEmptyPlan(): SyncPlan {
         imageUploadsSucceeded: 0,
         imageUploadsFailed: 0,
         storageVerificationSucceeded: 0,
+      },
+      reconciliation: {
+        baselineMetadataPresent: false,
+        invalidIds: 0,
+        timestampParseFailures: 0,
+        fingerprintMismatches: 0,
+        automaticGateReason: 'Not reviewed.',
       },
     },
     imagePaths: {
@@ -304,22 +320,199 @@ async function restoreDossierImages(dossiers: Dossier[], rows: CloudArchiveSnaps
   return restoredDossiers;
 }
 
-function normalize(value: unknown) {
-  return JSON.stringify(value);
+function normalizeOptional(value: unknown) {
+  return value === undefined || value === '' ? null : value;
 }
 
+function normalizeTimestamp(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(String(value));
+  const timestamp = date.getTime();
+
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function roundCoordinate(value: number) {
+  return Math.round(Number(value) * 1000) / 1000;
+}
+
+function canonicalize(value: unknown): unknown {
+  if (value === undefined || value === '') {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined && entryValue !== '')
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([key, entryValue]) => [key, canonicalize(entryValue)]),
+    );
+  }
+
+  return value;
+}
+
+function fingerprint(value: unknown) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function getFingerprintKey(entityType: SyncEntityType, id: string) {
+  return `${entityType}:${id}`;
+}
+
+function isValidStableId(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeCaseContent(record: {
+  id: string;
+  name?: string;
+  caseName?: string;
+  universe_type?: string;
+  universeType?: string;
+  author_or_creator?: string | null;
+  authorOrCreator?: string;
+  description?: string | null;
+  cover_image_cloud_path?: string | null;
+  coverImageCloudPath?: string | null;
+  date_last_opened?: string | null;
+  dateLastOpened?: string | null;
+  is_archived?: boolean;
+}) {
+  return {
+    id: record.id,
+    name: normalizeOptional(record.name ?? record.caseName),
+    universeType: normalizeOptional(record.universe_type ?? record.universeType),
+    authorOrCreator: normalizeOptional(record.author_or_creator ?? record.authorOrCreator),
+    description: normalizeOptional(record.description),
+    coverImageCloudPath: normalizeOptional(record.cover_image_cloud_path ?? record.coverImageCloudPath),
+    dateLastOpened: normalizeOptional(record.date_last_opened ?? record.dateLastOpened),
+    isArchived: Boolean(record.is_archived ?? false),
+  };
+}
+
+function normalizeDossierContent(record: {
+  id: string;
+  case_id?: string;
+  caseId?: string;
+  dossier_type?: string;
+  dossierType?: string;
+  name: string;
+  cover_image_cloud_path?: string | null;
+  coverImageCloudPath?: string | null;
+  summary?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  return {
+    id: record.id,
+    caseId: normalizeOptional(record.case_id ?? record.caseId),
+    dossierType: normalizeOptional(record.dossier_type ?? record.dossierType),
+    name: normalizeOptional(record.name),
+    coverImageCloudPath: normalizeOptional(record.cover_image_cloud_path ?? record.coverImageCloudPath),
+    summary: normalizeOptional(record.summary),
+    notes: normalizeOptional(record.notes),
+    metadata: canonicalize(record.metadata ?? {}),
+  };
+}
+
+function normalizeBondContent(record: {
+  id: string;
+  case_id?: string;
+  caseId?: string;
+  source_dossier_id?: string;
+  sourceDossierId?: string;
+  target_dossier_id?: string;
+  targetDossierId?: string;
+  bond_type?: string;
+  bondType?: string;
+  bond_behavior?: string;
+  bondBehavior?: string;
+  source_label?: string | null;
+  sourceLabel?: string;
+  target_label?: string | null;
+  targetLabel?: string;
+  status?: string | null;
+  notes?: string | null;
+  evidence?: Record<string, unknown>;
+}) {
+  return {
+    id: record.id,
+    caseId: normalizeOptional(record.case_id ?? record.caseId),
+    sourceDossierId: normalizeOptional(record.source_dossier_id ?? record.sourceDossierId),
+    targetDossierId: normalizeOptional(record.target_dossier_id ?? record.targetDossierId),
+    bondType: normalizeOptional(record.bond_type ?? record.bondType),
+    bondBehavior: normalizeOptional(record.bond_behavior ?? record.bondBehavior),
+    sourceLabel: normalizeOptional(record.source_label ?? record.sourceLabel),
+    targetLabel: normalizeOptional(record.target_label ?? record.targetLabel),
+    status: normalizeOptional(record.status),
+    notes: normalizeOptional(record.notes),
+    evidence: canonicalize(record.evidence ?? {}),
+  };
+}
+
+function normalizeBoardEntryContent(record: {
+  id: string;
+  case_id?: string;
+  caseId?: string;
+  dossier_id?: string;
+  dossierId?: string;
+  board_order?: number;
+  order?: number;
+  position_x?: number;
+  position_y?: number;
+  position?: { x: number; y: number };
+}) {
+  return {
+    id: record.id,
+    caseId: normalizeOptional(record.case_id ?? record.caseId),
+    dossierId: normalizeOptional(record.dossier_id ?? record.dossierId),
+    order: Number(record.board_order ?? record.order ?? 0),
+    position: {
+      x: roundCoordinate(record.position_x ?? record.position?.x ?? 0),
+      y: roundCoordinate(record.position_y ?? record.position?.y ?? 0),
+    },
+  };
+}
+
+type ReconciliationStats = {
+  invalidIds: number;
+  timestampParseFailures: number;
+  fingerprintMismatches: number;
+};
+
 function compareById<TLocal extends { id: string }, TOnline extends { id: string }>(
+  entityType: SyncEntityType,
   localRecords: TLocal[],
   onlineRecords: TOnline[],
   getLocalUpdatedAt: (record: TLocal) => string,
   getOnlineUpdatedAt: (record: TOnline) => string,
-  mapLocalForComparison: (record: TLocal) => unknown,
+  normalizeLocalForComparison: (record: TLocal) => unknown,
+  normalizeOnlineForComparison: (record: TOnline) => unknown,
+  baselineFingerprints: Record<string, string> | undefined,
+  stats: ReconciliationStats,
 ) {
   const onlineById = new Map(onlineRecords.map((record) => [record.id, record]));
   const localIds = new Set(localRecords.map((record) => record.id));
   const section = { ...emptyPlanSection };
 
   localRecords.forEach((localRecord) => {
+    if (!isValidStableId(localRecord.id)) {
+      section.invalidRecords += 1;
+      section.requiresReview += 1;
+      section.itemsRequiringReview += 1;
+      stats.invalidIds += 1;
+      return;
+    }
+
     const onlineRecord = onlineById.get(localRecord.id);
 
     if (!onlineRecord) {
@@ -329,27 +522,75 @@ function compareById<TLocal extends { id: string }, TOnline extends { id: string
     }
 
     section.matchingIds += 1;
-    const localTime = new Date(getLocalUpdatedAt(localRecord)).getTime();
-    const onlineTime = new Date(getOnlineUpdatedAt(onlineRecord)).getTime();
-    const localComparable = normalize(mapLocalForComparison(localRecord));
-    const onlineComparable = normalize(onlineRecord);
+    const localTime = normalizeTimestamp(getLocalUpdatedAt(localRecord));
+    const onlineTime = normalizeTimestamp(getOnlineUpdatedAt(onlineRecord));
+    const localFingerprint = fingerprint(normalizeLocalForComparison(localRecord));
+    const onlineFingerprint = fingerprint(normalizeOnlineForComparison(onlineRecord));
+    const baselineFingerprint = baselineFingerprints?.[getFingerprintKey(entityType, localRecord.id)];
 
-    if (localComparable === onlineComparable) {
+    if (localTime === null || onlineTime === null) {
+      stats.timestampParseFailures += 1;
+    }
+
+    if (localFingerprint === onlineFingerprint) {
       section.existingRecords += 1;
-    } else if (localTime > onlineTime) {
+      section.unchangedRecords += 1;
+      return;
+    }
+
+    stats.fingerprintMismatches += 1;
+
+    if (baselineFingerprint) {
+      const localChanged = localFingerprint !== baselineFingerprint;
+      const onlineChanged = onlineFingerprint !== baselineFingerprint;
+
+      if (localChanged && !onlineChanged) {
+        section.localNewer += 1;
+        section.updatedRecords += 1;
+        return;
+      }
+
+      if (!localChanged && onlineChanged) {
+        section.onlineNewer += 1;
+        section.cloudUpdatesAvailable += 1;
+        return;
+      }
+
+      if (localChanged && onlineChanged) {
+        section.conflicts += 1;
+        section.conflictRecords += 1;
+        return;
+      }
+    }
+
+    if (localTime !== null && onlineTime !== null && localTime > onlineTime) {
       section.localNewer += 1;
-      section.itemsRequiringReview += 1;
-    } else if (onlineTime > localTime) {
+      section.updatedRecords += 1;
+    } else if (localTime !== null && onlineTime !== null && onlineTime > localTime) {
       section.onlineNewer += 1;
-      section.itemsRequiringReview += 1;
+      section.cloudUpdatesAvailable += 1;
     } else {
       section.sameTimestampDifferingContents += 1;
+      section.requiresReview += 1;
       section.itemsRequiringReview += 1;
     }
   });
 
-  section.onlineOnly = onlineRecords.filter((record) => !localIds.has(record.id)).length;
-  section.itemsRequiringReview += section.onlineOnly;
+  onlineRecords.forEach((record) => {
+    if (!isValidStableId(record.id)) {
+      section.invalidRecords += 1;
+      section.requiresReview += 1;
+      section.itemsRequiringReview += 1;
+      stats.invalidIds += 1;
+      return;
+    }
+
+    if (!localIds.has(record.id)) {
+      section.onlineOnly += 1;
+      section.cloudUpdatesAvailable += 1;
+    }
+  });
+
   return section;
 }
 
@@ -391,6 +632,55 @@ function validateDependencies(localArchive: LocalArchiveSnapshot) {
   });
 
   return reasons;
+}
+
+function createLocalFingerprintSnapshot(
+  localArchive: LocalArchiveSnapshot,
+  imagePaths: { cases: Record<string, string>; dossiers: Record<string, string> },
+) {
+  return Object.fromEntries([
+    ...localArchive.cases.map((record) => [
+      getFingerprintKey('cases', record.id),
+      fingerprint(
+        normalizeCaseContent({
+          ...record,
+          coverImageCloudPath: imagePaths.cases[record.id] ?? null,
+        }),
+      ),
+    ]),
+    ...localArchive.dossiers.map((record) => [
+      getFingerprintKey('dossiers', record.id),
+      fingerprint(
+        normalizeDossierContent({
+          ...record,
+          coverImageCloudPath: imagePaths.dossiers[record.id] ?? null,
+          metadata: Object.fromEntries(
+            [
+              'alias',
+              'characterStatus',
+              'affiliation',
+              'region',
+              'world',
+              'eventDate',
+              'era',
+              'leader',
+              'organizationType',
+              'theoryConfidence',
+              'theoryStatus',
+            ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]]),
+          ),
+        }),
+      ),
+    ]),
+    ...localArchive.bonds.map((record) => [
+      getFingerprintKey('bonds', record.id),
+      fingerprint(normalizeBondContent(record)),
+    ]),
+    ...localArchive.boardPins.map((record) => [
+      getFingerprintKey('boardEntries', record.id),
+      fingerprint(normalizeBoardEntryContent(record)),
+    ]),
+  ]);
 }
 
 class LoreBoundSyncService implements SyncService {
@@ -464,6 +754,11 @@ class LoreBoundSyncService implements SyncService {
     const isLocalArchiveEmpty = isArchiveEmpty(localArchive);
     const isOnlineArchiveEmpty = isArchiveEmpty(onlineArchive);
     const plannedImagePaths = getPlannedImagePaths(localArchive, user.id);
+    const reconciliationStats: ReconciliationStats = {
+      invalidIds: 0,
+      timestampParseFailures: 0,
+      fingerprintMismatches: 0,
+    };
 
     plan.local = {
       investigationName:
@@ -496,36 +791,94 @@ class LoreBoundSyncService implements SyncService {
         localImagesExtracted: imagePreparation.candidates.length,
         imagesPrepared: imagePreparation.preparedImages.length,
       },
+      reconciliation: {
+        ...plan.diagnostics.reconciliation,
+        baselineMetadataPresent: Boolean(localSyncState?.synchronizedFingerprints),
+      },
     };
     plan.sections = {
       cases: compareById(
+        'cases',
         localArchive.cases,
         onlineArchive.cases,
         (record) => record.dateLastModified,
         (record) => record.updated_at,
-        (record) => mapCaseToCloudRow(record, user.id, plannedImagePaths.cases[record.id]),
+        (record) =>
+          normalizeCaseContent({
+            ...record,
+            coverImageCloudPath:
+              plannedImagePaths.cases[record.id] ??
+              localSyncState?.cloudImagePaths?.cases?.[record.id] ??
+              null,
+          }),
+        normalizeCaseContent,
+        localSyncState?.synchronizedFingerprints,
+        reconciliationStats,
       ),
       dossiers: compareById(
+        'dossiers',
         localArchive.dossiers,
         onlineArchive.dossiers,
         (record) => record.dateModified,
         (record) => record.updated_at,
-        (record) => mapDossierToCloudRow(record, user.id, plannedImagePaths.dossiers[record.id]),
+        (record) =>
+          normalizeDossierContent({
+            ...record,
+            coverImageCloudPath:
+              plannedImagePaths.dossiers[record.id] ??
+              localSyncState?.cloudImagePaths?.dossiers?.[record.id] ??
+              null,
+            metadata: Object.fromEntries(
+              [
+                'alias',
+                'characterStatus',
+                'affiliation',
+                'region',
+                'world',
+                'eventDate',
+                'era',
+                'leader',
+                'organizationType',
+                'theoryConfidence',
+                'theoryStatus',
+              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]]),
+            ),
+          }),
+        normalizeDossierContent,
+        localSyncState?.synchronizedFingerprints,
+        reconciliationStats,
       ),
       bonds: compareById(
+        'bonds',
         localArchive.bonds,
         onlineArchive.bonds,
         (record) => record.dateModified,
         (record) => record.updated_at,
-        (record) => mapBondToCloudRow(record, user.id),
+        normalizeBondContent,
+        normalizeBondContent,
+        localSyncState?.synchronizedFingerprints,
+        reconciliationStats,
       ),
       boardEntries: compareById(
+        'boardEntries',
         localArchive.boardPins,
         onlineArchive.boardEntries,
         (record) => record.datePinned,
         (record) => record.updated_at,
-        (record) => mapBoardPinToCloudRow(record, user.id),
+        normalizeBoardEntryContent,
+        normalizeBoardEntryContent,
+        localSyncState?.synchronizedFingerprints,
+        reconciliationStats,
       ),
+    };
+    plan.diagnostics = {
+      ...plan.diagnostics,
+      reconciliation: {
+        ...plan.diagnostics.reconciliation,
+        invalidIds: reconciliationStats.invalidIds,
+        timestampParseFailures: reconciliationStats.timestampParseFailures,
+        fingerprintMismatches: reconciliationStats.fingerprintMismatches,
+      },
     };
     plan.imageStatus = {
       readyToSynchronize: imagePreparation.preparedImages.length,
@@ -541,7 +894,15 @@ class LoreBoundSyncService implements SyncService {
     const hasBlockingReview =
       !isLocalArchiveEmpty &&
       !isOnlineArchiveEmpty &&
-      Object.values(plan.sections).some((section) => section.itemsRequiringReview > 0);
+      Object.values(plan.sections).some(
+        (section) => section.conflictRecords > 0 || section.itemsRequiringReview > 0,
+      );
+    const hasCloudUpdates = Object.values(plan.sections).some(
+      (section) => section.cloudUpdatesAvailable > 0,
+    );
+    const hasLocalChanges = Object.values(plan.sections).some(
+      (section) => section.newRecords > 0 || section.updatedRecords > 0,
+    );
 
     plan.blockingReasons = [
       ...dependencyReasons,
@@ -552,16 +913,25 @@ class LoreBoundSyncService implements SyncService {
         ? ['One or more stored images must be reviewed before synchronization.']
         : []),
       ...(hasBlockingReview
-        ? ['Items Requiring Review must be resolved in a later phase before automatic synchronization.']
+        ? ['Archive Reconciliation Required. Review conflicts before synchronization.']
+        : []),
+      ...(hasCloudUpdates
+        ? ['LoreBound Online Updates Available. Review retrieval before updating this archive.']
         : []),
     ];
     plan.canSynchronize =
-      !isLocalArchiveEmpty &&
-      isOnlineArchiveEmpty &&
-      plan.blockingReasons.length === 0 &&
-      plan.online.isAvailable;
+      hasLocalChanges && plan.blockingReasons.length === 0 && plan.online.isAvailable;
     plan.canRetrieve =
       isLocalArchiveEmpty && !isOnlineArchiveEmpty && plan.blockingReasons.length === 0;
+    plan.diagnostics = {
+      ...plan.diagnostics,
+      reconciliation: {
+        ...plan.diagnostics.reconciliation,
+        automaticGateReason:
+          plan.blockingReasons[0] ??
+          (hasLocalChanges ? 'Local changes waiting.' : 'Archive up to date.'),
+      },
+    };
 
     return { ok: true, plan };
   }
@@ -691,6 +1061,7 @@ class LoreBoundSyncService implements SyncService {
           ...localArchive.bonds.map((record) => [record.id, record.dateModified]),
           ...localArchive.boardPins.map((record) => [record.id, record.datePinned]),
         ]),
+        synchronizedFingerprints: createLocalFingerprintSnapshot(localArchive, imagePaths),
         cloudImagePaths: imagePaths,
         synchronizationVersion: 1,
       });
@@ -805,6 +1176,10 @@ class LoreBoundSyncService implements SyncService {
             ...bonds.map((record) => [record.id, record.dateModified]),
             ...boardPins.map((record) => [record.id, record.datePinned]),
           ]),
+          synchronizedFingerprints: createLocalFingerprintSnapshot(
+            { cases, dossiers, bonds, boardPins, activeCaseId: null },
+            cloudImagePaths,
+          ),
           cloudImagePaths,
           synchronizationVersion: 1,
         });

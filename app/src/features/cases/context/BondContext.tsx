@@ -13,6 +13,7 @@ import {
   readBondsByCaseId,
   updateBond,
 } from '../storage/caseStorage';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { Bond, BondFormValues } from '../types/bondTypes';
 import { useCases } from './CaseContext';
 
@@ -80,6 +81,7 @@ export function BondProvider({ children }: { children: ReactNode }) {
 
       try {
         const createdBond = await createBond(activeCase.id, values);
+        requestAutomaticSynchronization('bond created');
         setBonds((currentBonds) => sortBonds([createdBond, ...currentBonds]));
         setErrorMessage(null);
         return createdBond;
@@ -95,6 +97,7 @@ export function BondProvider({ children }: { children: ReactNode }) {
   const updateExistingBond = useCallback(async (id: string, values: BondFormValues) => {
     try {
       const updatedBond = await updateBond(id, values);
+      requestAutomaticSynchronization('bond updated');
       setBonds((currentBonds) =>
         sortBonds(currentBonds.map((bond) => (bond.id === id ? updatedBond : bond))),
       );
@@ -110,6 +113,7 @@ export function BondProvider({ children }: { children: ReactNode }) {
   const deleteExistingBond = useCallback(async (id: string) => {
     try {
       await deleteBond(id);
+      requestAutomaticSynchronization('bond deleted');
       setBonds((currentBonds) => currentBonds.filter((bond) => bond.id !== id));
       setErrorMessage(null);
     } catch (error) {

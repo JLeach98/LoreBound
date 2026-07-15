@@ -9,6 +9,8 @@ import { loreBoundVersion } from '../../app/version';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { authService, type AuthStatus } from '../../services/auth/AuthService';
 import { useOperationsConsole } from '../../services/preferences/OperationsConsoleContext';
+import { useInvestigatorProfile } from '../../services/profile/InvestigatorProfileContext';
+import { useAutomaticSync } from '../../services/sync/AutomaticSyncContext';
 import { syncService, type SyncStatus } from '../../services/sync/SyncService';
 import type { SyncPlan } from '../../services/sync/SyncTypes';
 
@@ -25,12 +27,20 @@ function createEmptyPlanSection() {
   return {
     newRecords: 0,
     existingRecords: 0,
+    unchangedRecords: 0,
+    updatedRecords: 0,
+    cloudUpdatesAvailable: 0,
+    conflictRecords: 0,
+    unsupportedRecords: 0,
+    invalidRecords: 0,
     itemsRequiringReview: 0,
     localOnly: 0,
     onlineOnly: 0,
     matchingIds: 0,
     localNewer: 0,
     onlineNewer: 0,
+    conflicts: 0,
+    requiresReview: 0,
     sameTimestampDifferingContents: 0,
   };
 }
@@ -98,6 +108,13 @@ function emptyPlan(): SyncPlan {
         imageUploadsFailed: 0,
         storageVerificationSucceeded: 0,
       },
+      reconciliation: {
+        baselineMetadataPresent: false,
+        invalidIds: 0,
+        timestampParseFailures: 0,
+        fingerprintMismatches: 0,
+        automaticGateReason: 'Not reviewed.',
+      },
     },
   };
 }
@@ -135,7 +152,7 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
-function openLibraryAccess(view: 'overview' | 'review' | 'sign-out') {
+function openLibraryAccess(view: 'overview' | 'review' | 'sign-out' | 'profile' | 'setup') {
   window.dispatchEvent(
     new CustomEvent('lorebound:open-library-access', {
       detail: { view },
@@ -145,6 +162,20 @@ function openLibraryAccess(view: 'overview' | 'review' | 'sign-out') {
 
 export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
   const { operationsConsoleUnlocked, setOperationsConsoleUnlocked } = useOperationsConsole();
+  const {
+    profile,
+    profileState,
+    errorMessage: profileError,
+    diagnostics: profileDiagnostics,
+  } = useInvestigatorProfile();
+  const {
+    isAutomaticSyncEnabled,
+    automaticSyncState,
+    automaticSyncLabel,
+    lastAutomaticSyncAt,
+    setAutomaticSyncEnabled,
+    synchronizeNow,
+  } = useAutomaticSync();
   const [activeSection, setActiveSection] = useState<SettingsSection>('general');
   const [isUnlockConfirmOpen, setIsUnlockConfirmOpen] = useState(false);
   const [isRelockConfirmOpen, setIsRelockConfirmOpen] = useState(false);
@@ -367,9 +398,26 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
     window.setTimeout(() => closeButtonRef.current?.focus(), 0);
   }
 
-  function handleOpenLibraryAccess(view: 'overview' | 'review' | 'sign-out') {
+  function handleOpenLibraryAccess(view: 'overview' | 'review' | 'sign-out' | 'profile' | 'setup') {
     openLibraryAccess(view);
     closeSettings();
+  }
+
+  async function handleSynchronizeNow() {
+    setNotice('Synchronizing Investigation...');
+
+    try {
+      await synchronizeNow();
+      const [nextSyncStatus, nextPlanResult] = await Promise.all([
+        syncService.getStatus(),
+        syncService.createPlan(),
+      ]);
+      setSyncStatus(nextSyncStatus);
+      setSyncPlan(nextPlanResult.plan);
+      setNotice('Investigation Synchronized');
+    } catch {
+      setNotice('Synchronization Failed. Review synchronization before trying again.');
+    }
   }
 
   return (
@@ -448,11 +496,28 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                         <dt>Current Investigator</dt>
                         <dd>
                           {authStatus?.state === 'signed-in' && authStatus.user
-                            ? authStatus.user.email
+                            ? (profile?.username ?? authStatus.user.displayName)
                             : 'Not connected'}
                         </dd>
                       </div>
+                      <div>
+                        <dt>Badge</dt>
+                        <dd>{profile?.badgeNumber ?? 'Not issued'}</dd>
+                      </div>
+                      <div>
+                        <dt>Profile Status</dt>
+                        <dd>
+                          {profile
+                            ? 'Loaded'
+                            : profileState === 'migration-unavailable'
+                              ? 'Database update required'
+                              : profileState === 'offline'
+                                ? 'Offline'
+                                : 'Not available'}
+                        </dd>
+                      </div>
                     </dl>
+                    {profileError ? <p>{profileError}</p> : null}
                   </section>
                   <section className="settings-file-card">
                     <strong>Archive Status</strong>
@@ -467,18 +532,49 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       </div>
                       <div>
                         <dt>Last Synchronization</dt>
-                        <dd>{formatDateTime(syncPlan.lastSynchronizedAt ?? syncStatus?.lastSyncedAt)}</dd>
+                        <dd>
+                          {formatDateTime(
+                            lastAutomaticSyncAt ?? syncPlan.lastSynchronizedAt ?? syncStatus?.lastSyncedAt,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Automatic Sync</dt>
+                        <dd>{automaticSyncLabel}</dd>
                       </div>
                     </dl>
+                    <label className="profile-sync-toggle settings-sync-toggle">
+                      <input
+                        type="checkbox"
+                        checked={isAutomaticSyncEnabled}
+                        onChange={(event) => setAutomaticSyncEnabled(event.target.checked)}
+                      />
+                      <span>Automatic Synchronization</span>
+                    </label>
                   </section>
                 </div>
                 <div className="settings-actions">
                   <button
                     type="button"
                     className="auth-button auth-button--primary"
+                    onClick={() => handleOpenLibraryAccess('profile')}
+                  >
+                    Open Investigator Profile
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--secondary"
                     onClick={() => handleOpenLibraryAccess('overview')}
                   >
                     Library Access
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--secondary"
+                    onClick={handleSynchronizeNow}
+                    disabled={authStatus?.state !== 'signed-in'}
+                  >
+                    Synchronize Now
                   </button>
                   <button
                     type="button"
@@ -572,11 +668,52 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                     </dl>
                   </details>
                   <details>
+                    <summary>Investigator Profile</summary>
+                    <dl>
+                      <div>
+                        <dt>Authenticated user present</dt>
+                        <dd>{profileDiagnostics.authenticatedUserPresent ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Profile query</dt>
+                        <dd>{profileDiagnostics.profileQueryStatus}</dd>
+                      </div>
+                      <div>
+                        <dt>Profile record found</dt>
+                        <dd>{profileDiagnostics.profileRecordFound ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Profile creation attempted</dt>
+                        <dd>{profileDiagnostics.profileCreationAttempted ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Profile state</dt>
+                        <dd>{profileState}</dd>
+                      </div>
+                      <div>
+                        <dt>Error code</dt>
+                        <dd>{profileDiagnostics.sanitizedErrorCode ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Error message</dt>
+                        <dd>{profileDiagnostics.sanitizedErrorMessage ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>HTTP status</dt>
+                        <dd>{profileDiagnostics.httpStatus ?? 'None'}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
                     <summary>Synchronization</summary>
                     <dl>
                       <div>
                         <dt>Current stage</dt>
-                        <dd>Idle</dd>
+                        <dd>{automaticSyncState}</dd>
+                      </div>
+                      <div>
+                        <dt>Automatic synchronization enabled</dt>
+                        <dd>{isAutomaticSyncEnabled ? 'Yes' : 'No'}</dd>
                       </div>
                       <div>
                         <dt>Last synchronized</dt>
@@ -590,6 +727,105 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                             0,
                           )}
                         </dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Archive Reconciliation</summary>
+                    <dl>
+                      <div>
+                        <dt>Records matched</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.matchingIds,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Local-only</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.localOnly,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud-only</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.onlineOnly,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Matching</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.unchangedRecords,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Local-newer</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.localNewer,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud-newer</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.onlineNewer,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Conflicts</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.conflictRecords,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Requires review</dt>
+                        <dd>
+                          {Object.values(syncPlan.sections).reduce(
+                            (total, section) => total + section.itemsRequiringReview,
+                            0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Invalid IDs</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.invalidIds}</dd>
+                      </div>
+                      <div>
+                        <dt>Timestamp parse failures</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.timestampParseFailures}</dd>
+                      </div>
+                      <div>
+                        <dt>Fingerprint mismatches</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.fingerprintMismatches}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline metadata present</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.baselineMetadataPresent ? 'Yes' : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Automatic gate reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.automaticGateReason}</dd>
                       </div>
                     </dl>
                   </details>

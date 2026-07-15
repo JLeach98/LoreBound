@@ -15,6 +15,8 @@ import {
   cloudReadinessService,
   type CloudReadinessStatus,
 } from '../../services/cloud/CloudReadinessService';
+import { useInvestigatorProfile } from '../../services/profile/InvestigatorProfileContext';
+import { useAutomaticSync } from '../../services/sync/AutomaticSyncContext';
 import { syncService } from '../../services/sync/SyncService';
 import type { SyncPlan, SyncProgress, SyncResult } from '../../services/sync/SyncTypes';
 
@@ -24,6 +26,8 @@ type AuthView =
   | 'sign-up'
   | 'confirmation'
   | 'connected'
+  | 'profile-onboarding'
+  | 'edit-profile'
   | 'review'
   | 'confirm-sync'
   | 'confirm-retrieve'
@@ -95,6 +99,13 @@ function emptyPlan(): SyncPlan {
         imageUploadsFailed: 0,
         storageVerificationSucceeded: 0,
       },
+      reconciliation: {
+        baselineMetadataPresent: false,
+        invalidIds: 0,
+        timestampParseFailures: 0,
+        fingerprintMismatches: 0,
+        automaticGateReason: 'Not reviewed.',
+      },
     },
   };
 }
@@ -103,12 +114,20 @@ function createEmptyPlanSection() {
   return {
     newRecords: 0,
     existingRecords: 0,
+    unchangedRecords: 0,
+    updatedRecords: 0,
+    cloudUpdatesAvailable: 0,
+    conflictRecords: 0,
+    unsupportedRecords: 0,
+    invalidRecords: 0,
     itemsRequiringReview: 0,
     localOnly: 0,
     onlineOnly: 0,
     matchingIds: 0,
     localNewer: 0,
     onlineNewer: 0,
+    conflicts: 0,
+    requiresReview: 0,
     sameTimestampDifferingContents: 0,
   };
 }
@@ -155,6 +174,24 @@ function formatSyncDateTime(value?: string | null) {
     month: 'short',
     day: 'numeric',
   }).format(date)} ${time}`;
+}
+
+function formatMemberSince(value?: string | null) {
+  if (!value) {
+    return 'Not available';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Not available';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
 }
 
 function getReadableAuthError(error: AuthFailure) {
@@ -232,11 +269,11 @@ function getSummaryTotals(plan: SyncPlan) {
   return values.reduce(
     (totals, comparison) => ({
       newRecords: totals.newRecords + comparison.localOnly,
-      updatedRecords:
-        totals.updatedRecords +
-        comparison.localNewer +
-        comparison.sameTimestampDifferingContents,
-      existingRecords: totals.existingRecords + comparison.existingRecords,
+      updatedRecords: totals.updatedRecords + comparison.updatedRecords,
+      existingRecords: totals.existingRecords + comparison.unchangedRecords,
+      cloudUpdatesAvailable:
+        totals.cloudUpdatesAvailable + comparison.cloudUpdatesAvailable,
+      conflicts: totals.conflicts + comparison.conflictRecords,
       itemsRequiringReview:
         totals.itemsRequiringReview + comparison.itemsRequiringReview,
     }),
@@ -244,18 +281,49 @@ function getSummaryTotals(plan: SyncPlan) {
       newRecords: 0,
       updatedRecords: 0,
       existingRecords: 0,
+      cloudUpdatesAvailable: 0,
+      conflicts: 0,
       itemsRequiringReview: 0,
     },
   );
 }
 
-function getSyncActionLabel(plan: SyncPlan) {
-  return plan.lastSynchronizedAt || getOnlineRecordTotal(plan) > 0
-    ? 'Update Investigation'
-    : 'Synchronize Investigation';
+function getArchiveStatusLabel(totals: ReturnType<typeof getSummaryTotals>) {
+  if (totals.conflicts > 0) {
+    return 'Archive Reconciliation Required';
+  }
+
+  if (totals.itemsRequiringReview > 0) {
+    return 'Review Required';
+  }
+
+  if (totals.cloudUpdatesAvailable > 0) {
+    return 'LoreBound Online Updates Available';
+  }
+
+  if (totals.newRecords + totals.updatedRecords > 0) {
+    return 'Local Changes Waiting';
+  }
+
+  return 'Archive Up To Date';
 }
 
 export function AuthAccessPanel() {
+  const {
+    profile,
+    profilePhotoUrl,
+    isLoading: isProfileLoading,
+    errorMessage: profileError,
+    profileState,
+    needsOnboarding,
+    saveProfile,
+  } = useInvestigatorProfile();
+  const {
+    isAutomaticSyncEnabled,
+    lastAutomaticSyncAt,
+    setAutomaticSyncEnabled,
+    synchronizeNow,
+  } = useAutomaticSync();
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [cloudReadiness, setCloudReadiness] = useState<CloudReadinessStatus | null>(null);
   const [syncPlan, setSyncPlan] = useState<SyncPlan>(emptyPlan);
@@ -266,6 +334,12 @@ export function AuthAccessPanel() {
   const [confirmedEmail, setConfirmedEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [profileUsername, setProfileUsername] = useState('');
+  const [profileDisplayName, setProfileDisplayName] = useState('');
+  const [profileTitle, setProfileTitle] = useState('Investigator');
+  const [profileBio, setProfileBio] = useState('');
+  const [profilePhotoDataUrl, setProfilePhotoDataUrl] = useState<string | null>(null);
+  const [removeProfilePhoto, setRemoveProfilePhoto] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeState, setNoticeState] = useState<AuthNoticeState>('idle');
   const [isOpen, setIsOpen] = useState(false);
@@ -277,15 +351,26 @@ export function AuthAccessPanel() {
 
   const isSignedIn = authStatus?.state === 'signed-in';
   const isConfirmationRequired = authStatus?.state === 'confirmation-required';
+  const identityLabel = profile?.username ?? authStatus?.user?.displayName ?? 'Investigator Profile';
   const localRecordTotal = getLocalRecordTotal(syncPlan);
   const onlineRecordTotal = getOnlineRecordTotal(syncPlan);
   const summaryTotals = getSummaryTotals(syncPlan);
-  const syncActionLabel = getSyncActionLabel(syncPlan);
+  const archiveStatusLabel = getArchiveStatusLabel(summaryTotals);
+  const pendingLocalChanges =
+    summaryTotals.newRecords +
+    summaryTotals.updatedRecords +
+    summaryTotals.conflicts +
+    summaryTotals.itemsRequiringReview;
+  const syncActionLabel = syncPlan.lastSynchronizedAt || onlineRecordTotal > 0
+    ? 'Update Investigation'
+    : 'Synchronize Investigation';
   const hasNoSynchronizationChanges =
     localRecordTotal > 0 &&
     onlineRecordTotal > 0 &&
     summaryTotals.newRecords === 0 &&
     summaryTotals.updatedRecords === 0 &&
+    summaryTotals.cloudUpdatesAvailable === 0 &&
+    summaryTotals.conflicts === 0 &&
     summaryTotals.itemsRequiringReview === 0;
   const signUpValidation = useMemo(() => {
     if (authView !== 'sign-up') {
@@ -333,6 +418,21 @@ export function AuthAccessPanel() {
     !isWorking &&
     ((authView === 'sign-up' && !signUpValidation) ||
       (authView === 'sign-in' && !signInValidation));
+  const profileValidation = useMemo(() => {
+    if (authView !== 'profile-onboarding' && authView !== 'edit-profile') {
+      return null;
+    }
+
+    if (profileUsername.trim().length < 3) {
+      return 'Username must be at least 3 characters.';
+    }
+
+    if (profileTitle.trim().length < 2) {
+      return 'Investigator title is required.';
+    }
+
+    return null;
+  }, [authView, profileTitle, profileUsername]);
 
   useEffect(() => {
     let isMounted = true;
@@ -393,7 +493,10 @@ export function AuthAccessPanel() {
     function handleOpenLibraryAccess(event: Event) {
       const requestedView =
         event instanceof CustomEvent &&
-        (event.detail?.view === 'review' || event.detail?.view === 'sign-out')
+        (event.detail?.view === 'review' ||
+          event.detail?.view === 'sign-out' ||
+          event.detail?.view === 'profile' ||
+          event.detail?.view === 'setup')
           ? event.detail.view
           : 'overview';
 
@@ -406,6 +509,11 @@ export function AuthAccessPanel() {
 
       if (requestedView === 'review' && isSignedIn) {
         void refreshSynchronizationReview();
+        return;
+      }
+
+      if (requestedView === 'setup' && isSignedIn) {
+        goToView('profile-onboarding');
         return;
       }
 
@@ -426,6 +534,26 @@ export function AuthAccessPanel() {
 
     window.setTimeout(() => closeButtonRef.current?.focus(), 0);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!profile) {
+      return;
+    }
+
+    setProfileUsername(profile.username);
+    setProfileDisplayName(profile.displayName ?? '');
+    setProfileTitle(profile.title);
+    setProfileBio(profile.bio ?? '');
+    setProfilePhotoDataUrl(null);
+    setRemoveProfilePhoto(false);
+  }, [profile]);
+
+  useEffect(() => {
+    if (isSignedIn && needsOnboarding) {
+      setIsOpen(true);
+      setAuthView('profile-onboarding');
+    }
+  }, [isSignedIn, needsOnboarding]);
 
   function closeDialog() {
     setIsOpen(false);
@@ -577,6 +705,79 @@ export function AuthAccessPanel() {
     setIsWorking(false);
   }
 
+  function handleProfilePhotoChange(file: File | null) {
+    if (!file) {
+      setProfilePhotoDataUrl(null);
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setProfilePhotoDataUrl(reader.result);
+        setRemoveProfilePhoto(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function handleProfileSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (profileValidation) {
+      setNotice(profileValidation);
+      setNoticeState('error');
+      return;
+    }
+
+    setIsWorking(true);
+    setNotice(null);
+
+    try {
+      await saveProfile({
+        username: profileUsername,
+        displayName: profileDisplayName,
+        title: profileTitle,
+        bio: profileBio,
+        profilePhotoDataUrl,
+        removeProfilePhoto,
+        onboardingCompleted: true,
+      });
+      setProfilePhotoDataUrl(null);
+      setRemoveProfilePhoto(false);
+      setNotice('Investigator Profile updated.');
+      setNoticeState('connected');
+      setAuthView('connected');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'The Investigator Profile could not be updated.',
+      );
+      setNoticeState('error');
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function handleSynchronizeNow() {
+    setIsWorking(true);
+
+    try {
+      await synchronizeNow();
+      const nextPlanResult = await syncService.createPlan();
+      setSyncPlan(nextPlanResult.plan);
+      setNotice('Investigation Synchronized.');
+      setNoticeState('connected');
+    } catch {
+      setNotice('Synchronization Failed. Review synchronization before trying again.');
+      setNoticeState('error');
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   const controlLabel =
     connectivity === 'offline'
       ? 'Offline Mode'
@@ -584,7 +785,7 @@ export function AuthAccessPanel() {
         ? 'Connected to LoreBound Online'
         : isConfirmationRequired
           ? 'Confirmation Required'
-          : 'Local Archive';
+        : 'Local Archive';
   const readinessLabel =
     connectivity === 'offline'
       ? 'Offline Mode'
@@ -593,6 +794,39 @@ export function AuthAccessPanel() {
         : 'Connect to review LoreBound Online';
   const formTitle = authView === 'sign-up' ? 'Create Investigator Profile' : 'Investigator Connect';
   const formValidation = authView === 'sign-up' ? signUpValidation : signInValidation;
+
+  function openLibraryAccess() {
+    setAuthView(isSignedIn ? 'connected' : 'overview');
+    setIsOpen(true);
+  }
+
+  function getProfileStateMessage() {
+    if (profileState === 'loading' || isProfileLoading) {
+      return 'Loading Investigator Profile';
+    }
+
+    if (profileState === 'migration-unavailable') {
+      return 'Investigator Profile setup is not yet available because LoreBound Online requires a database update.';
+    }
+
+    if (profileState === 'permission-denied') {
+      return 'Unable to open Investigator Profile. Your Local Archive remains available.';
+    }
+
+    if (profileState === 'offline') {
+      return 'LoreBound Online is unavailable while you are offline. Your Local Archive remains available.';
+    }
+
+    if (profileState === 'no-profile' || profileState === 'profile-creation-required') {
+      return 'Investigator Profile setup is ready. Prepare your personnel file to continue.';
+    }
+
+    if (profileState === 'unexpected-failure') {
+      return profileError ?? 'Unable to open Investigator Profile. Your Local Archive remains available.';
+    }
+
+    return null;
+  }
 
   async function refreshSynchronizationReview() {
     const nextPlanResult = await syncService.createPlan();
@@ -626,17 +860,19 @@ export function AuthAccessPanel() {
     setSyncPlan(nextPlanResult.plan);
   }
 
+  const profileStateMessage = getProfileStateMessage();
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
         className="account-status-control"
-        onClick={() => setIsOpen(true)}
+        onClick={openLibraryAccess}
         aria-haspopup="dialog"
       >
         <span>{controlLabel}</span>
-        <strong>{isSignedIn ? authStatus.user?.email : 'Investigator Profile'}</strong>
+        <strong>{isSignedIn ? identityLabel : 'Investigator Profile'}</strong>
       </button>
 
       {isOpen ? (
@@ -665,28 +901,188 @@ export function AuthAccessPanel() {
               </button>
             </header>
 
-            {isSignedIn && authView !== 'review' ? (
-              <div className="auth-dialog__signed-in">
-                <span>Connected to LoreBound Online</span>
-                <p>Your Investigator Profile is now connected.</p>
-                <p>
-                  Your investigations remain stored inside your Local Archive until you choose to
-                  synchronize them.
-                </p>
-                <small>{authStatus.user?.email}</small>
-                <small>{readinessLabel}</small>
-                <small>{cloudReadiness?.detail}</small>
+            {isSignedIn && authView === 'connected' ? (
+              <div className="auth-dialog__signed-in auth-dialog__personnel-file">
+                <div className="profile-credential">
+                  <div className="profile-credential__photo" aria-hidden="true">
+                    {profilePhotoUrl ? (
+                      <img src={profilePhotoUrl} alt="" />
+                    ) : (
+                      <span>{identityLabel.slice(0, 2).toUpperCase()}</span>
+                    )}
+                  </div>
+                  <div>
+                    <span>{profile?.username ?? 'Investigator Profile'}</span>
+                    <h3>{profile?.displayName || profile?.username || 'Investigator'}</h3>
+                    <p>{profile?.title ?? 'Investigator'}</p>
+                  </div>
+                </div>
+
+                {profileStateMessage ? (
+                  <p
+                    className="profile-state-message"
+                    role={
+                      profileState === 'migration-unavailable' ||
+                      profileState === 'permission-denied' ||
+                      profileState === 'unexpected-failure'
+                        ? 'alert'
+                        : 'status'
+                    }
+                  >
+                    {profileStateMessage}
+                  </p>
+                ) : null}
+
+                <dl className="profile-file-list">
+                  <div>
+                    <dt>Badge</dt>
+                    <dd>{profile?.badgeNumber ?? 'Preparing badge'}</dd>
+                  </div>
+                  <div>
+                    <dt>LoreBound Online</dt>
+                    <dd>{readinessLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Email</dt>
+                    <dd>{authStatus.user?.email ?? 'Not available'}</dd>
+                  </div>
+                  <div>
+                    <dt>Member Since</dt>
+                    <dd>{formatMemberSince(profile?.createdAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Last Sync</dt>
+                    <dd>{formatSyncDateTime(lastAutomaticSyncAt ?? syncPlan.lastSynchronizedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Automatic Sync</dt>
+                    <dd>{isAutomaticSyncEnabled ? 'On' : 'Off'}</dd>
+                  </div>
+                  <div>
+                    <dt>Archive Status</dt>
+                    <dd>{connectivity === 'offline' ? 'Offline' : archiveStatusLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Local Archive</dt>
+                    <dd>Active</dd>
+                  </div>
+                  <div>
+                    <dt>Pending Changes</dt>
+                    <dd>
+                      {pendingLocalChanges > 0
+                        ? `${pendingLocalChanges} awaiting review`
+                        : 'No pending changes detected'}
+                    </dd>
+                  </div>
+                </dl>
+
+                {profile?.bio ? <p className="profile-file-bio">{profile.bio}</p> : null}
+                {profileError ? <p className="auth-dialog__inline-validation">{profileError}</p> : null}
+                {cloudReadiness?.detail ? <small>{cloudReadiness.detail}</small> : null}
+
+                <label className="profile-sync-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isAutomaticSyncEnabled}
+                    onChange={(event) => setAutomaticSyncEnabled(event.target.checked)}
+                  />
+                  <span>Automatic Synchronization</span>
+                </label>
+
                 <div className="auth-dialog__actions">
                   <button
                     type="button"
-                    className="auth-button auth-button--primary"
-                    onClick={refreshSynchronizationReview}
+                    className="auth-button auth-button--secondary"
+                    onClick={() => goToView(profile ? 'connected' : 'profile-onboarding')}
+                    disabled={
+                      isWorking ||
+                      isProfileLoading ||
+                      profileState === 'migration-unavailable' ||
+                      profileState === 'permission-denied' ||
+                      profileState === 'unexpected-failure'
+                    }
                   >
-                    Continue
+                    Open Investigator Profile
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--primary"
+                    onClick={handleSynchronizeNow}
+                    disabled={isWorking || isProfileLoading}
+                  >
+                    Synchronize Now
                   </button>
                   <button
                     type="button"
                     className="auth-button auth-button--secondary"
+                    onClick={refreshSynchronizationReview}
+                    disabled={isWorking}
+                  >
+                    Review Synchronization
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--secondary"
+                    onClick={() => goToView('edit-profile')}
+                    disabled={isWorking || isProfileLoading || !profile}
+                  >
+                    Edit Profile
+                  </button>
+                  {syncPlan.canRetrieve ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--secondary"
+                      onClick={() => goToView('confirm-retrieve')}
+                      disabled={isWorking}
+                    >
+                      Retrieve Investigation
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
+                    onClick={handleInvestigatorOffline}
+                    disabled={isWorking}
+                  >
+                    Investigator Offline
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
+                    onClick={closeDialog}
+                    disabled={isWorking}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {isSignedIn &&
+            ![
+              'connected',
+              'profile-onboarding',
+              'edit-profile',
+              'review',
+              'confirm-sync',
+              'confirm-retrieve',
+              'progress',
+              'complete',
+              'sync-error',
+            ].includes(authView) ? (
+              <div className="auth-dialog__signed-in auth-dialog__personnel-file">
+                <p className="profile-state-message">Loading Investigator Profile</p>
+                <div className="auth-dialog__actions">
+                  <button
+                    type="button"
+                    className="auth-button auth-button--primary"
+                    onClick={() => goToView('connected')}
+                  >
+                    Open Investigator Profile
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
                     onClick={handleInvestigatorOffline}
                     disabled={isWorking}
                   >
@@ -832,13 +1228,137 @@ export function AuthAccessPanel() {
               </div>
             ) : null}
 
+            {isSignedIn && (authView === 'profile-onboarding' || authView === 'edit-profile') ? (
+              <form className="auth-dialog__form profile-edit-form" onSubmit={handleProfileSubmit}>
+                <div className="auth-dialog__form-heading">
+                  {authView === 'edit-profile' ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--quiet"
+                      onClick={() => goToView('connected')}
+                      disabled={isWorking || needsOnboarding}
+                    >
+                      Back
+                    </button>
+                  ) : null}
+                  <h3>
+                    {authView === 'profile-onboarding'
+                      ? 'Prepare Investigator Profile'
+                      : 'Edit Investigator Profile'}
+                  </h3>
+                </div>
+
+                <div className="profile-photo-editor">
+                  <div className="profile-credential__photo" aria-hidden="true">
+                    {profilePhotoDataUrl ? (
+                      <img src={profilePhotoDataUrl} alt="" />
+                    ) : profilePhotoUrl && !removeProfilePhoto ? (
+                      <img src={profilePhotoUrl} alt="" />
+                    ) : (
+                      <span>{profileUsername.slice(0, 2).toUpperCase() || 'LB'}</span>
+                    )}
+                  </div>
+                  <div>
+                    <label htmlFor="profile-photo">Profile Photo</label>
+                    <input
+                      id="profile-photo"
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) =>
+                        handleProfilePhotoChange(event.currentTarget.files?.[0] ?? null)
+                      }
+                    />
+                    {profile?.profilePhotoUrl ? (
+                      <button
+                        type="button"
+                        className="auth-button auth-button--quiet"
+                        onClick={() => {
+                          setRemoveProfilePhoto(true);
+                          setProfilePhotoDataUrl(null);
+                        }}
+                      >
+                        Remove Photo
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <label htmlFor="profile-username">Username</label>
+                <input
+                  id="profile-username"
+                  type="text"
+                  value={profileUsername}
+                  autoComplete="username"
+                  onChange={(event) => setProfileUsername(event.target.value)}
+                  required
+                />
+
+                <label htmlFor="profile-display-name">Display Name</label>
+                <input
+                  id="profile-display-name"
+                  type="text"
+                  value={profileDisplayName}
+                  onChange={(event) => setProfileDisplayName(event.target.value)}
+                />
+
+                <label htmlFor="profile-title">Investigator Title</label>
+                <input
+                  id="profile-title"
+                  type="text"
+                  value={profileTitle}
+                  onChange={(event) => setProfileTitle(event.target.value)}
+                  required
+                />
+
+                <label htmlFor="profile-bio">Bio</label>
+                <textarea
+                  id="profile-bio"
+                  value={profileBio}
+                  onChange={(event) => setProfileBio(event.target.value)}
+                  rows={4}
+                />
+
+                <small>Badge {profile?.badgeNumber ?? 'will be issued automatically'} cannot be changed.</small>
+
+                {profileValidation ? (
+                  <p className="auth-dialog__inline-validation">{profileValidation}</p>
+                ) : null}
+
+                <div className="auth-dialog__form-actions">
+                  <button
+                    type="submit"
+                    className="auth-button auth-button--primary"
+                    disabled={isWorking || Boolean(profileValidation)}
+                  >
+                    {isWorking ? 'Updating...' : 'Save Profile'}
+                  </button>
+                  {authView === 'edit-profile' ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--quiet"
+                      onClick={() => goToView('connected')}
+                      disabled={isWorking}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
+                    onClick={handleInvestigatorOffline}
+                    disabled={isWorking}
+                  >
+                    Investigator Offline
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
             {isSignedIn && authView === 'review' ? (
               <section className="archive-sync-review" aria-labelledby="archive-sync-title">
                 <div>
                   <p>Archive Synchronization Review</p>
-                  <h3 id="archive-sync-title">
-                    No investigation will be committed until you approve synchronization.
-                  </h3>
+                  <h3 id="archive-sync-title">{archiveStatusLabel}</h3>
                 </div>
                 <div className="archive-sync-review__status">
                   <span>Last Secured</span>
@@ -850,7 +1370,7 @@ export function AuthAccessPanel() {
                   <p>Review the records inside this browser's Local Archive.</p>
                 )}
                 {hasNoSynchronizationChanges ? (
-                  <p>LoreBound Online already contains the latest version of this Investigation.</p>
+                  <p>Your Local Archive and LoreBound Online contain the same Investigation records.</p>
                 ) : null}
                 {syncPlan.online.isAvailable && onlineRecordTotal === 0 ? (
                   <p>LoreBound Online does not yet contain any archived investigations.</p>
@@ -927,8 +1447,16 @@ export function AuthAccessPanel() {
                         <dd>{summaryTotals.updatedRecords}</dd>
                       </div>
                       <div>
-                        <dt>No Changes</dt>
+                        <dt>Unchanged Records</dt>
                         <dd>{summaryTotals.existingRecords}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud Updates Available</dt>
+                        <dd>{summaryTotals.cloudUpdatesAvailable}</dd>
+                      </div>
+                      <div>
+                        <dt>Conflicts</dt>
+                        <dd>{summaryTotals.conflicts}</dd>
                       </div>
                       <div>
                         <dt>Items Requiring Review</dt>
@@ -941,15 +1469,21 @@ export function AuthAccessPanel() {
                   <p>{syncPlan.blockingReasons[0]}</p>
                 ) : null}
                 <div className="auth-dialog__actions">
-                  <button
-                    type="button"
-                    className="auth-button auth-button--primary"
-                    disabled={!syncPlan.canSynchronize || isWorking}
-                    onClick={() => goToView('confirm-sync')}
-                    title={!syncPlan.canSynchronize ? syncPlan.blockingReasons[0] : undefined}
-                  >
-                    {syncActionLabel}
-                  </button>
+                  {hasNoSynchronizationChanges ? (
+                    <button type="button" className="auth-button auth-button--primary" onClick={closeDialog}>
+                      Close
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--primary"
+                      disabled={!syncPlan.canSynchronize || isWorking}
+                      onClick={() => goToView('confirm-sync')}
+                      title={!syncPlan.canSynchronize ? syncPlan.blockingReasons[0] : undefined}
+                    >
+                      {summaryTotals.conflicts > 0 ? 'Review Conflicts' : syncActionLabel}
+                    </button>
+                  )}
                   {syncPlan.canRetrieve ? (
                     <button
                       type="button"
@@ -958,6 +1492,16 @@ export function AuthAccessPanel() {
                       onClick={() => goToView('confirm-retrieve')}
                     >
                       Retrieve Investigation
+                    </button>
+                  ) : null}
+                  {hasNoSynchronizationChanges ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--secondary"
+                      disabled={isWorking}
+                      onClick={handleSynchronizeNow}
+                    >
+                      Synchronize Now
                     </button>
                   ) : null}
                 </div>

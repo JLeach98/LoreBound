@@ -48,6 +48,13 @@ export type SyncDiagnostics = {
     imageUploadsFailed: number;
     storageVerificationSucceeded: number;
   };
+  reconciliation: {
+    baselineMetadataPresent: boolean;
+    invalidIds: number;
+    timestampParseFailures: number;
+    fingerprintMismatches: number;
+    automaticGateReason: string;
+  };
 };
 
 export type SyncEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
@@ -73,12 +80,20 @@ export type SyncStage =
 export type SyncPlanSection = {
   newRecords: number;
   existingRecords: number;
+  unchangedRecords: number;
+  updatedRecords: number;
+  cloudUpdatesAvailable: number;
+  conflictRecords: number;
+  unsupportedRecords: number;
+  invalidRecords: number;
   itemsRequiringReview: number;
   localOnly: number;
   onlineOnly: number;
   matchingIds: number;
   localNewer: number;
   onlineNewer: number;
+  conflicts: number;
+  requiresReview: number;
   sameTimestampDifferingContents: number;
 };
 

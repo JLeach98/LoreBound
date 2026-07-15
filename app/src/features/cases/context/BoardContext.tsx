@@ -13,6 +13,7 @@ import {
   removeBoardPin,
   updateBoardPinPosition,
 } from '../storage/caseStorage';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import { useCases } from './CaseContext';
 
@@ -80,6 +81,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
 
       try {
         const pinnedDossier = await pinDossierToBoard(activeCase.id, dossierId, position);
+        requestAutomaticSynchronization('evidence pinned');
         setBoardPins((currentPins) => {
           const hasPin = currentPins.some((pin) => pin.id === pinnedDossier.id);
 
@@ -105,6 +107,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
   const removePin = useCallback(async (pinId: string) => {
     try {
       await removeBoardPin(pinId);
+      requestAutomaticSynchronization('evidence unpinned');
       setBoardPins((currentPins) => currentPins.filter((pin) => pin.id !== pinId));
       setErrorMessage(null);
     } catch (error) {
@@ -117,6 +120,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
   const movePin = useCallback(async (pinId: string, position: BoardPinPosition) => {
     try {
       const updatedPin = await updateBoardPinPosition(pinId, position);
+      requestAutomaticSynchronization('evidence moved');
       setBoardPins((currentPins) =>
         sortPins(currentPins.map((pin) => (pin.id === updatedPin.id ? updatedPin : pin))),
       );
