@@ -24,6 +24,7 @@ export function InvestigationSectionView({
     Events: 'Event',
     Organizations: 'Organization',
     Theories: 'Theory',
+    Artifacts: 'Artifact',
   };
   const dossierType = dossierSectionTypes[section];
 

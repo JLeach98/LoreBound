@@ -66,10 +66,13 @@ export function mapDossierToCloudRow(
   cloudImagePath?: string | null,
 ): CloudDossierRow {
   const metadata = removeEmptyValues(
-    metadataFields.reduce<Record<string, unknown>>((values, field) => {
-      values[field] = dossier[field];
-      return values;
-    }, {}),
+    {
+      ...metadataFields.reduce<Record<string, unknown>>((values, field) => {
+        values[field] = dossier[field];
+        return values;
+      }, {}),
+      sections: dossier.sections,
+    },
   );
 
   return {
@@ -161,6 +164,7 @@ export function mapCloudDossierToLocal(row: CloudDossierRow): Dossier {
     organizationType: metadata.organizationType as string | undefined,
     theoryConfidence: metadata.theoryConfidence as TheoryConfidence | undefined,
     theoryStatus: metadata.theoryStatus as TheoryStatus | undefined,
+    sections: Array.isArray(metadata.sections) ? metadata.sections as Dossier['sections'] : undefined,
   };
 }
 

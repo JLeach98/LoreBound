@@ -654,8 +654,8 @@ function createLocalFingerprintSnapshot(
         normalizeDossierContent({
           ...record,
           coverImageCloudPath: imagePaths.dossiers[record.id] ?? null,
-          metadata: Object.fromEntries(
-            [
+          metadata: {
+            ...Object.fromEntries([
               'alias',
               'characterStatus',
               'affiliation',
@@ -667,8 +667,9 @@ function createLocalFingerprintSnapshot(
               'organizationType',
               'theoryConfidence',
               'theoryStatus',
-            ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]]),
-          ),
+            ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
+            sections: record.sections,
+          },
         }),
       ),
     ]),
@@ -828,8 +829,8 @@ class LoreBoundSyncService implements SyncService {
               plannedImagePaths.dossiers[record.id] ??
               localSyncState?.cloudImagePaths?.dossiers?.[record.id] ??
               null,
-            metadata: Object.fromEntries(
-              [
+            metadata: {
+              ...Object.fromEntries([
                 'alias',
                 'characterStatus',
                 'affiliation',
@@ -841,8 +842,9 @@ class LoreBoundSyncService implements SyncService {
                 'organizationType',
                 'theoryConfidence',
                 'theoryStatus',
-              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]]),
-            ),
+              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
+              sections: record.sections,
+            },
           }),
         normalizeDossierContent,
         localSyncState?.synchronizedFingerprints,

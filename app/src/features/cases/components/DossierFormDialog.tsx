@@ -9,6 +9,7 @@ import type {
   TheoryStatus,
 } from '../types/dossierTypes';
 import { dossierTypeLabels } from '../types/dossierTypes';
+import { mergeDossierSectionsWithFormValues } from '../utils/dossierSections';
 import { CoverImageInput } from './CoverImageInput';
 
 type DossierFormDialogProps = {
@@ -93,7 +94,7 @@ export function DossierFormDialog({
     setSubmitError(undefined);
 
     try {
-      await onSubmit({
+      const values: DossierFormValues = {
         dossierType,
         name: trimmedName,
         coverImage,
@@ -110,6 +111,13 @@ export function DossierFormDialog({
         organizationType,
         theoryConfidence,
         theoryStatus,
+      };
+
+      await onSubmit({
+        ...values,
+        sections: initialDossier
+          ? mergeDossierSectionsWithFormValues(initialDossier, values)
+          : undefined,
       });
     } catch (error) {
       console.error(error);

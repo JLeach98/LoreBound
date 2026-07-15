@@ -125,7 +125,11 @@ export function DossierSectionView({
       return [dossier.leader, dossier.organizationType].filter(Boolean).join(' / ');
     }
 
-    return [dossier.theoryConfidence, dossier.theoryStatus].filter(Boolean).join(' / ');
+    if (dossier.dossierType === 'Theory') {
+      return [dossier.theoryConfidence, dossier.theoryStatus].filter(Boolean).join(' / ');
+    }
+
+    return dossier.summary ?? '';
   }
 
   function formatModifiedDate(value: string) {

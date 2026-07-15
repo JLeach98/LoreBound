@@ -6,8 +6,14 @@ import { useBonds } from '../../cases/context/BondContext';
 import { useBoard } from '../../cases/context/BoardContext';
 import { useDossiers } from '../../cases/context/DossierContext';
 import type { Bond, BondFormValues } from '../../cases/types/bondTypes';
-import type { Dossier, DossierFormValues, DossierType } from '../../cases/types/dossierTypes';
+import type {
+  Dossier,
+  DossierFormValues,
+  DossierSection,
+  DossierType,
+} from '../../cases/types/dossierTypes';
 import { dossierTypeLabels } from '../../cases/types/dossierTypes';
+import { ensureDossierSections } from '../../cases/utils/dossierSections';
 import {
   fieldKitDossierPluralLabels,
   fieldKitDossierTypes,
@@ -35,6 +41,7 @@ export function FieldKitDossiers({ initialType = 'Character', initialDossierId }
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
   const [editorState, setEditorState] = useState<DossierEditorState>(null);
+  const [isEditingDossier, setIsEditingDossier] = useState(false);
   const [bondEditor, setBondEditor] = useState<{ dossier: Dossier; bond?: Bond } | null>(null);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
   const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
@@ -66,6 +73,7 @@ export function FieldKitDossiers({ initialType = 'Character', initialDossierId }
   async function handleCreate(values: DossierFormValues) {
     const createdDossier = await createNewDossier(values);
     setEditorState(null);
+    setIsEditingDossier(false);
     setSelectedDossier(createdDossier);
   }
 
@@ -76,6 +84,7 @@ export function FieldKitDossiers({ initialType = 'Character', initialDossierId }
 
     const updatedDossier = await updateExistingDossier(editorState.dossier.id, values);
     setEditorState(null);
+    setIsEditingDossier(true);
     setSelectedDossier(updatedDossier);
   }
 
@@ -119,9 +128,18 @@ export function FieldKitDossiers({ initialType = 'Character', initialDossierId }
         dossiers={dossiers}
         bonds={bondsForDossier(selectedDossier.id)}
         isPinned={isDossierPinned(selectedDossier.id)}
-        onBack={() => setSelectedDossier(null)}
-        onOpenDossier={(dossier) => setSelectedDossier(dossier)}
-        onEdit={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
+        isEditing={isEditingDossier}
+        onBack={() => {
+          setIsEditingDossier(false);
+          setSelectedDossier(null);
+        }}
+        onOpenDossier={(dossier) => {
+          setIsEditingDossier(false);
+          setSelectedDossier(dossier);
+        }}
+        onEnterEdit={() => setIsEditingDossier(true)}
+        onDoneEditing={() => setIsEditingDossier(false)}
+        onEditDetails={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
         onDelete={() => setDeletingDossier(selectedDossier)}
         onPin={async () => {
           await pinDossier(selectedDossier.id);
@@ -160,8 +178,8 @@ export function FieldKitDossiers({ initialType = 'Character', initialDossierId }
         ) : null}
         {deletingBond ? (
           <ConfirmPanel
-            title="Delete Bond?"
-            message={`${deletingBond.bondType} will be removed from this Investigation.`}
+            title="Remove Bond?"
+            message={getBondRemovalMessage(deletingBond, selectedDossier, dossiers)}
             onCancel={() => setDeletingBond(null)}
             onConfirm={handleDeleteBond}
           />
@@ -254,10 +272,13 @@ type FieldKitDossierViewProps = {
   dossiers: Dossier[];
   bonds: Bond[];
   isPinned: boolean;
+  isEditing: boolean;
   children: ReactNode;
   onBack: () => void;
   onOpenDossier: (dossier: Dossier) => void;
-  onEdit: () => void;
+  onEnterEdit: () => void;
+  onDoneEditing: () => void;
+  onEditDetails: () => void;
   onDelete: () => void;
   onPin: () => Promise<void>;
   onUnpin: () => Promise<void>;
@@ -271,10 +292,13 @@ function FieldKitDossierView({
   dossiers,
   bonds,
   isPinned,
+  isEditing,
   children,
   onBack,
   onOpenDossier,
-  onEdit,
+  onEnterEdit,
+  onDoneEditing,
+  onEditDetails,
   onDelete,
   onPin,
   onUnpin,
@@ -283,6 +307,19 @@ function FieldKitDossierView({
   onDeleteBond,
 }: FieldKitDossierViewProps) {
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const dossierSections = useMemo(() => ensureDossierSections(dossier), [dossier]);
+  const displayBonds = useMemo(
+    () =>
+      [...bonds].sort((left, right) => {
+        const leftDossier = getConnectedDossier(left);
+        const rightDossier = getConnectedDossier(right);
+
+        return `${getBondLabel(left, dossier.id)} ${leftDossier?.name ?? ''}`.localeCompare(
+          `${getBondLabel(right, dossier.id)} ${rightDossier?.name ?? ''}`,
+        );
+      }),
+    [bonds, dossiers, dossier.id],
+  );
 
   function getConnectedDossier(bond: Bond) {
     const connectedId =
@@ -312,9 +349,20 @@ function FieldKitDossierView({
       </div>
 
       <div className="field-kit-dossier-actions">
-        <Button type="button" variant="brass" onClick={onEdit}>
-          Edit Dossier
-        </Button>
+        {isEditing ? (
+          <>
+            <Button type="button" variant="brass" onClick={onDoneEditing}>
+              Done
+            </Button>
+            <Button type="button" variant="secondary" onClick={onEditDetails}>
+              Edit Details
+            </Button>
+          </>
+        ) : (
+          <Button type="button" variant="brass" onClick={onEnterEdit}>
+            Edit Dossier
+          </Button>
+        )}
         <Button
           type="button"
           variant="secondary"
@@ -349,69 +397,132 @@ function FieldKitDossierView({
         ) : null}
       </div>
 
-      <section className="field-kit-file-section">
-        <h3>Investigation Details</h3>
-        <dl className="settings-compact-list">
-          {dossier.alias ? <InfoRow label="Alias" value={dossier.alias} /> : null}
-          {dossier.characterStatus ? <InfoRow label="Status" value={dossier.characterStatus} /> : null}
-          {dossier.affiliation ? <InfoRow label="Affiliation" value={dossier.affiliation} /> : null}
-          {dossier.region ? <InfoRow label="Region" value={dossier.region} /> : null}
-          {dossier.world ? <InfoRow label="World" value={dossier.world} /> : null}
-          {dossier.eventDate ? <InfoRow label="Date" value={dossier.eventDate} /> : null}
-          {dossier.era ? <InfoRow label="Era" value={dossier.era} /> : null}
-          {dossier.leader ? <InfoRow label="Leader" value={dossier.leader} /> : null}
-          {dossier.organizationType ? <InfoRow label="Type" value={dossier.organizationType} /> : null}
-          {dossier.theoryConfidence ? <InfoRow label="Confidence" value={dossier.theoryConfidence} /> : null}
-          {dossier.theoryStatus ? <InfoRow label="Theory Status" value={dossier.theoryStatus} /> : null}
-          <InfoRow label="Modified" value={formatShortDate(dossier.dateModified)} />
-        </dl>
-      </section>
+      {dossierSections
+        .filter((section) => section.kind !== 'relationships')
+        .map((section) => (
+          <section key={section.id} className="field-kit-file-section">
+            <h3>{section.title}</h3>
+            {renderFieldKitSection(section)}
+          </section>
+        ))}
 
-      {dossier.notes ? (
         <section className="field-kit-file-section">
-          <h3>Investigation Notes</h3>
-          <p>{dossier.notes}</p>
+          <h3>Record Details</h3>
+          <dl className="settings-compact-list">
+            <InfoRow label="Modified" value={formatShortDate(dossier.dateModified)} />
+          </dl>
         </section>
-      ) : null}
 
       <section className="field-kit-file-section">
         <div className="field-kit-section-heading">
           <h3>Bonds</h3>
-          <Button type="button" variant="secondary" onClick={onCreateBond}>
-            Create Bond
-          </Button>
+          {isEditing ? (
+            <Button type="button" variant="secondary" onClick={onCreateBond}>
+              Add Bond
+            </Button>
+          ) : null}
         </div>
-        {bonds.map((bond) => {
+        {displayBonds.map((bond) => {
           const connectedDossier = getConnectedDossier(bond);
+          const bondLabel = getBondLabel(bond, dossier.id);
 
           return (
             <article key={bond.id} className="field-kit-bond-card">
-              <div>
-                <strong>{getBondLabel(bond, dossier.id)}</strong>
-                <span>{connectedDossier?.name ?? 'Missing Dossier'}</span>
-                {bond.status ? <small>{bond.status}</small> : null}
-              </div>
-              <div className="field-kit-inline-actions">
-                {connectedDossier ? (
-                  <Button type="button" variant="secondary" onClick={() => onOpenDossier(connectedDossier)}>
-                    Open
+              {connectedDossier ? (
+                <button
+                  type="button"
+                  className="field-kit-bond-card__link"
+                  aria-label={`${bondLabel}: open ${connectedDossier.name}, ${dossierTypeLabels[connectedDossier.dossierType]}`}
+                  onClick={() => onOpenDossier(connectedDossier)}
+                >
+                  <FieldKitThumbnail image={connectedDossier.coverImage} name={connectedDossier.name} />
+                  <span>
+                    <strong>{bondLabel}</strong>
+                    <em>{connectedDossier.name}</em>
+                    <small>
+                      {dossierTypeLabels[connectedDossier.dossierType]}
+                      {bond.status ? ` / ${bond.status}` : ''}
+                    </small>
+                    {bond.notes ? <small>{bond.notes}</small> : null}
+                  </span>
+                </button>
+              ) : (
+                <div className="field-kit-bond-card__link">
+                  <FieldKitThumbnail name="Missing Dossier" />
+                  <span>
+                    <strong>{bondLabel}</strong>
+                    <em>Missing Dossier</em>
+                    <small>Unknown Type</small>
+                  </span>
+                </div>
+              )}
+              {isEditing ? (
+                <div className="field-kit-inline-actions">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => onEditBond(bond)}
+                    aria-label={`Edit Bond with ${connectedDossier?.name ?? 'missing Dossier'}`}
+                  >
+                    Edit Bond
                   </Button>
-                ) : null}
-                <Button type="button" variant="ghost" onClick={() => onEditBond(bond)}>
-                  Edit
-                </Button>
-                <Button type="button" variant="ghost" className="field-kit-danger-action" onClick={() => onDeleteBond(bond)}>
-                  Delete
-                </Button>
-              </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="field-kit-danger-action"
+                    onClick={() => onDeleteBond(bond)}
+                    aria-label={`Remove Bond between ${dossier.name} and ${connectedDossier?.name ?? 'missing Dossier'}`}
+                  >
+                    Remove Bond
+                  </Button>
+                </div>
+              ) : null}
             </article>
           );
         })}
-        {bonds.length === 0 ? <p>No Bonds have been recorded for this Dossier.</p> : null}
+        {displayBonds.length === 0 ? <p>No Bonds recorded.</p> : null}
       </section>
       {children}
     </section>
   );
+}
+
+function renderFieldKitSection(section: DossierSection) {
+  if (section.kind === 'identity') {
+    return section.fields?.length ? (
+      <dl className="settings-compact-list">
+        {section.fields.map((field) => (
+          <InfoRow key={field.id} label={field.label} value={field.value} />
+        ))}
+      </dl>
+    ) : (
+      <p>No identity facts have been recorded.</p>
+    );
+  }
+
+  if (section.kind === 'timeline') {
+    return <p>Timeline Sections are reserved for a future LoreBound update.</p>;
+  }
+
+  if (section.kind === 'gallery') {
+    return <p>Gallery Sections are reserved for a future LoreBound update.</p>;
+  }
+
+  if (section.kind === 'evidence') {
+    return <p>Evidence Sections are reserved for a future LoreBound update.</p>;
+  }
+
+  return section.body ? <p>{section.body}</p> : <p>No entries recorded.</p>;
+}
+
+function getBondRemovalMessage(bond: Bond, currentDossier: Dossier, dossiers: Dossier[]) {
+  const connectedId =
+    bond.sourceDossierId === currentDossier.id ? bond.targetDossierId : bond.sourceDossierId;
+  const connectedDossier = dossiers.find((candidate) => candidate.id === connectedId);
+
+  return `The connection between "${currentDossier.name}" and "${
+    connectedDossier?.name ?? 'the connected Dossier'
+  }" will be removed. The connected Dossiers will not be deleted.`;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -444,7 +555,7 @@ function ConfirmPanel({
             Cancel
           </Button>
           <Button type="button" variant="brass" className="field-kit-confirm-danger" onClick={onConfirm}>
-            Delete
+            Remove Bond
           </Button>
         </div>
       </section>

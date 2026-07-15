@@ -37,7 +37,11 @@ function getDossierSecondaryText(dossier: Dossier) {
     return [dossier.leader, dossier.organizationType].filter(Boolean).join(' / ');
   }
 
-  return [dossier.theoryConfidence, dossier.theoryStatus].filter(Boolean).join(' / ');
+  if (dossier.dossierType === 'Theory') {
+    return [dossier.theoryConfidence, dossier.theoryStatus].filter(Boolean).join(' / ');
+  }
+
+  return dossier.summary ?? '';
 }
 
 const categoryLabels: Record<DossierType, string> = {
@@ -46,6 +50,7 @@ const categoryLabels: Record<DossierType, string> = {
   Event: 'Events',
   Organization: 'Organizations',
   Theory: 'Theories',
+  Artifact: 'Artifacts',
 };
 
 export function EvidenceTray({

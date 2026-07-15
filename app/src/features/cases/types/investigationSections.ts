@@ -5,6 +5,7 @@ export const investigationSections = [
   'Events',
   'Organizations',
   'Theories',
+  'Artifacts',
   'Timeline',
   'Case Settings',
 ] as const;
@@ -43,6 +44,10 @@ export const sectionEmptyStates: Record<
   Theories: {
     heading: 'Theories',
     message: 'No Theory Dossiers have been created.',
+  },
+  Artifacts: {
+    heading: 'Artifacts',
+    message: 'No Artifact Dossiers have been created.',
   },
   Timeline: {
     heading: 'Timeline',

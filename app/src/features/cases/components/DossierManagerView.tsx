@@ -17,6 +17,7 @@ const dossierTypeSections: Record<DossierType, InvestigationSection> = {
   Event: 'Events',
   Organization: 'Organizations',
   Theory: 'Theories',
+  Artifact: 'Artifacts',
 };
 
 const dossierTabLabels: Record<DossierType, string> = {
@@ -25,6 +26,7 @@ const dossierTabLabels: Record<DossierType, string> = {
   Event: 'Events',
   Organization: 'Organizations',
   Theory: 'Theories',
+  Artifact: 'Artifacts',
 };
 
 export function DossierManagerView({

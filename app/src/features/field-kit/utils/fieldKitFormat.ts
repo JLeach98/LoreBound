@@ -8,6 +8,7 @@ export const fieldKitDossierTypes: DossierType[] = [
   'Event',
   'Organization',
   'Theory',
+  'Artifact',
 ];
 
 export const fieldKitDossierPluralLabels: Record<DossierType, string> = {
@@ -16,6 +17,7 @@ export const fieldKitDossierPluralLabels: Record<DossierType, string> = {
   Event: 'Events',
   Organization: 'Organizations',
   Theory: 'Theories',
+  Artifact: 'Artifacts',
 };
 
 export function formatShortDate(value?: string | null) {
@@ -64,7 +66,11 @@ export function getDossierSecondaryLine(dossier: Dossier) {
     return [dossier.organizationType, dossier.leader].filter(Boolean).join(', ') || 'Organization Dossier';
   }
 
-  return [dossier.theoryStatus, dossier.theoryConfidence].filter(Boolean).join(', ') || 'Theory Dossier';
+  if (dossier.dossierType === 'Theory') {
+    return [dossier.theoryStatus, dossier.theoryConfidence].filter(Boolean).join(', ') || 'Theory Dossier';
+  }
+
+  return dossier.summary || 'Artifact Dossier';
 }
 
 export function getCaseSecondaryLine(loreCase: LoreCase) {

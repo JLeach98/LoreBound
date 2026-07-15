@@ -2,6 +2,7 @@ import type { CaseFormValues, LoreCase } from '../types/caseTypes';
 import type { Bond, BondEvidence, BondFormValues } from '../types/bondTypes';
 import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import type { Dossier, DossierFormValues } from '../types/dossierTypes';
+import { createDefaultDossierSections } from '../utils/dossierSections';
 
 const databaseName = 'lorebound-local-archive';
 const databaseVersion = 4;
@@ -189,6 +190,7 @@ function cleanDossierValues(values: DossierFormValues) {
     coverImage: values.coverImage,
     summary: cleanOptional(values.summary),
     notes: cleanOptional(values.notes),
+    sections: values.sections ?? createDefaultDossierSections(values),
   };
 
   if (values.dossierType === 'Character') {
@@ -224,11 +226,15 @@ function cleanDossierValues(values: DossierFormValues) {
     };
   }
 
-  return {
-    ...commonValues,
-    theoryConfidence: values.theoryConfidence,
-    theoryStatus: values.theoryStatus,
-  };
+  if (values.dossierType === 'Theory') {
+    return {
+      ...commonValues,
+      theoryConfidence: values.theoryConfidence,
+      theoryStatus: values.theoryStatus,
+    };
+  }
+
+  return commonValues;
 }
 
 function cleanBondEvidence(evidence?: BondEvidence) {

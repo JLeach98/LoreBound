@@ -12,7 +12,6 @@ type DeleteBondDialogProps = {
 };
 
 export function DeleteBondDialog({
-  bond,
   sourceDossier,
   targetDossier,
   onCancel,
@@ -45,7 +44,7 @@ export function DeleteBondDialog({
       await onConfirm();
     } catch (error) {
       console.error(error);
-      setErrorMessage('The Bond could not be deleted. Try again.');
+      setErrorMessage('The Bond could not be removed. Try again.');
       setIsDeleting(false);
     }
   }
@@ -62,12 +61,12 @@ export function DeleteBondDialog({
         aria-labelledby="delete-bond-title"
       >
         <div className="case-dialog__header">
-          <p>Delete Bond</p>
-          <h2 id="delete-bond-title">Delete {bond.bondType}?</h2>
+          <p>Remove Bond</p>
+          <h2 id="delete-bond-title">Remove this Bond?</h2>
         </div>
         <p className="case-dialog__copy">
-          This removes the Bond between "{sourceName}" and "{targetName}". The Dossiers
-          remain in the Case.
+          The connection between "{sourceName}" and "{targetName}" will be removed. The
+          connected Dossiers will not be deleted.
         </p>
         {errorMessage ? <p className="case-form__error">{errorMessage}</p> : null}
         <div className="case-dialog__actions">
@@ -86,7 +85,7 @@ export function DeleteBondDialog({
             onClick={handleConfirm}
             disabled={isDeleting}
           >
-            {isDeleting ? 'Deleting...' : 'Delete Bond'}
+            {isDeleting ? 'Removing...' : 'Remove Bond'}
           </button>
         </div>
       </section>
