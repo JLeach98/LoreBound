@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrandMark } from './BrandMark';
 import { CompactNavigation } from './CompactNavigation';
 import { OfficeControls } from './OfficeControls';
@@ -13,12 +13,17 @@ import { useCases } from '../../features/cases/context/CaseContext';
 import type { InvestigationSection } from '../../features/cases/types/investigationSections';
 import { AuthAccessPanel } from '../application-shell/AuthAccessPanel';
 import { LibraryStatusBadge } from '../application-shell/LibraryStatusBadge';
+import { LoreBoundSettings } from '../application-shell/LoreBoundSettings';
+import { useOperationsConsole } from '../../services/preferences/OperationsConsoleContext';
 
 export function InvestigatorOffice() {
   const [isCaseArchiveOpen, setIsCaseArchiveOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<InvestigationSection>('Board');
   const [workspaceMode, setWorkspaceMode] = useState<'office' | 'investigation'>('office');
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const { activeCase } = useCases();
+  const { operationsConsoleUnlocked } = useOperationsConsole();
 
   useEffect(() => {
     if (!activeCase && activeSection !== 'Board') {
@@ -49,22 +54,33 @@ export function InvestigatorOffice() {
     setWorkspaceMode('investigation');
   }
 
+  function closeSettings() {
+    setIsSettingsOpen(false);
+    window.setTimeout(() => settingsButtonRef.current?.focus(), 0);
+  }
+
   return (
     <div className={`office-shell office-shell--${workspaceMode}`}>
       <OfficeCanvas mode={workspaceMode} />
       {workspaceMode === 'office' ? (
         <CompactNavigation
           activeSection={activeSection}
-        hasActiveCase={Boolean(activeCase)}
-        onOpenCaseArchive={openCaseArchive}
-        onSelectSection={setActiveSection}
-        onFocusBoard={enterInvestigationMode}
-      />
+          hasActiveCase={Boolean(activeCase)}
+          onOpenCaseArchive={openCaseArchive}
+          onSelectSection={setActiveSection}
+          onFocusBoard={enterInvestigationMode}
+        />
       ) : null}
       <BrandMark />
       <LibraryStatusBadge />
       {workspaceMode === 'office' ? <AuthAccessPanel /> : null}
-      {workspaceMode === 'office' ? <OfficeControls /> : null}
+      {workspaceMode === 'office' ? (
+        <OfficeControls
+          settingsButtonRef={settingsButtonRef}
+          operationsConsoleUnlocked={operationsConsoleUnlocked}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+        />
+      ) : null}
       <SceneOverlay
         activeSection={activeSection}
         onOpenCaseArchive={openCaseArchive}
@@ -100,6 +116,9 @@ export function InvestigatorOffice() {
       ) : null}
       {isCaseArchiveOpen ? (
         <CaseArchiveView onClose={closeCaseArchive} onCaseOpened={handleCaseOpened} />
+      ) : null}
+      {isSettingsOpen && workspaceMode === 'office' ? (
+        <LoreBoundSettings onClose={closeSettings} />
       ) : null}
     </div>
   );

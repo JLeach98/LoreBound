@@ -11,6 +11,20 @@ const boardPinStoreName = 'boardPins';
 const bondStoreName = 'bonds';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
+const syncStateKey = 'syncState';
+
+export const localArchiveStorageInfo = {
+  source: 'caseStorage IndexedDB Local Archive',
+  databaseName,
+  databaseVersion,
+  objectStores: [
+    caseStoreName,
+    dossierStoreName,
+    boardPinStoreName,
+    bondStoreName,
+    metaStoreName,
+  ],
+};
 
 let databasePromise: Promise<IDBDatabase> | null = null;
 
@@ -83,6 +97,36 @@ function runTransaction<T>(
         };
       }),
   );
+}
+
+function runMultiStoreTransaction<T>(
+  storeNames: string[],
+  mode: IDBTransactionMode,
+  operation: (stores: Record<string, IDBObjectStore>) => Promise<T> | T,
+) {
+  return openDatabase().then(
+    (database) =>
+      new Promise<T>((resolve, reject) => {
+        const transaction = database.transaction(storeNames, mode);
+        const stores = storeNames.reduce<Record<string, IDBObjectStore>>((storeMap, storeName) => {
+          storeMap[storeName] = transaction.objectStore(storeName);
+          return storeMap;
+        }, {});
+
+        Promise.resolve(operation(stores)).then(resolve).catch(reject);
+
+        transaction.onerror = () => {
+          reject(transaction.error ?? new Error('The local archive transaction failed.'));
+        };
+      }),
+  );
+}
+
+function requestToPromise<T>(request: IDBRequest<T>) {
+  return new Promise<T>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('The local archive request failed.'));
+  });
 }
 
 function createCaseId() {
@@ -236,6 +280,99 @@ export async function createCase(values: CaseFormValues) {
 
 export function readAllCases() {
   return runTransaction<LoreCase[]>(caseStoreName, 'readonly', (store) => store.getAll());
+}
+
+export async function readFullLocalArchive() {
+  const cases = await readAllCases();
+  const [caseRecordGroups, activeCaseId] = await Promise.all([
+    Promise.all(
+      cases.map(async (loreCase) => {
+        const [dossiers, bonds, boardPins] = await Promise.all([
+          readDossiersByCaseId(loreCase.id),
+          readBondsByCaseId(loreCase.id),
+          readBoardPinsByCaseId(loreCase.id),
+        ]);
+
+        return { dossiers, bonds, boardPins };
+      }),
+    ),
+    readActiveCaseId(),
+  ]);
+
+  return {
+    cases,
+    dossiers: caseRecordGroups.flatMap((group) => group.dossiers),
+    bonds: caseRecordGroups.flatMap((group) => group.bonds),
+    boardPins: caseRecordGroups.flatMap((group) => group.boardPins),
+    activeCaseId,
+  };
+}
+
+export type LocalSyncState = {
+  investigatorId: string;
+  lastSuccessfulSynchronizationAt: string;
+  synchronizedRecordIds: {
+    cases: string[];
+    dossiers: string[];
+    bonds: string[];
+    boardPins: string[];
+  };
+  synchronizedUpdatedAt: Record<string, string>;
+  cloudImagePaths?: {
+    cases: Record<string, string>;
+    dossiers: Record<string, string>;
+  };
+  synchronizationVersion: number;
+};
+
+export async function readLocalSyncState() {
+  const result = await runTransaction<LocalSyncState | undefined>(metaStoreName, 'readonly', (store) =>
+    store.get(syncStateKey),
+  );
+
+  return result ?? null;
+}
+
+export async function recordLocalSyncState(syncState: LocalSyncState) {
+  await runTransaction<IDBValidKey>(metaStoreName, 'readwrite', (store) =>
+    store.put(syncState, syncStateKey),
+  );
+}
+
+export async function importFullLocalArchive(records: {
+  cases: LoreCase[];
+  dossiers: Dossier[];
+  bonds: Bond[];
+  boardPins: BoardPin[];
+  activeCaseId?: string | null;
+}) {
+  await runMultiStoreTransaction(
+    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, metaStoreName],
+    'readwrite',
+    async (stores) => {
+      for (const loreCase of records.cases) {
+        await requestToPromise(stores[caseStoreName].put(loreCase));
+      }
+
+      for (const dossier of records.dossiers) {
+        await requestToPromise(stores[dossierStoreName].put(dossier));
+      }
+
+      for (const bond of records.bonds) {
+        await requestToPromise(stores[bondStoreName].put(bond));
+      }
+
+      for (const boardPin of records.boardPins) {
+        await requestToPromise(stores[boardPinStoreName].put(boardPin));
+      }
+
+      const activeCaseId = records.activeCaseId ?? records.cases[0]?.id;
+
+      if (activeCaseId) {
+        await requestToPromise(stores[metaStoreName].put(activeCaseId, activeCaseKey));
+      }
+    },
+  );
 }
 
 export function readCaseById(id: string) {

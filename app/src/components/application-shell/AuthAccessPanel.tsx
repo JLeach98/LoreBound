@@ -15,44 +15,101 @@ import {
   cloudReadinessService,
   type CloudReadinessStatus,
 } from '../../services/cloud/CloudReadinessService';
-import {
-  firstSyncPreviewService,
-  type FirstSyncPreview,
-} from '../../services/migration/FirstSyncPreviewService';
+import { syncService } from '../../services/sync/SyncService';
+import type { SyncPlan, SyncProgress, SyncResult } from '../../services/sync/SyncTypes';
 
-type AuthView = 'overview' | 'sign-in' | 'sign-up' | 'confirmation' | 'connected' | 'review';
+type AuthView =
+  | 'overview'
+  | 'sign-in'
+  | 'sign-up'
+  | 'confirmation'
+  | 'connected'
+  | 'review'
+  | 'confirm-sync'
+  | 'confirm-retrieve'
+  | 'progress'
+  | 'complete'
+  | 'sync-error';
 type AuthNoticeState = 'idle' | 'confirmation-required' | 'connected' | 'signed-out' | 'error';
 
-function emptyPreview(): FirstSyncPreview {
+function emptyPlan(): SyncPlan {
   return {
     local: {
+      investigationName: null,
       caseCount: 0,
       dossierCount: 0,
       bondCount: 0,
       boardEntryCount: 0,
       localImageCount: 0,
-      estimatedUploadBytes: 0,
+      estimatedTransferBytes: 0,
     },
-    cloud: {
+    online: {
       isAvailable: false,
       caseCount: 0,
       dossierCount: 0,
       bondCount: 0,
       boardEntryCount: 0,
     },
-    comparison: {
-      cases: { localOnly: 0, cloudOnly: 0, matching: 0, potentialConflicts: 0, duplicateRisk: 0 },
-      dossiers: { localOnly: 0, cloudOnly: 0, matching: 0, potentialConflicts: 0, duplicateRisk: 0 },
-      bonds: { localOnly: 0, cloudOnly: 0, matching: 0, potentialConflicts: 0, duplicateRisk: 0 },
-      boardEntries: {
-        localOnly: 0,
-        cloudOnly: 0,
-        matching: 0,
-        potentialConflicts: 0,
-        duplicateRisk: 0,
+    sections: {
+      cases: createEmptyPlanSection(),
+      dossiers: createEmptyPlanSection(),
+      bonds: createEmptyPlanSection(),
+      boardEntries: createEmptyPlanSection(),
+    },
+    canSynchronize: false,
+    canRetrieve: false,
+    isLocalArchiveEmpty: true,
+    isOnlineArchiveEmpty: true,
+    lastSynchronizedAt: null,
+    blockingReasons: [],
+    imageStatus: {
+      readyToSynchronize: 0,
+      awaitingStorageSetup: 0,
+      couldNotProcess: 0,
+      message: 'No stored images were found in this Local Archive.',
+    },
+    imagePaths: {
+      cases: {},
+      dossiers: {},
+    },
+    diagnostics: {
+      localSource: 'caseStorage IndexedDB Local Archive',
+      localDatabaseName: 'lorebound-local-archive',
+      localDatabaseVersion: 4,
+      localObjectStores: ['cases', 'dossiers', 'boardPins', 'bonds', 'meta'],
+      localInvestigationsRead: 0,
+      localDossiersRead: 0,
+      localBondsRead: 0,
+      localEvidencePinsRead: 0,
+      cloudQueries: {
+        cases: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
+        dossiers: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
+        bonds: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
+        boardEntries: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
+      },
+      storage: {
+        bucketReachable: false,
+        localImagesExtracted: 0,
+        imagesPrepared: 0,
+        imageUploadsSucceeded: 0,
+        imageUploadsFailed: 0,
+        storageVerificationSucceeded: 0,
       },
     },
-    message: 'Connect your Investigator Profile to review archive synchronization.',
+  };
+}
+
+function createEmptyPlanSection() {
+  return {
+    newRecords: 0,
+    existingRecords: 0,
+    itemsRequiringReview: 0,
+    localOnly: 0,
+    onlineOnly: 0,
+    matchingIds: 0,
+    localNewer: 0,
+    onlineNewer: 0,
+    sameTimestampDifferingContents: 0,
   };
 }
 
@@ -70,6 +127,34 @@ function formatBytes(value: number) {
   }
 
   return `${Math.round(value / 1024 / 102.4) / 10} MB`;
+}
+
+function formatSyncDateTime(value?: string | null) {
+  if (!value) {
+    return 'Not secured yet';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Not secured yet';
+  }
+
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+
+  if (isToday) {
+    return `Today ${time}`;
+  }
+
+  return `${new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(date)} ${time}`;
 }
 
 function getReadableAuthError(error: AuthFailure) {
@@ -123,46 +208,59 @@ function getReadableAuthError(error: AuthFailure) {
   return 'Unable to connect your Investigator Profile. Please verify your credentials and try again.';
 }
 
-function getLocalRecordTotal(preview: FirstSyncPreview) {
+function getLocalRecordTotal(plan: SyncPlan) {
   return (
-    preview.local.caseCount +
-    preview.local.dossierCount +
-    preview.local.bondCount +
-    preview.local.boardEntryCount
+    plan.local.caseCount +
+    plan.local.dossierCount +
+    plan.local.bondCount +
+    plan.local.boardEntryCount
   );
 }
 
-function getCloudRecordTotal(preview: FirstSyncPreview) {
+function getOnlineRecordTotal(plan: SyncPlan) {
   return (
-    preview.cloud.caseCount +
-    preview.cloud.dossierCount +
-    preview.cloud.bondCount +
-    preview.cloud.boardEntryCount
+    plan.online.caseCount +
+    plan.online.dossierCount +
+    plan.online.bondCount +
+    plan.online.boardEntryCount
   );
 }
 
-function getSummaryTotals(preview: FirstSyncPreview) {
-  const values = Object.values(preview.comparison);
+function getSummaryTotals(plan: SyncPlan) {
+  const values = Object.values(plan.sections);
 
   return values.reduce(
     (totals, comparison) => ({
       newRecords: totals.newRecords + comparison.localOnly,
-      existingRecords: totals.existingRecords + comparison.matching,
+      updatedRecords:
+        totals.updatedRecords +
+        comparison.localNewer +
+        comparison.sameTimestampDifferingContents,
+      existingRecords: totals.existingRecords + comparison.existingRecords,
       itemsRequiringReview:
-        totals.itemsRequiringReview + comparison.potentialConflicts + comparison.duplicateRisk,
+        totals.itemsRequiringReview + comparison.itemsRequiringReview,
     }),
     {
       newRecords: 0,
+      updatedRecords: 0,
       existingRecords: 0,
       itemsRequiringReview: 0,
     },
   );
 }
 
+function getSyncActionLabel(plan: SyncPlan) {
+  return plan.lastSynchronizedAt || getOnlineRecordTotal(plan) > 0
+    ? 'Update Investigation'
+    : 'Synchronize Investigation';
+}
+
 export function AuthAccessPanel() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [cloudReadiness, setCloudReadiness] = useState<CloudReadinessStatus | null>(null);
-  const [syncPreview, setSyncPreview] = useState<FirstSyncPreview>(emptyPreview);
+  const [syncPlan, setSyncPlan] = useState<SyncPlan>(emptyPlan);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [authView, setAuthView] = useState<AuthView>('overview');
   const [email, setEmail] = useState('');
   const [confirmedEmail, setConfirmedEmail] = useState('');
@@ -179,9 +277,16 @@ export function AuthAccessPanel() {
 
   const isSignedIn = authStatus?.state === 'signed-in';
   const isConfirmationRequired = authStatus?.state === 'confirmation-required';
-  const localRecordTotal = getLocalRecordTotal(syncPreview);
-  const cloudRecordTotal = getCloudRecordTotal(syncPreview);
-  const summaryTotals = getSummaryTotals(syncPreview);
+  const localRecordTotal = getLocalRecordTotal(syncPlan);
+  const onlineRecordTotal = getOnlineRecordTotal(syncPlan);
+  const summaryTotals = getSummaryTotals(syncPlan);
+  const syncActionLabel = getSyncActionLabel(syncPlan);
+  const hasNoSynchronizationChanges =
+    localRecordTotal > 0 &&
+    onlineRecordTotal > 0 &&
+    summaryTotals.newRecords === 0 &&
+    summaryTotals.updatedRecords === 0 &&
+    summaryTotals.itemsRequiringReview === 0;
   const signUpValidation = useMemo(() => {
     if (authView !== 'sign-up') {
       return null;
@@ -242,14 +347,14 @@ export function AuthAccessPanel() {
       setAuthStatus(nextAuthStatus);
 
       if (nextAuthStatus.state === 'signed-in') {
-        const [nextCloudReadiness, nextPreview] = await Promise.all([
+        const [nextCloudReadiness, nextPlanResult] = await Promise.all([
           cloudReadinessService.check(),
-          firstSyncPreviewService.preview(),
+          syncService.createPlan(),
         ]);
 
         if (isMounted) {
           setCloudReadiness(nextCloudReadiness);
-          setSyncPreview(nextPreview);
+          setSyncPlan(nextPlanResult.plan);
         }
       }
     }
@@ -260,14 +365,14 @@ export function AuthAccessPanel() {
       if (nextAuthStatus.state === 'signed-in') {
         void Promise.all([
           cloudReadinessService.check(),
-          firstSyncPreviewService.preview(),
-        ]).then(([nextCloudReadiness, nextPreview]) => {
+          syncService.createPlan(),
+        ]).then(([nextCloudReadiness, nextPlanResult]) => {
           setCloudReadiness(nextCloudReadiness);
-          setSyncPreview(nextPreview);
+          setSyncPlan(nextPlanResult.plan);
         });
       } else {
         setCloudReadiness(null);
-        setSyncPreview(emptyPreview());
+        setSyncPlan(emptyPlan());
       }
     });
     const updateOnlineStatus = () => setConnectivity(navigator.onLine ? 'online' : 'offline');
@@ -283,6 +388,36 @@ export function AuthAccessPanel() {
       window.removeEventListener('offline', updateOnlineStatus);
     };
   }, []);
+
+  useEffect(() => {
+    function handleOpenLibraryAccess(event: Event) {
+      const requestedView =
+        event instanceof CustomEvent &&
+        (event.detail?.view === 'review' || event.detail?.view === 'sign-out')
+          ? event.detail.view
+          : 'overview';
+
+      setIsOpen(true);
+
+      if (requestedView === 'sign-out' && isSignedIn) {
+        void handleInvestigatorOffline();
+        return;
+      }
+
+      if (requestedView === 'review' && isSignedIn) {
+        void refreshSynchronizationReview();
+        return;
+      }
+
+      goToView(isSignedIn ? 'connected' : 'overview');
+    }
+
+    window.addEventListener('lorebound:open-library-access', handleOpenLibraryAccess);
+
+    return () => {
+      window.removeEventListener('lorebound:open-library-access', handleOpenLibraryAccess);
+    };
+  }, [isSignedIn]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -314,6 +449,7 @@ export function AuthAccessPanel() {
     setAuthView(nextView);
     setNotice(null);
     setNoticeState('idle');
+    setSyncResult(null);
     setPassword('');
     setConfirmPassword('');
   }
@@ -352,12 +488,12 @@ export function AuthAccessPanel() {
 
   async function refreshSignedInStatus(nextStatus: AuthStatus, successMessage: string) {
     setAuthStatus(nextStatus);
-    const [nextCloudReadiness, nextPreview] = await Promise.all([
+    const [nextCloudReadiness, nextPlanResult] = await Promise.all([
       cloudReadinessService.check(),
-      firstSyncPreviewService.preview(),
+      syncService.createPlan(),
     ]);
     setCloudReadiness(nextCloudReadiness);
-    setSyncPreview(nextPreview);
+    setSyncPlan(nextPlanResult.plan);
     setNotice(successMessage);
     setNoticeState('connected');
   }
@@ -434,7 +570,7 @@ export function AuthAccessPanel() {
 
     setAuthStatus(result.status);
     setCloudReadiness(null);
-    setSyncPreview(emptyPreview());
+    setSyncPlan(emptyPlan());
     setAuthView('overview');
     setNotice('Investigator Offline. Your Local Archive remains available.');
     setNoticeState('signed-out');
@@ -457,6 +593,38 @@ export function AuthAccessPanel() {
         : 'Connect to review LoreBound Online';
   const formTitle = authView === 'sign-up' ? 'Create Investigator Profile' : 'Investigator Connect';
   const formValidation = authView === 'sign-up' ? signUpValidation : signInValidation;
+
+  async function refreshSynchronizationReview() {
+    const nextPlanResult = await syncService.createPlan();
+    setSyncPlan(nextPlanResult.plan);
+    setSyncResult(null);
+    setSyncProgress(null);
+    setAuthView('review');
+  }
+
+  async function runSynchronization() {
+    setIsWorking(true);
+    setAuthView('progress');
+    setSyncResult(null);
+    const result = await syncService.synchronize(setSyncProgress);
+    setSyncResult(result);
+    setIsWorking(false);
+    setAuthView(result.ok ? 'complete' : 'sync-error');
+    const nextPlanResult = await syncService.createPlan();
+    setSyncPlan(nextPlanResult.plan);
+  }
+
+  async function runRetrieval() {
+    setIsWorking(true);
+    setAuthView('progress');
+    setSyncResult(null);
+    const result = await syncService.retrieve(setSyncProgress);
+    setSyncResult(result);
+    setIsWorking(false);
+    setAuthView(result.ok ? 'complete' : 'sync-error');
+    const nextPlanResult = await syncService.createPlan();
+    setSyncPlan(nextPlanResult.plan);
+  }
 
   return (
     <>
@@ -512,7 +680,7 @@ export function AuthAccessPanel() {
                   <button
                     type="button"
                     className="auth-button auth-button--primary"
-                    onClick={() => goToView('review')}
+                    onClick={refreshSynchronizationReview}
                   >
                     Continue
                   </button>
@@ -672,16 +840,26 @@ export function AuthAccessPanel() {
                     No investigation will be committed until you approve synchronization.
                   </h3>
                 </div>
+                <div className="archive-sync-review__status">
+                  <span>Last Secured</span>
+                  <strong>{formatSyncDateTime(syncPlan.lastSynchronizedAt)}</strong>
+                </div>
                 {localRecordTotal === 0 ? (
                   <p>This browser origin does not currently contain archived investigations.</p>
                 ) : (
                   <p>Review the records inside this browser's Local Archive.</p>
                 )}
-                {syncPreview.cloud.isAvailable && cloudRecordTotal === 0 ? (
+                {hasNoSynchronizationChanges ? (
+                  <p>LoreBound Online already contains the latest version of this Investigation.</p>
+                ) : null}
+                {syncPlan.online.isAvailable && onlineRecordTotal === 0 ? (
                   <p>LoreBound Online does not yet contain any archived investigations.</p>
                 ) : null}
-                {!syncPreview.cloud.isAvailable ? (
+                {!syncPlan.online.isAvailable ? (
                   <p>LoreBound Online could not be reviewed. Your Local Archive remains unchanged.</p>
+                ) : null}
+                {syncPlan.imageStatus.awaitingStorageSetup > 0 ? (
+                  <p>{syncPlan.imageStatus.message}</p>
                 ) : null}
 
                 <div className="archive-sync-review__groups">
@@ -690,27 +868,27 @@ export function AuthAccessPanel() {
                     <dl>
                       <div>
                         <dt>Investigations</dt>
-                        <dd>{syncPreview.local.caseCount}</dd>
+                        <dd>{syncPlan.local.caseCount}</dd>
                       </div>
                       <div>
                         <dt>Evidence Files</dt>
-                        <dd>{syncPreview.local.dossierCount}</dd>
+                        <dd>{syncPlan.local.dossierCount}</dd>
                       </div>
                       <div>
                         <dt>Connections</dt>
-                        <dd>{syncPreview.local.bondCount}</dd>
+                        <dd>{syncPlan.local.bondCount}</dd>
                       </div>
                       <div>
                         <dt>Evidence Pins</dt>
-                        <dd>{syncPreview.local.boardEntryCount}</dd>
+                        <dd>{syncPlan.local.boardEntryCount}</dd>
                       </div>
                       <div>
                         <dt>Stored Images</dt>
-                        <dd>{syncPreview.local.localImageCount}</dd>
+                        <dd>{syncPlan.local.localImageCount}</dd>
                       </div>
                       <div>
                         <dt>Estimated Transfer Size</dt>
-                        <dd>{formatBytes(syncPreview.local.estimatedUploadBytes)}</dd>
+                        <dd>{formatBytes(syncPlan.local.estimatedTransferBytes)}</dd>
                       </div>
                     </dl>
                   </section>
@@ -720,19 +898,19 @@ export function AuthAccessPanel() {
                     <dl>
                       <div>
                         <dt>Investigations</dt>
-                        <dd>{syncPreview.cloud.caseCount}</dd>
+                        <dd>{syncPlan.online.caseCount}</dd>
                       </div>
                       <div>
                         <dt>Evidence Files</dt>
-                        <dd>{syncPreview.cloud.dossierCount}</dd>
+                        <dd>{syncPlan.online.dossierCount}</dd>
                       </div>
                       <div>
                         <dt>Connections</dt>
-                        <dd>{syncPreview.cloud.bondCount}</dd>
+                        <dd>{syncPlan.online.bondCount}</dd>
                       </div>
                       <div>
                         <dt>Evidence Pins</dt>
-                        <dd>{syncPreview.cloud.boardEntryCount}</dd>
+                        <dd>{syncPlan.online.boardEntryCount}</dd>
                       </div>
                     </dl>
                   </section>
@@ -745,7 +923,11 @@ export function AuthAccessPanel() {
                         <dd>{summaryTotals.newRecords}</dd>
                       </div>
                       <div>
-                        <dt>Existing Records</dt>
+                        <dt>Updated Records</dt>
+                        <dd>{summaryTotals.updatedRecords}</dd>
+                      </div>
+                      <div>
+                        <dt>No Changes</dt>
                         <dd>{summaryTotals.existingRecords}</dd>
                       </div>
                       <div>
@@ -755,9 +937,276 @@ export function AuthAccessPanel() {
                     </dl>
                   </section>
                 </div>
-                <button type="button" className="auth-button auth-button--secondary" disabled>
-                  Synchronize Investigation is not yet available
-                </button>
+                {syncPlan.blockingReasons.length > 0 ? (
+                  <p>{syncPlan.blockingReasons[0]}</p>
+                ) : null}
+                <div className="auth-dialog__actions">
+                  <button
+                    type="button"
+                    className="auth-button auth-button--primary"
+                    disabled={!syncPlan.canSynchronize || isWorking}
+                    onClick={() => goToView('confirm-sync')}
+                    title={!syncPlan.canSynchronize ? syncPlan.blockingReasons[0] : undefined}
+                  >
+                    {syncActionLabel}
+                  </button>
+                  {syncPlan.canRetrieve ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--secondary"
+                      disabled={isWorking}
+                      onClick={() => goToView('confirm-retrieve')}
+                    >
+                      Retrieve Investigation
+                    </button>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'confirm-sync' ? (
+              <section className="archive-sync-review" aria-live="polite">
+                <div>
+                  <p>Secure this Investigation within LoreBound Online.</p>
+                  <h3>Synchronize Investigation</h3>
+                </div>
+                <div className="archive-sync-review__groups">
+                  <section>
+                    <h4>Investigation Name</h4>
+                    <p>{syncPlan.local.investigationName ?? 'Local Archive Investigation'}</p>
+                  </section>
+                  <section>
+                    <h4>Local Archive Summary</h4>
+                    <dl>
+                      <div>
+                        <dt>Investigations</dt>
+                        <dd>{syncPlan.local.caseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Dossiers</dt>
+                        <dd>{syncPlan.local.dossierCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Bonds</dt>
+                        <dd>{syncPlan.local.bondCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence Pins</dt>
+                        <dd>{syncPlan.local.boardEntryCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Stored Images</dt>
+                        <dd>{syncPlan.local.localImageCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Estimated Transfer Size</dt>
+                        <dd>{formatBytes(syncPlan.local.estimatedTransferBytes)}</dd>
+                      </div>
+                      <div>
+                        <dt>Items Requiring Review</dt>
+                        <dd>{summaryTotals.itemsRequiringReview}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+                <p>
+                  Your Local Archive will remain on this device. Synchronizing does not remove or
+                  replace your local records. If synchronization is interrupted, your Local Archive
+                  remains unchanged.
+                </p>
+                <div className="auth-dialog__actions">
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
+                    onClick={() => goToView('review')}
+                    disabled={isWorking}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--primary"
+                    onClick={runSynchronization}
+                    disabled={isWorking}
+                  >
+                    {syncActionLabel}
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'confirm-retrieve' ? (
+              <section className="archive-sync-review" aria-live="polite">
+                <h3>Retrieve Investigation from LoreBound Online?</h3>
+                <p>Records will be written into this empty Local Archive.</p>
+                <div className="archive-sync-review__groups">
+                  <section>
+                    <h4>LoreBound Online Archive</h4>
+                    <dl>
+                      <div>
+                        <dt>Investigations</dt>
+                        <dd>{syncPlan.online.caseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Dossiers</dt>
+                        <dd>{syncPlan.online.dossierCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Bonds</dt>
+                        <dd>{syncPlan.online.bondCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence Pins</dt>
+                        <dd>{syncPlan.online.boardEntryCount}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+                <div className="auth-dialog__actions">
+                  <button type="button" className="auth-button auth-button--primary" onClick={runRetrieval}>
+                    Retrieve Investigation
+                  </button>
+                  <button type="button" className="auth-button auth-button--quiet" onClick={() => goToView('review')}>
+                    Return to Review
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'progress' ? (
+              <section className="archive-sync-review" aria-live="polite">
+                <p>{syncActionLabel}</p>
+                <h3>{syncProgress?.stage ?? 'Preparing Archive'}</h3>
+                <p>{syncProgress?.detail ?? 'Reviewing Local Archive records before securing them.'}</p>
+                <div className="archive-sync-progress">
+                  <dl>
+                    <div>
+                      <dt>Completed Images</dt>
+                      <dd>{syncProgress?.completedImages ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Completed Records</dt>
+                      <dd>{syncProgress?.completedRecords ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Remaining Records</dt>
+                      <dd>{syncProgress?.remainingRecords ?? localRecordTotal}</dd>
+                    </div>
+                  </dl>
+                  {syncProgress?.completedStages.length ? (
+                    <section>
+                      <h4>Completed Stages</h4>
+                      <ul>
+                        {syncProgress.completedStages.map((stage) => (
+                          <li key={stage}>{stage}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'complete' && syncResult ? (
+              <section className="archive-sync-review" aria-live="polite">
+                <div>
+                  <p>Your Investigation has been secured within LoreBound Online.</p>
+                  <h3>Investigation Secured</h3>
+                </div>
+                <div className="archive-sync-review__groups">
+                  <section>
+                    <h4>Secured Summary</h4>
+                    <dl>
+                      <div>
+                        <dt>Investigations synchronized</dt>
+                        <dd>{syncResult.counts.cases}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence Files synchronized</dt>
+                        <dd>{syncResult.counts.dossiers}</dd>
+                      </div>
+                      <div>
+                        <dt>Connections synchronized</dt>
+                        <dd>{syncResult.counts.bonds}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence Pins synchronized</dt>
+                        <dd>{syncResult.counts.boardEntries}</dd>
+                      </div>
+                      <div>
+                        <dt>Stored Images synchronized</dt>
+                        <dd>{syncResult.counts.images ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Transfer Size</dt>
+                        <dd>{formatBytes(syncResult.transferSize ?? syncPlan.local.estimatedTransferBytes)}</dd>
+                      </div>
+                      <div>
+                        <dt>Completion Time</dt>
+                        <dd>{formatSyncDateTime(syncResult.completedAt)}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+                <p>Your Local Archive remains available on this device.</p>
+                <div className="auth-dialog__actions">
+                  <button type="button" className="auth-button auth-button--primary" onClick={closeDialog}>
+                    Continue Investigation
+                  </button>
+                  <button type="button" className="auth-button auth-button--quiet" onClick={closeDialog}>
+                    Close
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'sync-error' && syncResult ? (
+              <section className="archive-sync-review" aria-live="assertive">
+                <div>
+                  <p>{syncResult.message}</p>
+                  <h3>Synchronization Interrupted</h3>
+                </div>
+                <p>
+                  Your Local Archive remains intact. LoreBound Online may contain an incomplete
+                  Investigation. Review the details below before retrying.
+                </p>
+                <div className="archive-sync-review__groups">
+                  <section>
+                    <h4>Interruption Details</h4>
+                    <dl>
+                      <div>
+                        <dt>Completed stages</dt>
+                        <dd>{syncResult.completedStages?.length ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Failed stage</dt>
+                        <dd>{syncResult.failedStage ?? 'Review required'}</dd>
+                      </div>
+                      <div>
+                        <dt>Items requiring review</dt>
+                        <dd>{syncResult.itemsRequiringReview ?? summaryTotals.itemsRequiringReview}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                  {syncResult.completedStages?.length ? (
+                    <section>
+                      <h4>Completed Stages</h4>
+                      <ul className="archive-sync-stage-list">
+                        {syncResult.completedStages.map((stage) => (
+                          <li key={stage}>{stage}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
+                <div className="auth-dialog__actions">
+                  <button type="button" className="auth-button auth-button--primary" onClick={refreshSynchronizationReview}>
+                    Retry
+                  </button>
+                  <button type="button" className="auth-button auth-button--quiet" onClick={closeDialog}>
+                    Return to Local Archive
+                  </button>
+                </div>
               </section>
             ) : null}
 
