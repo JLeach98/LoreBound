@@ -18,7 +18,7 @@ import {
 import { useInvestigatorProfile } from '../../services/profile/InvestigatorProfileContext';
 import { useAutomaticSync } from '../../services/sync/AutomaticSyncContext';
 import { syncService } from '../../services/sync/SyncService';
-import type { SyncPlan, SyncProgress, SyncResult } from '../../services/sync/SyncTypes';
+import { getSyncPlanArchiveAction, type SyncPlan, type SyncProgress, type SyncResult } from '../../services/sync/SyncTypes';
 
 type AuthView =
   | 'overview'
@@ -105,6 +105,25 @@ function emptyPlan(): SyncPlan {
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
         automaticGateReason: 'Not reviewed.',
+      },
+      archiveState: {
+        classification: 'Empty',
+        activeInvestigationIdPresent: false,
+        sameInvestigationIdLocalAndCloud: false,
+        localCaseStableId: null,
+        cloudCaseStableId: null,
+        caseNormalizedMatch: false,
+        retrievalEligibility: 'Blocked',
+        retrievalBlockReason: 'Not reviewed.',
+        actionEnabled: false,
+        disabledReason: 'Not reviewed.',
+        handlerPresent: false,
+        repairEligibility: 'Blocked',
+        repairStage: 'Not started.',
+        selectedAction: 'Not reviewed.',
+        selectedActionReason: 'Not reviewed.',
+        localImageReferences: 0,
+        cloudImageReferences: 0,
       },
     },
   };
@@ -268,6 +287,10 @@ function getSummaryTotals(plan: SyncPlan) {
 
   return values.reduce(
     (totals, comparison) => ({
+      localOnly: totals.localOnly + comparison.localOnly,
+      cloudOnly: totals.cloudOnly + comparison.onlineOnly,
+      localNewer: totals.localNewer + comparison.localNewer,
+      cloudNewer: totals.cloudNewer + comparison.onlineNewer,
       newRecords: totals.newRecords + comparison.localOnly,
       updatedRecords: totals.updatedRecords + comparison.updatedRecords,
       existingRecords: totals.existingRecords + comparison.unchangedRecords,
@@ -278,6 +301,10 @@ function getSummaryTotals(plan: SyncPlan) {
         totals.itemsRequiringReview + comparison.itemsRequiringReview,
     }),
     {
+      localOnly: 0,
+      cloudOnly: 0,
+      localNewer: 0,
+      cloudNewer: 0,
       newRecords: 0,
       updatedRecords: 0,
       existingRecords: 0,
@@ -355,15 +382,34 @@ export function AuthAccessPanel() {
   const localRecordTotal = getLocalRecordTotal(syncPlan);
   const onlineRecordTotal = getOnlineRecordTotal(syncPlan);
   const summaryTotals = getSummaryTotals(syncPlan);
-  const archiveStatusLabel = getArchiveStatusLabel(summaryTotals);
+  const archiveAction = getSyncPlanArchiveAction(syncPlan);
+  const isPartialLocalArchive =
+    syncPlan.diagnostics.archiveState.classification === 'Partial Local Archive';
+  const archiveStatusLabel = isPartialLocalArchive
+    ? 'Local Archive Incomplete'
+    : getArchiveStatusLabel(summaryTotals);
   const pendingLocalChanges =
-    summaryTotals.newRecords +
-    summaryTotals.updatedRecords +
+    summaryTotals.localOnly +
+    summaryTotals.localNewer +
     summaryTotals.conflicts +
     summaryTotals.itemsRequiringReview;
-  const syncActionLabel = syncPlan.lastSynchronizedAt || onlineRecordTotal > 0
-    ? 'Update Investigation'
-    : 'Synchronize Investigation';
+  const syncActionLabel = archiveAction.kind === 'sync' ? archiveAction.label : 'Synchronize Investigation';
+  const isRetrievalAction = archiveAction.kind === 'retrieve' || archiveAction.kind === 'repair-local-archive';
+  const retrieveActionLabel = isRetrievalAction ? archiveAction.label : 'Retrieve Investigation';
+  const reconciliationDiagnosticTotals = Object.values(syncPlan.sections).reduce(
+    (totals, section) => ({
+      conflicts: totals.conflicts + section.conflictRecords,
+      reviewItems: totals.reviewItems + section.itemsRequiringReview,
+      localOnly: totals.localOnly + section.localOnly,
+      cloudOnly: totals.cloudOnly + section.onlineOnly,
+    }),
+    {
+      conflicts: 0,
+      reviewItems: 0,
+      localOnly: 0,
+      cloudOnly: 0,
+    },
+  );
   const hasNoSynchronizationChanges =
     localRecordTotal > 0 &&
     onlineRecordTotal > 0 &&
@@ -1007,10 +1053,14 @@ export function AuthAccessPanel() {
                   <button
                     type="button"
                     className="auth-button auth-button--primary"
-                    onClick={handleSynchronizeNow}
-                    disabled={isWorking || isProfileLoading}
+                    onClick={
+                      isRetrievalAction
+                        ? () => goToView('confirm-retrieve')
+                        : handleSynchronizeNow
+                    }
+                    disabled={isWorking || isProfileLoading || (isRetrievalAction && !archiveAction.canRun)}
                   >
-                    Synchronize Now
+                    {isRetrievalAction ? archiveAction.label : 'Synchronize Now'}
                   </button>
                   <button
                     type="button"
@@ -1035,7 +1085,7 @@ export function AuthAccessPanel() {
                       onClick={() => goToView('confirm-retrieve')}
                       disabled={isWorking}
                     >
-                      Retrieve Investigation
+                      {retrieveActionLabel}
                     </button>
                   ) : null}
                   <button
@@ -1366,6 +1416,12 @@ export function AuthAccessPanel() {
                 </div>
                 {localRecordTotal === 0 ? (
                   <p>This browser origin does not currently contain archived investigations.</p>
+                ) : isPartialLocalArchive ? (
+                  <p>
+                    LoreBound Online contains additional records for this Investigation. Repair can retrieve
+                    the missing Dossiers, Bonds, Evidence Pins, and stored images without removing existing
+                    local records.
+                  </p>
                 ) : (
                   <p>Review the records inside this browser's Local Archive.</p>
                 )}
@@ -1439,11 +1495,11 @@ export function AuthAccessPanel() {
                     <h4>Synchronization Summary</h4>
                     <dl>
                       <div>
-                        <dt>New Records</dt>
+                        <dt>New Local Records</dt>
                         <dd>{summaryTotals.newRecords}</dd>
                       </div>
                       <div>
-                        <dt>Updated Records</dt>
+                        <dt>Local Updates</dt>
                         <dd>{summaryTotals.updatedRecords}</dd>
                       </div>
                       <div>
@@ -1468,30 +1524,47 @@ export function AuthAccessPanel() {
                 {syncPlan.blockingReasons.length > 0 ? (
                   <p>{syncPlan.blockingReasons[0]}</p>
                 ) : null}
+                {!archiveAction.canRun && archiveAction.kind !== 'close' ? (
+                  <p>{syncPlan.diagnostics.archiveState.disabledReason}</p>
+                ) : null}
                 <div className="auth-dialog__actions">
-                  {hasNoSynchronizationChanges ? (
+                  {archiveAction.kind === 'close' || hasNoSynchronizationChanges ? (
                     <button type="button" className="auth-button auth-button--primary" onClick={closeDialog}>
                       Close
                     </button>
-                  ) : (
+                  ) : isRetrievalAction ? (
                     <button
                       type="button"
                       className="auth-button auth-button--primary"
-                      disabled={!syncPlan.canSynchronize || isWorking}
-                      onClick={() => goToView('confirm-sync')}
-                      title={!syncPlan.canSynchronize ? syncPlan.blockingReasons[0] : undefined}
+                      disabled={!archiveAction.canRun || isWorking}
+                      onClick={() => goToView('confirm-retrieve')}
+                      title={!archiveAction.canRun ? syncPlan.diagnostics.archiveState.retrievalBlockReason : undefined}
                     >
-                      {summaryTotals.conflicts > 0 ? 'Review Conflicts' : syncActionLabel}
+                      {archiveAction.label}
+                    </button>
+                  ) : archiveAction.kind === 'sync' ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--primary"
+                      disabled={!archiveAction.canRun || isWorking}
+                      onClick={() => goToView('confirm-sync')}
+                      title={!archiveAction.canRun ? syncPlan.blockingReasons[0] : undefined}
+                    >
+                      {archiveAction.label}
+                    </button>
+                  ) : (
+                    <button type="button" className="auth-button auth-button--primary" disabled>
+                      {archiveAction.label}
                     </button>
                   )}
-                  {syncPlan.canRetrieve ? (
+                  {syncPlan.canRetrieve && !isRetrievalAction ? (
                     <button
                       type="button"
                       className="auth-button auth-button--secondary"
                       disabled={isWorking}
                       onClick={() => goToView('confirm-retrieve')}
                     >
-                      Retrieve Investigation
+                      {retrieveActionLabel}
                     </button>
                   ) : null}
                   {hasNoSynchronizationChanges ? (
@@ -1505,6 +1578,65 @@ export function AuthAccessPanel() {
                     </button>
                   ) : null}
                 </div>
+                {import.meta.env.DEV ? (
+                  <section className="auth-dialog__developer-diagnostics" aria-label="Developer reconciliation diagnostics">
+                    <h4>Developer Diagnostics</h4>
+                    <dl className="settings-compact-list">
+                      <div>
+                        <dt>Selected action</dt>
+                        <dd>{archiveAction.label}</dd>
+                      </div>
+                      <div>
+                        <dt>Action enabled</dt>
+                        <dd>{archiveAction.canRun ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Disabled reason</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.disabledReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Handler present</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.handlerPresent ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Authenticated</dt>
+                        <dd>{isSignedIn ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud available</dt>
+                        <dd>{syncPlan.online.isAvailable ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local archive classification</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.classification}</dd>
+                      </div>
+                      <div>
+                        <dt>Repair eligible</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.repairEligibility === 'Available' ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Synchronization running</dt>
+                        <dd>{isWorking ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Conflicts</dt>
+                        <dd>{reconciliationDiagnosticTotals.conflicts}</dd>
+                      </div>
+                      <div>
+                        <dt>Review items</dt>
+                        <dd>{reconciliationDiagnosticTotals.reviewItems}</dd>
+                      </div>
+                      <div>
+                        <dt>Local-only count</dt>
+                        <dd>{reconciliationDiagnosticTotals.localOnly}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud-only count</dt>
+                        <dd>{reconciliationDiagnosticTotals.cloudOnly}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                ) : null}
               </section>
             ) : null}
 
@@ -1581,9 +1713,40 @@ export function AuthAccessPanel() {
 
             {isSignedIn && authView === 'confirm-retrieve' ? (
               <section className="archive-sync-review" aria-live="polite">
-                <h3>Retrieve Investigation from LoreBound Online?</h3>
-                <p>Records will be written into this empty Local Archive.</p>
+                <h3>{isPartialLocalArchive ? 'Repair Local Archive?' : 'Retrieve Investigation from LoreBound Online?'}</h3>
+                <p>
+                  {isPartialLocalArchive
+                    ? 'LoreBound Online contains additional records for this Investigation. Missing Dossiers, Bonds, Evidence Pins, and stored images will be retrieved without removing existing local records.'
+                    : 'Records will be written into this empty Local Archive.'}
+                </p>
                 <div className="archive-sync-review__groups">
+                  {isPartialLocalArchive ? (
+                    <section>
+                      <h4>Local Archive</h4>
+                      <dl>
+                        <div>
+                          <dt>Investigations</dt>
+                          <dd>{syncPlan.local.caseCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Dossiers</dt>
+                          <dd>{syncPlan.local.dossierCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Bonds</dt>
+                          <dd>{syncPlan.local.bondCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Evidence Pins</dt>
+                          <dd>{syncPlan.local.boardEntryCount}</dd>
+                        </div>
+                        <div>
+                          <dt>Stored Images</dt>
+                          <dd>{syncPlan.local.localImageCount}</dd>
+                        </div>
+                      </dl>
+                    </section>
+                  ) : null}
                   <section>
                     <h4>LoreBound Online Archive</h4>
                     <dl>
@@ -1608,7 +1771,7 @@ export function AuthAccessPanel() {
                 </div>
                 <div className="auth-dialog__actions">
                   <button type="button" className="auth-button auth-button--primary" onClick={runRetrieval}>
-                    Retrieve Investigation
+                    {retrieveActionLabel}
                   </button>
                   <button type="button" className="auth-button auth-button--quiet" onClick={() => goToView('review')}>
                     Return to Review

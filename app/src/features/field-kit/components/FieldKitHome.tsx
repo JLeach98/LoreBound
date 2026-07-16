@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui/Button';
+import { syncService } from '../../../services/sync/SyncService';
+import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import { useBoard } from '../../cases/context/BoardContext';
 import { useCases } from '../../cases/context/CaseContext';
 import { useDossiers } from '../../cases/context/DossierContext';
@@ -12,9 +15,49 @@ type FieldKitHomeProps = {
 
 export function FieldKitHome({ onNavigate, onOpenInvestigations, onOpenSettings }: FieldKitHomeProps) {
   const { cases, activeCase } = useCases();
-  const { dossiers } = useDossiers();
+  const { dossiers, refreshDossiers } = useDossiers();
   const { boardPins } = useBoard();
   const recentDossiers = dossiers.slice(0, 3);
+  const [repairPlan, setRepairPlan] = useState<SyncPlan | null>(null);
+  const [repairState, setRepairState] = useState<'idle' | 'working' | 'failed'>('idle');
+  const isPartialArchive =
+    repairPlan?.diagnostics.archiveState.classification === 'Partial Local Archive' && dossiers.length === 0;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function reviewRepairState() {
+      try {
+        const planResult = await syncService.createPlan();
+
+        if (isMounted) {
+          setRepairPlan(planResult.plan);
+        }
+      } catch {
+        if (isMounted) {
+          setRepairPlan(null);
+        }
+      }
+    }
+
+    if (activeCase && dossiers.length === 0) {
+      void reviewRepairState();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeCase, dossiers.length]);
+
+  async function handleRepairLocalArchive() {
+    setRepairState('working');
+    const result = await syncService.retrieve();
+    setRepairState(result.ok ? 'idle' : 'failed');
+
+    if (result.ok) {
+      await refreshDossiers();
+    }
+  }
 
   return (
     <section className="field-kit-home" aria-labelledby="field-kit-home-title">
@@ -69,13 +112,25 @@ export function FieldKitHome({ onNavigate, onOpenInvestigations, onOpenSettings 
             </div>
           </dl>
           <div className="field-kit-inline-actions">
-            <Button type="button" variant="brass" onClick={() => onNavigate('dossiers')}>
-              Review
-            </Button>
+            {isPartialArchive ? (
+              <Button
+                type="button"
+                variant="brass"
+                onClick={handleRepairLocalArchive}
+                disabled={repairState === 'working' || !repairPlan?.canRetrieve}
+              >
+                {repairState === 'working' ? 'Repairing Local Archive...' : 'Repair Local Archive'}
+              </Button>
+            ) : (
+              <Button type="button" variant="brass" onClick={() => onNavigate('dossiers')}>
+                Review
+              </Button>
+            )}
             <Button type="button" variant="secondary" onClick={() => onNavigate('board')}>
               Evidence Board
             </Button>
           </div>
+          {repairState === 'failed' ? <p>Local Archive Repair could not be completed. Review Library Access.</p> : null}
         </section>
       ) : (
         <section className="field-kit-case-file" aria-label="No active Investigation">

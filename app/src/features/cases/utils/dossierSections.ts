@@ -172,7 +172,11 @@ function createSection(
 }
 
 export function createDefaultDossierSections(values: Dossier | DossierFormValues) {
-  const template = dossierTemplates[values.dossierType];
+  const template = dossierTemplates[values.dossierType] ?? {
+    id: values.dossierType,
+    name: 'Dossier',
+    sectionTemplateIds: ['identity', 'overview', 'notes', 'relationships'],
+  };
 
   return template.sectionTemplateIds
     .map((templateId) => builtInSectionTemplates.find((section) => section.id === templateId))
@@ -181,9 +185,48 @@ export function createDefaultDossierSections(values: Dossier | DossierFormValues
 }
 
 export function ensureDossierSections(dossier: Dossier) {
-  const sections = dossier.sections?.length ? dossier.sections : createDefaultDossierSections(dossier);
+  const sections = Array.isArray(dossier.sections) && dossier.sections.length
+    ? dossier.sections
+    : createDefaultDossierSections(dossier);
 
-  return [...sections].sort((left, right) => left.order - right.order);
+  return sections
+    .filter((section): section is DossierSection => Boolean(section) && typeof section === 'object')
+    .map((section, index) => {
+      const id = typeof section.id === 'string' && section.id.trim()
+        ? section.id
+        : `invalid-section-${dossier.id}-${index}`;
+      const kind = [
+        'identity',
+        'overview',
+        'notes',
+        'relationships',
+        'timeline',
+        'gallery',
+        'evidence',
+        'custom',
+      ].includes(section.kind)
+        ? section.kind
+        : 'custom';
+      const order = Number.isFinite(section.order) ? section.order : index;
+
+      return {
+        ...section,
+        id,
+        templateId:
+          typeof section.templateId === 'string' && section.templateId.trim()
+            ? section.templateId
+            : id,
+        kind,
+        title:
+          typeof section.title === 'string' && section.title.trim()
+            ? section.title
+            : 'Recovered Section',
+        order,
+        isCollapsed: Boolean(section.isCollapsed),
+        isSingleton: Boolean(section.isSingleton),
+      };
+    })
+    .sort((left, right) => left.order - right.order);
 }
 
 export function mergeDossierSectionsWithFormValues(dossier: Dossier, values: DossierFormValues) {

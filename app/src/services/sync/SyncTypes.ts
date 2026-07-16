@@ -55,6 +55,34 @@ export type SyncDiagnostics = {
     fingerprintMismatches: number;
     automaticGateReason: string;
   };
+  archiveState: {
+    classification:
+      | 'Empty'
+      | 'Complete Local Archive'
+      | 'Partial Local Archive'
+      | 'Cloud Only'
+      | 'Matching'
+      | 'Local Changes'
+      | 'Cloud Updates Available'
+      | 'Conflict'
+      | 'Corrupt or Invalid';
+    activeInvestigationIdPresent: boolean;
+    sameInvestigationIdLocalAndCloud: boolean;
+    localCaseStableId: string | null;
+    cloudCaseStableId: string | null;
+    caseNormalizedMatch: boolean;
+    retrievalEligibility: 'Available' | 'Blocked';
+    retrievalBlockReason: string;
+    actionEnabled: boolean;
+    disabledReason: string;
+    handlerPresent: boolean;
+    repairEligibility: 'Available' | 'Blocked';
+    repairStage: string;
+    selectedAction: string;
+    selectedActionReason: string;
+    localImageReferences: number;
+    cloudImageReferences: number;
+  };
 };
 
 export type SyncEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
@@ -159,6 +187,91 @@ export type SyncResult = {
   transferSize?: number;
   completedAt?: string;
 };
+
+export function getSyncPlanArchiveAction(plan: SyncPlan) {
+  const totals = Object.values(plan.sections).reduce(
+    (accumulator, section) => ({
+      localOnly: accumulator.localOnly + section.localOnly,
+      cloudOnly: accumulator.cloudOnly + section.onlineOnly,
+      localNewer: accumulator.localNewer + section.localNewer,
+      cloudNewer: accumulator.cloudNewer + section.onlineNewer,
+      conflicts: accumulator.conflicts + section.conflictRecords,
+      requiresReview: accumulator.requiresReview + section.itemsRequiringReview,
+    }),
+    {
+      localOnly: 0,
+      cloudOnly: 0,
+      localNewer: 0,
+      cloudNewer: 0,
+      conflicts: 0,
+      requiresReview: 0,
+    },
+  );
+  const hasLocalChanges = totals.localOnly > 0 || totals.localNewer > 0;
+  const hasCloudChanges = totals.cloudOnly > 0 || totals.cloudNewer > 0;
+
+  if (plan.diagnostics.archiveState.classification === 'Partial Local Archive') {
+    return {
+      kind: 'repair-local-archive' as const,
+      label: 'Repair Local Archive',
+      loadingLabel: 'Repairing Local Archive',
+      reason: 'The Local Archive is missing records that exist in LoreBound Online.',
+      canRun: plan.canRetrieve,
+    };
+  }
+
+  if (totals.conflicts > 0) {
+    return {
+      kind: 'review' as const,
+      label: 'Review Conflicts',
+      reason: 'Conflicting records require review.',
+      canRun: false,
+    };
+  }
+
+  if (totals.requiresReview > 0) {
+    return {
+      kind: 'review' as const,
+      label: 'Review Required Items',
+      reason: 'Some records need review before synchronization.',
+      canRun: false,
+    };
+  }
+
+  if (hasLocalChanges && !hasCloudChanges) {
+    return {
+      kind: 'sync' as const,
+      label: 'Update Investigation',
+      reason: 'Only this Local Archive has changes.',
+      canRun: plan.canSynchronize,
+    };
+  }
+
+  if (hasCloudChanges && !hasLocalChanges) {
+    return {
+      kind: 'retrieve' as const,
+      label: 'Retrieve Updates',
+      reason: 'LoreBound Online contains updates missing from this Local Archive.',
+      canRun: plan.canRetrieve,
+    };
+  }
+
+  if (hasLocalChanges && hasCloudChanges) {
+    return {
+      kind: 'review' as const,
+      label: 'Reconcile Archive',
+      reason: 'Both Local Archive and LoreBound Online contain safe changes.',
+      canRun: false,
+    };
+  }
+
+  return {
+    kind: 'close' as const,
+    label: 'Close',
+    reason: 'All meaningful records match.',
+    canRun: true,
+  };
+}
 
 export type CloudCaseRow = {
   id: string;

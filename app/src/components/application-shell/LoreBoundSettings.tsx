@@ -22,6 +22,81 @@ type SettingsSection = 'general' | 'online' | 'about' | 'operations';
 
 const unlockActivationTarget = 7;
 const unlockResetMs = 5000;
+const fieldKitDossierDiagnosticsKey = 'lorebound:field-kit-dossier-diagnostics';
+
+type FieldKitDossierDiagnostics = {
+  renderer: string;
+  sharedSectionCount: number;
+  sectionTypesReceived: string[];
+  unsupportedSectionRendererCount: number;
+  legacyCompatibilityMappingUsed: boolean;
+  currentDossierEditMode: boolean;
+  draftSectionCount: number;
+  persistedSectionCount: number;
+  lastFieldKitDossierSaveStatus: string;
+  synchronizationDetectedMobileChange: boolean;
+  fieldKitDossierRenderFailureCategory?: string;
+  errorBoundaryTriggered?: boolean;
+  selectedDossierIdPresent?: boolean;
+  selectedDossierFound?: boolean;
+  sectionCollectionValid?: boolean;
+  sanitizedRuntimeErrorMessage?: string;
+  sanitizedComponentName?: string;
+  routeLevelErrorBoundaryTriggered?: boolean;
+  safeComponentTrace?: string;
+  activeFilter?: string;
+  canonicalFilterKey?: string;
+  filterDossierCount?: number;
+  malformedTypeCount?: number;
+  selectedDossierType?: string;
+  typeConfigurationFound?: boolean;
+  specializedRendererFound?: boolean;
+  genericFallbackUsed?: boolean;
+  characterOnlyAccessorDetected?: boolean;
+};
+
+const emptyFieldKitDossierDiagnostics: FieldKitDossierDiagnostics = {
+  renderer: 'Not recorded',
+  sharedSectionCount: 0,
+  sectionTypesReceived: [],
+  unsupportedSectionRendererCount: 0,
+  legacyCompatibilityMappingUsed: false,
+  currentDossierEditMode: false,
+  draftSectionCount: 0,
+  persistedSectionCount: 0,
+  lastFieldKitDossierSaveStatus: 'Not recorded',
+  synchronizationDetectedMobileChange: false,
+  fieldKitDossierRenderFailureCategory: 'None',
+  errorBoundaryTriggered: false,
+  selectedDossierIdPresent: false,
+  selectedDossierFound: false,
+  sectionCollectionValid: true,
+  sanitizedRuntimeErrorMessage: 'None',
+  sanitizedComponentName: 'None',
+  routeLevelErrorBoundaryTriggered: false,
+  safeComponentTrace: 'None',
+  activeFilter: 'Not recorded',
+  canonicalFilterKey: 'unknown',
+  filterDossierCount: 0,
+  malformedTypeCount: 0,
+  selectedDossierType: 'None',
+  typeConfigurationFound: true,
+  specializedRendererFound: true,
+  genericFallbackUsed: false,
+  characterOnlyAccessorDetected: false,
+};
+
+function readFieldKitDossierDiagnostics() {
+  try {
+    const rawValue = window.localStorage.getItem(fieldKitDossierDiagnosticsKey);
+
+    return rawValue
+      ? ({ ...emptyFieldKitDossierDiagnostics, ...JSON.parse(rawValue) } as FieldKitDossierDiagnostics)
+      : emptyFieldKitDossierDiagnostics;
+  } catch {
+    return emptyFieldKitDossierDiagnostics;
+  }
+}
 
 function createEmptyPlanSection() {
   return {
@@ -115,6 +190,25 @@ function emptyPlan(): SyncPlan {
         fingerprintMismatches: 0,
         automaticGateReason: 'Not reviewed.',
       },
+      archiveState: {
+        classification: 'Empty',
+        activeInvestigationIdPresent: false,
+        sameInvestigationIdLocalAndCloud: false,
+        localCaseStableId: null,
+        cloudCaseStableId: null,
+        caseNormalizedMatch: false,
+        retrievalEligibility: 'Blocked',
+        retrievalBlockReason: 'Not reviewed.',
+        actionEnabled: false,
+        disabledReason: 'Not reviewed.',
+        handlerPresent: false,
+        repairEligibility: 'Blocked',
+        repairStage: 'Not started.',
+        selectedAction: 'Not reviewed.',
+        selectedActionReason: 'Not reviewed.',
+        localImageReferences: 0,
+        cloudImageReferences: 0,
+      },
     },
   };
 }
@@ -183,6 +277,9 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [syncPlan, setSyncPlan] = useState<SyncPlan>(emptyPlan);
+  const [fieldKitDossierDiagnostics, setFieldKitDossierDiagnostics] = useState(
+    readFieldKitDossierDiagnostics,
+  );
   const settingsRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const unlockDialogRef = useRef<HTMLElement>(null);
@@ -242,6 +339,8 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
       if (nextPlanResult) {
         setSyncPlan(nextPlanResult.plan);
       }
+
+      setFieldKitDossierDiagnostics(readFieldKitDossierDiagnostics());
     }
 
     const subscription = authService.onAuthStateChanged((nextAuthStatus) => {
@@ -734,6 +833,66 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                     <summary>Archive Reconciliation</summary>
                     <dl>
                       <div>
+                        <dt>Local archive classification</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.classification}</dd>
+                      </div>
+                      <div>
+                        <dt>Active Investigation ID present</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.activeInvestigationIdPresent ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Same Investigation ID local and cloud</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.sameInvestigationIdLocalAndCloud ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local Case stable ID</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.localCaseStableId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud Case stable ID</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.cloudCaseStableId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Case normalized match</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.caseNormalizedMatch ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Retrieval eligibility</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.retrievalEligibility}</dd>
+                      </div>
+                      <div>
+                        <dt>Retrieval block reason</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.retrievalBlockReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Action enabled</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.actionEnabled ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Disabled reason</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.disabledReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Handler present</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.handlerPresent ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Repair eligibility</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.repairEligibility}</dd>
+                      </div>
+                      <div>
+                        <dt>Repair stage</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.repairStage}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected reconciliation action</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.selectedAction}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected action reason</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.selectedActionReason}</dd>
+                      </div>
+                      <div>
                         <dt>Records matched</dt>
                         <dd>
                           {Object.values(syncPlan.sections).reduce(
@@ -876,6 +1035,127 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Evidence Pins</dt>
                         <dd>{syncPlan.diagnostics.localEvidencePinsRead}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Field Kit Dossier Renderer</summary>
+                    <dl>
+                      <div>
+                        <dt>Dossier renderer selected</dt>
+                        <dd>{fieldKitDossierDiagnostics.renderer}</dd>
+                      </div>
+                      <div>
+                        <dt>Shared section count</dt>
+                        <dd>{fieldKitDossierDiagnostics.sharedSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Section types received</dt>
+                        <dd>
+                          {fieldKitDossierDiagnostics.sectionTypesReceived.length
+                            ? fieldKitDossierDiagnostics.sectionTypesReceived.join(', ')
+                            : 'None recorded'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Unsupported section renderer count</dt>
+                        <dd>{fieldKitDossierDiagnostics.unsupportedSectionRendererCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Legacy compatibility mapping used</dt>
+                        <dd>{fieldKitDossierDiagnostics.legacyCompatibilityMappingUsed ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Current Dossier Edit Mode</dt>
+                        <dd>{fieldKitDossierDiagnostics.currentDossierEditMode ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Draft section count</dt>
+                        <dd>{fieldKitDossierDiagnostics.draftSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Persisted section count</dt>
+                        <dd>{fieldKitDossierDiagnostics.persistedSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Last Field Kit Dossier save status</dt>
+                        <dd>{fieldKitDossierDiagnostics.lastFieldKitDossierSaveStatus}</dd>
+                      </div>
+                      <div>
+                        <dt>Synchronization detected mobile change</dt>
+                        <dd>{fieldKitDossierDiagnostics.synchronizationDetectedMobileChange ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected Dossier ID present</dt>
+                        <dd>{fieldKitDossierDiagnostics.selectedDossierIdPresent ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected Dossier found</dt>
+                        <dd>{fieldKitDossierDiagnostics.selectedDossierFound ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Section collection valid</dt>
+                        <dd>{fieldKitDossierDiagnostics.sectionCollectionValid ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Field Kit Dossier render failure category</dt>
+                        <dd>{fieldKitDossierDiagnostics.fieldKitDossierRenderFailureCategory ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Sanitized runtime error message</dt>
+                        <dd>{fieldKitDossierDiagnostics.sanitizedRuntimeErrorMessage ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Sanitized component name</dt>
+                        <dd>{fieldKitDossierDiagnostics.sanitizedComponentName ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Error boundary triggered</dt>
+                        <dd>{fieldKitDossierDiagnostics.errorBoundaryTriggered ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Route-level error boundary triggered</dt>
+                        <dd>{fieldKitDossierDiagnostics.routeLevelErrorBoundaryTriggered ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Safe component trace</dt>
+                        <dd>{fieldKitDossierDiagnostics.safeComponentTrace ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Active filter</dt>
+                        <dd>{fieldKitDossierDiagnostics.activeFilter ?? 'Not recorded'}</dd>
+                      </div>
+                      <div>
+                        <dt>Canonical filter key</dt>
+                        <dd>{fieldKitDossierDiagnostics.canonicalFilterKey ?? 'unknown'}</dd>
+                      </div>
+                      <div>
+                        <dt>Dossier count for filter</dt>
+                        <dd>{fieldKitDossierDiagnostics.filterDossierCount ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Malformed type count</dt>
+                        <dd>{fieldKitDossierDiagnostics.malformedTypeCount ?? 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected Dossier type</dt>
+                        <dd>{fieldKitDossierDiagnostics.selectedDossierType ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Type configuration found</dt>
+                        <dd>{fieldKitDossierDiagnostics.typeConfigurationFound ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Specialized renderer found</dt>
+                        <dd>{fieldKitDossierDiagnostics.specializedRendererFound ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Generic fallback used</dt>
+                        <dd>{fieldKitDossierDiagnostics.genericFallbackUsed ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Character-only accessor detected</dt>
+                        <dd>{fieldKitDossierDiagnostics.characterOnlyAccessorDetected ? 'Yes' : 'No'}</dd>
                       </div>
                     </dl>
                   </details>

@@ -93,6 +93,18 @@ export function DossierProvider({ children }: { children: ReactNode }) {
     void refreshDossiers();
   }, [refreshDossiers]);
 
+  useEffect(() => {
+    function handleLocalArchiveRestored() {
+      void refreshDossiers();
+    }
+
+    window.addEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+
+    return () => {
+      window.removeEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+    };
+  }, [refreshDossiers]);
+
   const createNewDossier = useCallback(
     async (values: DossierFormValues) => {
       if (!activeCase) {

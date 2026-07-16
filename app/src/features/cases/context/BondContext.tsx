@@ -73,6 +73,18 @@ export function BondProvider({ children }: { children: ReactNode }) {
     void refreshBonds();
   }, [refreshBonds]);
 
+  useEffect(() => {
+    function handleLocalArchiveRestored() {
+      void refreshBonds();
+    }
+
+    window.addEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+
+    return () => {
+      window.removeEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+    };
+  }, [refreshBonds]);
+
   const createNewBond = useCallback(
     async (values: BondFormValues) => {
       if (!activeCase) {

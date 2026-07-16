@@ -73,6 +73,18 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     void refreshBoardPins();
   }, [refreshBoardPins]);
 
+  useEffect(() => {
+    function handleLocalArchiveRestored() {
+      void refreshBoardPins();
+    }
+
+    window.addEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+
+    return () => {
+      window.removeEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+    };
+  }, [refreshBoardPins]);
+
   const pinDossier = useCallback(
     async (dossierId: string, position?: BoardPinPosition) => {
       if (!activeCase) {

@@ -85,6 +85,18 @@ export function CaseProvider({ children }: { children: ReactNode }) {
     void refreshCases();
   }, [refreshCases]);
 
+  useEffect(() => {
+    function handleLocalArchiveRestored() {
+      void refreshCases();
+    }
+
+    window.addEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+
+    return () => {
+      window.removeEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+    };
+  }, [refreshCases]);
+
   const createNewCase = useCallback(async (values: CaseFormValues) => {
     try {
       const createdCase = await createCase(values);

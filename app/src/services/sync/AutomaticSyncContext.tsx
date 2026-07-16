@@ -119,8 +119,17 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
         (total, section) => total + section.newRecords + section.updatedRecords,
         0,
       );
+      const cloudUpdateCount = Object.values(planResult.plan.sections).reduce(
+        (total, section) => total + section.cloudUpdatesAvailable,
+        0,
+      );
 
-      if (reviewCount > 0 || conflictCount > 0) {
+      if (
+        reviewCount > 0 ||
+        conflictCount > 0 ||
+        cloudUpdateCount > 0 ||
+        planResult.plan.diagnostics.archiveState.classification === 'Partial Local Archive'
+      ) {
         setAutomaticSyncState('review-required');
         return;
       }
