@@ -46,6 +46,7 @@ export {
   isThreadmarkGeneratedBond,
   markThreadmarkFieldKitBondRefreshCompleted,
   planThreadmarkBondReconciliation,
+  recordThreadmarkSynchronizationDiagnostics,
 } from './threadmarkReconciliation';
 export {
   buildThreadmarkResolutionIndex,

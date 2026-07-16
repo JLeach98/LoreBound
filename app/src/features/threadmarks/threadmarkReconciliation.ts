@@ -815,3 +815,12 @@ export function markThreadmarkFieldKitBondRefreshCompleted() {
     fieldKitBondRefreshCompleted,
   });
 }
+
+export function recordThreadmarkSynchronizationDiagnostics(
+  diagnostics: Partial<ThreadmarkReconciliationDiagnostics>,
+) {
+  latestReconciliationDiagnostics = Object.freeze({
+    ...latestReconciliationDiagnostics,
+    ...diagnostics,
+  });
+}

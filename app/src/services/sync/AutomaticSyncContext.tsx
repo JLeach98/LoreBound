@@ -42,18 +42,6 @@ export function requestAutomaticSynchronization(reason: string) {
   automaticSyncRequester?.(reason);
 }
 
-function notifySynchronizationCompleted(result: SyncResult) {
-  window.dispatchEvent(
-    new CustomEvent('lorebound:synchronization-completed', {
-      detail: {
-        ok: result.ok,
-        completedAt: result.completedAt ?? new Date().toISOString(),
-        counts: result.counts,
-      },
-    }),
-  );
-}
-
 function readAutomaticSyncPreference() {
   return window.localStorage.getItem(automaticSyncPreferenceKey) === 'true';
 }
@@ -174,7 +162,6 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
 
       if (result.ok) {
         setLastAutomaticSyncAt(result.completedAt ?? new Date().toISOString());
-        notifySynchronizationCompleted(result);
       }
 
         return result;
@@ -215,7 +202,6 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
       setLastAutomaticSyncAt(result.completedAt ?? new Date().toISOString());
       setAutomaticSyncState('up-to-date');
       setPendingAutomaticSyncReasons([]);
-      notifySynchronizationCompleted(result);
       return result;
     } catch {
       setAutomaticSyncState('failed');

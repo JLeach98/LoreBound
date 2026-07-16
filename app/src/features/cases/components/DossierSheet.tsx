@@ -6,8 +6,14 @@ import {
   isThreadmarkGeneratedBond,
   ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
+import {
+  createBond as createStoredBond,
+  deleteBond as deleteStoredBond,
+  updateBond as updateStoredBond,
+} from '../storage/caseStorage';
 import {
   bondStatuses,
   builtInBondTypes,
@@ -151,6 +157,7 @@ export function DossierSheet({
   const {
     bonds,
     bondsForDossier,
+    refreshBonds,
     createNewBond,
     updateExistingBond,
     deleteExistingBond,
@@ -418,7 +425,7 @@ export function DossierSheet({
       sections: normalizedSections,
     });
     setWorkingDossier(updatedDossier);
-    await executeThreadmarkBondReconciliation(
+    const reconciliationResult = await executeThreadmarkBondReconciliation(
       {
         sourceDossier: updatedDossier,
         sections: normalizedSections,
@@ -426,11 +433,20 @@ export function DossierSheet({
         bonds,
       },
       {
-        createBond: createNewBond,
-        updateBond: updateExistingBond,
-        deleteBond: deleteExistingBond,
+        createBond: (values) => createStoredBond(updatedDossier.caseId, values),
+        updateBond: updateStoredBond,
+        deleteBond: deleteStoredBond,
       },
     );
+    await refreshBonds();
+
+    if (
+      reconciliationResult.created.length > 0 ||
+      reconciliationResult.updated.length > 0 ||
+      reconciliationResult.removed.length > 0
+    ) {
+      requestAutomaticSynchronization('threadmark relationships updated');
+    }
   }
 
   function enterSectionEditMode() {

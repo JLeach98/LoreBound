@@ -12,6 +12,11 @@ import { useBonds } from '../../cases/context/BondContext';
 import { useBoard } from '../../cases/context/BoardContext';
 import { useCases } from '../../cases/context/CaseContext';
 import { useDossiers } from '../../cases/context/DossierContext';
+import {
+  createBond as createStoredBond,
+  deleteBond as deleteStoredBond,
+  updateBond as updateStoredBond,
+} from '../../cases/storage/caseStorage';
 import type { Bond, BondFormValues } from '../../cases/types/bondTypes';
 import type {
   Dossier,
@@ -21,6 +26,7 @@ import type {
   DossierType,
 } from '../../cases/types/dossierTypes';
 import { syncService } from '../../../services/sync/SyncService';
+import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import {
   builtInSectionTemplates,
@@ -300,6 +306,7 @@ export function FieldKitDossiers({
     createNewBond,
     updateExistingBond,
     deleteExistingBond,
+    refreshBonds,
     bondsForDossier,
   } = useBonds();
   const { isDossierPinned, pinDossier, removeDossierFromBoard } = useBoard();
@@ -508,7 +515,7 @@ export function FieldKitDossiers({
       sections: normalizedSections,
     });
     setSelectedDossier(updatedDossier);
-    await executeThreadmarkBondReconciliation(
+    const reconciliationResult = await executeThreadmarkBondReconciliation(
       {
         sourceDossier: updatedDossier,
         sections: normalizedSections,
@@ -516,11 +523,20 @@ export function FieldKitDossiers({
         bonds,
       },
       {
-        createBond: createNewBond,
-        updateBond: updateExistingBond,
-        deleteBond: deleteExistingBond,
+        createBond: (values) => createStoredBond(updatedDossier.caseId, values),
+        updateBond: updateStoredBond,
+        deleteBond: deleteStoredBond,
       },
     );
+    await refreshBonds();
+
+    if (
+      reconciliationResult.created.length > 0 ||
+      reconciliationResult.updated.length > 0 ||
+      reconciliationResult.removed.length > 0
+    ) {
+      requestAutomaticSynchronization('threadmark relationships updated');
+    }
     return updatedDossier;
   }
 

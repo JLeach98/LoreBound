@@ -6,6 +6,7 @@ import {
   recordLocalSyncState,
   replaceEmptyCaseShellWithCloudArchive,
 } from '../../features/cases/storage/caseStorage';
+import { recordThreadmarkSynchronizationDiagnostics } from '../../features/threadmarks';
 import type { LoreCase } from '../../features/cases/types/caseTypes';
 import type { Dossier } from '../../features/cases/types/dossierTypes';
 import { authService } from '../auth/AuthService';
@@ -103,6 +104,22 @@ function emit(onProgress: ((progress: SyncProgress) => void) | undefined, stage:
     completedRecords: 0,
     remainingRecords: 0,
   });
+}
+
+function notifySynchronizationCompleted(result: SyncResult) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent('lorebound:synchronization-completed', {
+      detail: {
+        ok: result.ok,
+        completedAt: result.completedAt ?? new Date().toISOString(),
+        counts: result.counts,
+      },
+    }),
+  );
 }
 
 function createEmptyPlan(): SyncPlan {
@@ -751,6 +768,68 @@ function normalizeBondContent(record: {
     notes: normalizeOptional(record.notes),
     evidence: canonicalize(evidence),
   };
+}
+
+function getGeneratedBondMetadata(record: {
+  origin?: string;
+  threadmark?: unknown;
+  evidence?: Record<string, unknown> | null;
+}) {
+  const origin = record.origin ?? record.evidence?.origin;
+  const threadmark = record.threadmark ?? record.evidence?.threadmark;
+
+  return origin === 'threadmark' && threadmark && typeof threadmark === 'object'
+    ? threadmark as Record<string, unknown>
+    : null;
+}
+
+function isGeneratedBondRecord(record: {
+  origin?: string;
+  threadmark?: unknown;
+  evidence?: Record<string, unknown> | null;
+}) {
+  return Boolean(getGeneratedBondMetadata(record));
+}
+
+function getGeneratedBondRole(record: {
+  origin?: string;
+  threadmark?: unknown;
+  evidence?: Record<string, unknown> | null;
+}) {
+  const role = getGeneratedBondMetadata(record)?.role;
+
+  return role === 'forward' || role === 'inverse' ? role : null;
+}
+
+function countGeneratedBondsByRole(records: Array<{
+  origin?: string;
+  threadmark?: unknown;
+  evidence?: Record<string, unknown> | null;
+}>) {
+  return {
+    total: records.filter(isGeneratedBondRecord).length,
+    forward: records.filter((record) => getGeneratedBondRole(record) === 'forward').length,
+    inverse: records.filter((record) => getGeneratedBondRole(record) === 'inverse').length,
+  };
+}
+
+function generatedMetadataPreserved(records: Array<{
+  origin?: string;
+  threadmark?: unknown;
+  evidence?: Record<string, unknown> | null;
+}>) {
+  return records
+    .filter(isGeneratedBondRecord)
+    .every((record) => {
+      const metadata = getGeneratedBondMetadata(record);
+
+      return Boolean(
+        metadata?.ownerId &&
+        metadata?.pairId &&
+        metadata?.role &&
+        metadata?.effectiveRelationshipKey,
+      );
+    });
 }
 
 function normalizeBoardEntryContent(record: {
@@ -1674,6 +1753,53 @@ class LoreBoundSyncService implements SyncService {
       localSyncState?.synchronizedFingerprints,
       recordActions,
     );
+    const localGeneratedBondCounts = countGeneratedBondsByRole(localArchive.bonds);
+    const generatedLocalBondIds = new Set(
+      localArchive.bonds.filter(isGeneratedBondRecord).map((record) => record.id),
+    );
+    const generatedBondActions = recordActions.filter(
+      (action) => action.entityType === 'bonds' && generatedLocalBondIds.has(action.id),
+    );
+    const generatedLocalOnlyCount = generatedBondActions.filter(
+      (action) => action.action === 'upload-local-only',
+    ).length;
+    const generatedLocalNewerCount = generatedBondActions.filter(
+      (action) => action.action === 'upload-local-newer',
+    ).length;
+    const generatedMatchingCount = generatedBondActions.filter(
+      (action) => action.action === 'unchanged',
+    ).length;
+    const generatedForwardIds = new Set(
+      localArchive.bonds
+        .filter((record) => getGeneratedBondRole(record) === 'forward')
+        .map((record) => record.id),
+    );
+    const generatedInverseIds = new Set(
+      localArchive.bonds
+        .filter((record) => getGeneratedBondRole(record) === 'inverse')
+        .map((record) => record.id),
+    );
+
+    recordThreadmarkSynchronizationDiagnostics({
+      generatedBondsPendingUpload: generatedLocalOnlyCount + generatedLocalNewerCount,
+      generatedForwardBondsPendingUpload: generatedBondActions.filter(
+        (action) =>
+          (action.action === 'upload-local-only' || action.action === 'upload-local-newer') &&
+          generatedForwardIds.has(action.id),
+      ).length,
+      generatedInverseBondsPendingUpload: generatedBondActions.filter(
+        (action) =>
+          (action.action === 'upload-local-only' || action.action === 'upload-local-newer') &&
+          generatedInverseIds.has(action.id),
+      ).length,
+      generatedBondsUploaded: generatedMatchingCount,
+      generatedBondsVerifiedInCloud: 0,
+      generatedBondsRetrieved: 0,
+      generatedMetadataPreserved: generatedMetadataPreserved(localArchive.bonds),
+      desiredForwardCount: localGeneratedBondCounts.forward,
+      desiredInverseCount: localGeneratedBondCounts.inverse,
+      lastFailedStage: 'None',
+    });
     plan.diagnostics = {
       ...plan.diagnostics,
       reconciliation: {
@@ -2043,6 +2169,23 @@ class LoreBoundSyncService implements SyncService {
       const onlineArchive = await cloudArchiveRepository.readArchive();
 
       this.verifyOnlineArchive(uploadArchive, onlineArchive, user.id);
+      const uploadedGeneratedBondCounts = countGeneratedBondsByRole(uploadArchive.bonds);
+      const uploadedGeneratedBondIds = new Set(
+        uploadArchive.bonds.filter(isGeneratedBondRecord).map((record) => record.id),
+      );
+      const uploadedGeneratedCloudRecords = onlineArchive.bonds.filter((record) =>
+        uploadedGeneratedBondIds.has(record.id),
+      );
+      recordThreadmarkSynchronizationDiagnostics({
+        generatedBondsUploaded: uploadedGeneratedBondCounts.total,
+        generatedBondsVerifiedInCloud: uploadedGeneratedCloudRecords.length,
+        generatedMetadataPreserved:
+          generatedMetadataPreserved(uploadArchive.bonds) &&
+          generatedMetadataPreserved(uploadedGeneratedCloudRecords),
+        desiredForwardCount: uploadedGeneratedBondCounts.forward,
+        desiredInverseCount: uploadedGeneratedBondCounts.inverse,
+        lastFailedStage: 'None',
+      });
       completeStage('Verifying Investigation');
       let synchronizedArchive = localArchive;
 
@@ -2072,6 +2215,14 @@ class LoreBoundSyncService implements SyncService {
         const retrievedBonds = onlineArchive.bonds
           .filter((record) => retrievalActionIds.bonds.has(record.id))
           .map(mapCloudBondToLocal);
+        const retrievedGeneratedBondCounts = countGeneratedBondsByRole(retrievedBonds);
+        recordThreadmarkSynchronizationDiagnostics({
+          generatedBondsRetrieved: retrievedGeneratedBondCounts.total,
+          generatedMetadataPreserved: generatedMetadataPreserved(retrievedBonds),
+          desiredForwardCount: retrievedGeneratedBondCounts.forward,
+          desiredInverseCount: retrievedGeneratedBondCounts.inverse,
+          lastFailedStage: 'None',
+        });
         completeStage('Retrieving Bonds');
         report('Retrieving Evidence Pins', 'Retrieving safe Evidence Board updates.');
         const retrievedBoardPins = onlineArchive.boardEntries
@@ -2120,7 +2271,7 @@ class LoreBoundSyncService implements SyncService {
       });
       completeStage('Finalizing Investigation');
 
-      return {
+      const result: SyncResult = {
         ok: true,
         message: 'Investigation Secured',
         counts: {
@@ -2138,6 +2289,9 @@ class LoreBoundSyncService implements SyncService {
         transferSize: planResult.plan.local.estimatedTransferBytes,
         completedAt: new Date().toISOString(),
       };
+      notifySynchronizationCompleted(result);
+
+      return result;
     } catch (error) {
       return {
         ok: false,
@@ -2239,7 +2393,7 @@ class LoreBoundSyncService implements SyncService {
       });
       completeStage('Finalizing Investigation');
 
-      return {
+      const result: SyncResult = {
         ok: true,
         message: 'Synchronization Baseline Rebuilt',
         counts: {
@@ -2254,6 +2408,9 @@ class LoreBoundSyncService implements SyncService {
         transferSize: 0,
         completedAt: new Date().toISOString(),
       };
+      notifySynchronizationCompleted(result);
+
+      return result;
     } catch (error) {
       return {
         ok: false,
@@ -2326,6 +2483,14 @@ class LoreBoundSyncService implements SyncService {
       completeStage('Retrieving Stored Images');
       report('Retrieving Bonds', `${onlineArchive.bonds.length} Bond records.`);
       const bonds = onlineArchive.bonds.map(mapCloudBondToLocal);
+      const retrievedGeneratedBondCounts = countGeneratedBondsByRole(bonds);
+      recordThreadmarkSynchronizationDiagnostics({
+        generatedBondsRetrieved: retrievedGeneratedBondCounts.total,
+        generatedMetadataPreserved: generatedMetadataPreserved(bonds),
+        desiredForwardCount: retrievedGeneratedBondCounts.forward,
+        desiredInverseCount: retrievedGeneratedBondCounts.inverse,
+        lastFailedStage: 'None',
+      });
       completeStage('Retrieving Bonds');
       report('Retrieving Evidence Pins', `${onlineArchive.boardEntries.length} Evidence Pin records.`);
       const boardPins = onlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
@@ -2403,7 +2568,7 @@ class LoreBoundSyncService implements SyncService {
       completeStage('Finalizing Investigation');
       notifyLocalArchiveRestored();
 
-      return {
+      const result: SyncResult = {
         ok: true,
         message: isRepair ? 'Local Archive Repaired' : 'Investigation Retrieved',
         counts: {
@@ -2415,6 +2580,9 @@ class LoreBoundSyncService implements SyncService {
         failedStage: undefined,
         completedStages,
       };
+      notifySynchronizationCompleted(result);
+
+      return result;
     } catch (error) {
       return {
         ok: false,
@@ -2472,6 +2640,13 @@ class LoreBoundSyncService implements SyncService {
         !onlineDossiers.has(record.targetDossierId)
       ) {
         throw new Error('Unable to verify synchronized Bonds.');
+      }
+
+      const localFingerprint = fingerprint(normalizeBondContent(record));
+      const cloudFingerprint = fingerprint(normalizeBondContent(onlineRecord));
+
+      if (localFingerprint !== cloudFingerprint) {
+        throw new Error('Unable to verify synchronized Bond metadata.');
       }
     });
 
