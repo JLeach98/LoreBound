@@ -2,6 +2,7 @@ import type { CaseFormValues, LoreCase } from '../types/caseTypes';
 import type { Bond, BondEvidence, BondFormValues } from '../types/bondTypes';
 import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import type { Dossier, DossierFormValues } from '../types/dossierTypes';
+import { createStableId } from '../../../lib/stableId';
 import { createDefaultDossierSections } from '../utils/dossierSections';
 
 const databaseName = 'lorebound-local-archive';
@@ -131,35 +132,19 @@ function requestToPromise<T>(request: IDBRequest<T>) {
 }
 
 function createCaseId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `case-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createStableId('case');
 }
 
 function createDossierId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `dossier-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createStableId('dossier');
 }
 
 function createBoardPinId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `pin-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createStableId('pin');
 }
 
 function createBondId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return `bond-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createStableId('bond');
 }
 
 function cleanOptional(value?: string) {
@@ -382,6 +367,49 @@ export async function importFullLocalArchive(records: {
   );
 }
 
+export async function replaceEmptyCaseShellWithCloudArchive(
+  shellCaseId: string,
+  records: {
+    cases: LoreCase[];
+    dossiers: Dossier[];
+    bonds: Bond[];
+    boardPins: BoardPin[];
+    activeCaseId?: string | null;
+  },
+) {
+  await runMultiStoreTransaction(
+    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, metaStoreName],
+    'readwrite',
+    async (stores) => {
+      for (const loreCase of records.cases) {
+        await requestToPromise(stores[caseStoreName].put(loreCase));
+      }
+
+      for (const dossier of records.dossiers) {
+        await requestToPromise(stores[dossierStoreName].put(dossier));
+      }
+
+      for (const bond of records.bonds) {
+        await requestToPromise(stores[bondStoreName].put(bond));
+      }
+
+      for (const boardPin of records.boardPins) {
+        await requestToPromise(stores[boardPinStoreName].put(boardPin));
+      }
+
+      const activeCaseId = records.activeCaseId ?? records.cases[0]?.id;
+
+      if (activeCaseId) {
+        await requestToPromise(stores[metaStoreName].put(activeCaseId, activeCaseKey));
+      }
+
+      if (!records.cases.some((loreCase) => loreCase.id === shellCaseId)) {
+        await requestToPromise(stores[caseStoreName].delete(shellCaseId));
+      }
+    },
+  );
+}
+
 export function readCaseById(id: string) {
   return runTransaction<LoreCase | undefined>(caseStoreName, 'readonly', (store) =>
     store.get(id),
@@ -443,7 +471,6 @@ export async function openCase(id: string) {
   const openedCase: LoreCase = {
     ...existingCase,
     dateLastOpened: new Date().toISOString(),
-    dateLastModified: new Date().toISOString(),
   };
 
   await runTransaction(caseStoreName, 'readwrite', (store) => store.put(openedCase));
@@ -453,17 +480,47 @@ export async function openCase(id: string) {
 
 export async function createDossier(caseId: string, values: DossierFormValues) {
   const now = new Date().toISOString();
+  const name = values.name.trim();
+
+  if (!caseId) {
+    throw new Error('Open a Case before creating a Dossier.');
+  }
+
+  if (!name) {
+    throw new Error('Add a Name before saving this Dossier.');
+  }
+
+  let dossierId: string;
+  let cleanedValues: ReturnType<typeof cleanDossierValues>;
+
+  try {
+    dossierId = createDossierId();
+  } catch {
+    throw new Error('LoreBound could not create a stable Dossier ID.');
+  }
+
+  try {
+    cleanedValues = cleanDossierValues(values);
+  } catch {
+    throw new Error('LoreBound could not initialize the Dossier sections.');
+  }
+
   const dossier: Dossier = {
-    id: createDossierId(),
+    id: dossierId,
     caseId,
     dossierType: values.dossierType,
-    name: values.name.trim(),
+    name,
     dateCreated: now,
     dateModified: now,
-    ...cleanDossierValues(values),
+    ...cleanedValues,
   };
 
-  await runTransaction(dossierStoreName, 'readwrite', (store) => store.add(dossier));
+  try {
+    await runTransaction(dossierStoreName, 'readwrite', (store) => store.add(dossier));
+  } catch {
+    throw new Error('LoreBound could not save this Dossier to the Local Archive.');
+  }
+
   return dossier;
 }
 

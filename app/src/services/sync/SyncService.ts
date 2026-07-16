@@ -4,6 +4,7 @@ import {
   readFullLocalArchive,
   readLocalSyncState,
   recordLocalSyncState,
+  replaceEmptyCaseShellWithCloudArchive,
 } from '../../features/cases/storage/caseStorage';
 import type { LoreCase } from '../../features/cases/types/caseTypes';
 import type { Dossier } from '../../features/cases/types/dossierTypes';
@@ -27,7 +28,11 @@ import {
   mapCloudDossierToLocal,
   mapDossierToCloudRow,
 } from './SyncMappers';
-import { getSyncPlanArchiveAction } from './SyncTypes';
+import {
+  archiveActionHasHandler,
+  assertRunnableArchiveActionHasHandler,
+  getSyncPlanArchiveAction,
+} from './SyncTypes';
 import type {
   CloudArchiveSnapshot,
   LocalArchiveSnapshot,
@@ -36,6 +41,7 @@ import type {
   SyncProgress,
   SyncResult,
   SyncEntityType,
+  SyncRecordAction,
   SyncStage,
 } from './SyncTypes';
 
@@ -63,6 +69,7 @@ export interface SyncService {
   createPlan: () => Promise<SyncPlanResult>;
   synchronize: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
   retrieve: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
+  rebuildBaseline: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
 }
 
 const emptyPlanSection: SyncPlanSection = {
@@ -163,6 +170,19 @@ function createEmptyPlan(): SyncPlan {
       },
       reconciliation: {
         baselineMetadataPresent: false,
+        baselineStatus: 'Missing',
+        baselineReason: 'Not reviewed.',
+        canRebuildBaseline: false,
+        recordActions: [],
+        selectedSynchronizationMode: 'none',
+        uploadActionsCount: 0,
+        retrievalActionsCount: 0,
+        conflictActionsCount: 0,
+        outboundGateReason: 'Not reviewed.',
+        upsertDossiersInvoked: false,
+        lastUploadedDossierId: null,
+        cloudVerificationResult: 'Not reviewed.',
+        baselineUpdated: false,
         invalidIds: 0,
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
@@ -175,6 +195,11 @@ function createEmptyPlan(): SyncPlan {
         localCaseStableId: null,
         cloudCaseStableId: null,
         caseNormalizedMatch: false,
+        emptyLocalCaseShell: false,
+        localCaseNormalizedIdentity: {},
+        cloudCaseNormalizedIdentity: {},
+        caseMeaningfulDifferingFields: [],
+        caseIgnoredDifferingFields: [],
         retrievalEligibility: 'Blocked',
         retrievalBlockReason: 'Not reviewed.',
         actionEnabled: false,
@@ -184,6 +209,7 @@ function createEmptyPlan(): SyncPlan {
         repairStage: 'Not started.',
         selectedAction: 'Not reviewed.',
         selectedActionReason: 'Not reviewed.',
+        browserOrigin: typeof window !== 'undefined' ? window.location.origin : 'Unknown',
         localImageReferences: 0,
         cloudImageReferences: 0,
       },
@@ -242,6 +268,23 @@ function normalizeCaseForRepairIdentity(record: LoreCase | CloudArchiveSnapshot[
   };
 }
 
+function normalizeCaseMeaningfulIdentity(record: LoreCase | CloudArchiveSnapshot['cases'][number]) {
+  const value = record as LoreCase & CloudArchiveSnapshot['cases'][number];
+
+  return {
+    name: normalizeOptional(value.name ?? value.caseName),
+    universeType: normalizeOptional(value.universe_type ?? value.universeType),
+    authorOrCreator: normalizeOptional(value.author_or_creator ?? value.authorOrCreator),
+    description: normalizeOptional(value.description),
+  };
+}
+
+function getDifferingFields(left: Record<string, string>, right: Record<string, string>) {
+  return Array.from(new Set([...Object.keys(left), ...Object.keys(right)])).filter(
+    (field) => left[field] !== right[field],
+  );
+}
+
 function getPrimaryLocalCase(localArchive: LocalArchiveSnapshot) {
   const localCaseId = getPrimaryLocalCaseId(localArchive);
 
@@ -266,6 +309,44 @@ function hasMatchingPrimaryCaseContent(
   }
 
   return fingerprint(normalizeCaseForRepairIdentity(localCase)) === fingerprint(normalizeCaseForRepairIdentity(cloudCase));
+}
+
+function getEmptyLocalCaseShellState(
+  localArchive: LocalArchiveSnapshot,
+  onlineArchive: CloudArchiveSnapshot,
+  localSyncState: Awaited<ReturnType<typeof readLocalSyncState>>,
+  userId: string,
+) {
+  const localCase = localArchive.cases[0] ?? null;
+  const cloudCase = onlineArchive.cases[0] ?? null;
+  const localIdentity = localCase ? normalizeCaseMeaningfulIdentity(localCase) : {};
+  const cloudIdentity = cloudCase ? normalizeCaseMeaningfulIdentity(cloudCase) : {};
+  const meaningfulDifferingFields = getDifferingFields(localIdentity, cloudIdentity);
+  const localImageCount = countLocalImages(localArchive);
+  const hasIndependentBaseline = Boolean(localSyncState?.synchronizedFingerprints);
+  const qualifies = Boolean(
+    localCase &&
+      cloudCase &&
+      localCase.id !== cloudCase.id &&
+      localArchive.cases.length === 1 &&
+      localArchive.dossiers.length === 0 &&
+      localArchive.bonds.length === 0 &&
+      localArchive.boardPins.length === 0 &&
+      localImageCount === 0 &&
+      meaningfulDifferingFields.length === 0 &&
+      !hasIndependentBaseline &&
+      cloudCase.user_id === userId,
+  );
+
+  return {
+    qualifies,
+    localCase,
+    cloudCase,
+    localIdentity,
+    cloudIdentity,
+    meaningfulDifferingFields,
+    ignoredDifferingFields: localCase && cloudCase && localCase.id !== cloudCase.id ? ['id'] : [],
+  };
 }
 
 function hasMissingCloudDependents(localArchive: LocalArchiveSnapshot, onlineArchive: CloudArchiveSnapshot) {
@@ -312,6 +393,14 @@ function createMatchingCaseSection(localArchive: LocalArchiveSnapshot, onlineArc
   section.matchingIds = localArchive.cases.length;
 
   return section;
+}
+
+function createShellRecoveryCaseSection() {
+  return {
+    ...emptyPlanSection,
+    existingRecords: 1,
+    unchangedRecords: 1,
+  };
 }
 
 function extractLocalImages(localArchive: LocalArchiveSnapshot): LocalImageCandidate[] {
@@ -560,8 +649,6 @@ function normalizeCaseContent(record: {
   description?: string | null;
   cover_image_cloud_path?: string | null;
   coverImageCloudPath?: string | null;
-  date_last_opened?: string | null;
-  dateLastOpened?: string | null;
   is_archived?: boolean;
 }) {
   return {
@@ -571,7 +658,6 @@ function normalizeCaseContent(record: {
     authorOrCreator: normalizeOptional(record.author_or_creator ?? record.authorOrCreator),
     description: normalizeOptional(record.description),
     coverImageCloudPath: normalizeOptional(record.cover_image_cloud_path ?? record.coverImageCloudPath),
-    dateLastOpened: normalizeOptional(record.date_last_opened ?? record.dateLastOpened),
     isArchived: Boolean(record.is_archived ?? false),
   };
 }
@@ -771,6 +857,157 @@ function compareById<TLocal extends { id: string }, TOnline extends { id: string
   return section;
 }
 
+function createRecordActions<TLocal extends { id: string }, TOnline extends { id: string }>(
+  entityType: SyncEntityType,
+  localRecords: TLocal[],
+  onlineRecords: TOnline[],
+  getLocalUpdatedAt: (record: TLocal) => string,
+  getOnlineUpdatedAt: (record: TOnline) => string,
+  normalizeLocalForComparison: (record: TLocal) => unknown,
+  normalizeOnlineForComparison: (record: TOnline) => unknown,
+  baselineFingerprints: Record<string, string> | undefined,
+  baselineStatus: SyncRecordAction['baselineStatus'],
+): SyncRecordAction[] {
+  const onlineById = new Map(onlineRecords.map((record) => [record.id, record]));
+  const localIds = new Set(localRecords.map((record) => record.id));
+  const actions: SyncRecordAction[] = [];
+
+  localRecords.forEach((localRecord) => {
+    if (!isValidStableId(localRecord.id)) {
+      actions.push({
+        entityType,
+        id: 'invalid-record',
+        action: 'requires-review',
+        baselineStatus,
+        safeReason: 'The Local Archive record has an invalid stable ID.',
+      });
+      return;
+    }
+
+    const onlineRecord = onlineById.get(localRecord.id);
+
+    if (!onlineRecord) {
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'upload-local-only',
+        baselineStatus,
+        safeReason: 'This record exists only in the Local Archive.',
+      });
+      return;
+    }
+
+    const localFingerprint = fingerprint(normalizeLocalForComparison(localRecord));
+    const onlineFingerprint = fingerprint(normalizeOnlineForComparison(onlineRecord));
+    const baselineFingerprint = baselineFingerprints?.[getFingerprintKey(entityType, localRecord.id)];
+
+    if (localFingerprint === onlineFingerprint) {
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'unchanged',
+        baselineStatus,
+        safeReason: 'Local Archive and LoreBound Online match for this record.',
+      });
+      return;
+    }
+
+    if (baselineFingerprint) {
+      const localChanged = localFingerprint !== baselineFingerprint;
+      const onlineChanged = onlineFingerprint !== baselineFingerprint;
+
+      if (localChanged && !onlineChanged) {
+        actions.push({
+          entityType,
+          id: localRecord.id,
+          action: 'upload-local-newer',
+          baselineStatus,
+          safeReason: 'Only the Local Archive changed since the last verified baseline.',
+        });
+        return;
+      }
+
+      if (!localChanged && onlineChanged) {
+        actions.push({
+          entityType,
+          id: localRecord.id,
+          action: 'retrieve-cloud-newer',
+          baselineStatus,
+          safeReason: 'Only LoreBound Online changed since the last verified baseline.',
+        });
+        return;
+      }
+
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'conflict',
+        baselineStatus,
+        safeReason: 'Both archives changed this record since the last verified baseline.',
+      });
+      return;
+    }
+
+    const localTime = normalizeTimestamp(getLocalUpdatedAt(localRecord));
+    const onlineTime = normalizeTimestamp(getOnlineUpdatedAt(onlineRecord));
+
+    if (localTime !== null && onlineTime !== null && localTime > onlineTime) {
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'upload-local-newer',
+        baselineStatus,
+        safeReason: 'Local Archive has the newer timestamp for this record.',
+      });
+      return;
+    }
+
+    if (localTime !== null && onlineTime !== null && onlineTime > localTime) {
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'retrieve-cloud-newer',
+        baselineStatus,
+        safeReason: 'LoreBound Online has the newer timestamp for this record.',
+      });
+      return;
+    }
+
+    actions.push({
+      entityType,
+      id: localRecord.id,
+      action: 'requires-review',
+      baselineStatus,
+      safeReason: 'The record differs without a usable baseline or timestamp ordering.',
+    });
+  });
+
+  onlineRecords.forEach((onlineRecord) => {
+    if (!isValidStableId(onlineRecord.id)) {
+      actions.push({
+        entityType,
+        id: 'invalid-record',
+        action: 'requires-review',
+        baselineStatus,
+        safeReason: 'The LoreBound Online record has an invalid stable ID.',
+      });
+      return;
+    }
+
+    if (!localIds.has(onlineRecord.id)) {
+      actions.push({
+        entityType,
+        id: onlineRecord.id,
+        action: 'retrieve-cloud-only',
+        baselineStatus,
+        safeReason: 'This record exists only in LoreBound Online.',
+      });
+    }
+  });
+
+  return actions;
+}
+
 function isArchiveEmpty(snapshot: { cases: unknown[]; dossiers: unknown[]; bonds: unknown[]; boardEntries?: unknown[]; boardPins?: unknown[] }) {
   return (
     snapshot.cases.length +
@@ -861,6 +1098,175 @@ function createLocalFingerprintSnapshot(
   ]);
 }
 
+function createCloudFingerprintSnapshot(onlineArchive: CloudArchiveSnapshot) {
+  return Object.fromEntries([
+    ...onlineArchive.cases.map((record) => [
+      getFingerprintKey('cases', record.id),
+      fingerprint(normalizeCaseContent(record)),
+    ]),
+    ...onlineArchive.dossiers.map((record) => [
+      getFingerprintKey('dossiers', record.id),
+      fingerprint(normalizeDossierContent(record)),
+    ]),
+    ...onlineArchive.bonds.map((record) => [
+      getFingerprintKey('bonds', record.id),
+      fingerprint(normalizeBondContent(record)),
+    ]),
+    ...onlineArchive.boardEntries.map((record) => [
+      getFingerprintKey('boardEntries', record.id),
+      fingerprint(normalizeBoardEntryContent(record)),
+    ]),
+  ]);
+}
+
+function getSortedIds(records: { id: string }[]) {
+  return records.map((record) => record.id).sort((left, right) => left.localeCompare(right));
+}
+
+function arraysMatch(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function fingerprintSnapshotsMatch(
+  localFingerprints: Record<string, string>,
+  cloudFingerprints: Record<string, string>,
+) {
+  const localKeys = Object.keys(localFingerprints).sort();
+  const cloudKeys = Object.keys(cloudFingerprints).sort();
+
+  return arraysMatch(localKeys, cloudKeys) && localKeys.every((key) => localFingerprints[key] === cloudFingerprints[key]);
+}
+
+function getCloudImagePaths(onlineArchive: CloudArchiveSnapshot) {
+  return {
+    cases: Object.fromEntries(
+      onlineArchive.cases
+        .filter((record) => record.cover_image_cloud_path)
+        .map((record) => [record.id, record.cover_image_cloud_path as string]),
+    ),
+    dossiers: Object.fromEntries(
+      onlineArchive.dossiers
+        .filter((record) => record.cover_image_cloud_path)
+        .map((record) => [record.id, record.cover_image_cloud_path as string]),
+    ),
+  };
+}
+
+function createBaselineRecordIds(localArchive: LocalArchiveSnapshot) {
+  return {
+    cases: localArchive.cases.map((record) => record.id),
+    dossiers: localArchive.dossiers.map((record) => record.id),
+    bonds: localArchive.bonds.map((record) => record.id),
+    boardPins: localArchive.boardPins.map((record) => record.id),
+  };
+}
+
+function createBaselineUpdatedAt(localArchive: LocalArchiveSnapshot) {
+  return Object.fromEntries([
+    ...localArchive.cases.map((record) => [record.id, record.dateLastModified]),
+    ...localArchive.dossiers.map((record) => [record.id, record.dateModified]),
+    ...localArchive.bonds.map((record) => [record.id, record.dateModified]),
+    ...localArchive.boardPins.map((record) => [record.id, record.datePinned]),
+  ]);
+}
+
+function getBaselineState(
+  localArchive: LocalArchiveSnapshot,
+  onlineArchive: CloudArchiveSnapshot,
+  localSyncState: Awaited<ReturnType<typeof readLocalSyncState>>,
+  userId: string,
+  localFingerprints: Record<string, string>,
+  cloudFingerprints: Record<string, string>,
+) {
+  const localCaseIds = getSortedIds(localArchive.cases);
+  const cloudCaseIds = getSortedIds(onlineArchive.cases);
+  const localDossierIds = getSortedIds(localArchive.dossiers);
+  const cloudDossierIds = getSortedIds(onlineArchive.dossiers);
+  const localBondIds = getSortedIds(localArchive.bonds);
+  const cloudBondIds = getSortedIds(onlineArchive.bonds);
+  const localBoardPinIds = getSortedIds(localArchive.boardPins);
+  const cloudBoardEntryIds = getSortedIds(onlineArchive.boardEntries);
+  const idsMatch =
+    arraysMatch(localCaseIds, cloudCaseIds) &&
+    arraysMatch(localDossierIds, cloudDossierIds) &&
+    arraysMatch(localBondIds, cloudBondIds) &&
+    arraysMatch(localBoardPinIds, cloudBoardEntryIds);
+  const countsMatch =
+    localArchive.cases.length === onlineArchive.cases.length &&
+    localArchive.dossiers.length === onlineArchive.dossiers.length &&
+    localArchive.bonds.length === onlineArchive.bonds.length &&
+    localArchive.boardPins.length === onlineArchive.boardEntries.length;
+  const fingerprintsMatch = fingerprintSnapshotsMatch(localFingerprints, cloudFingerprints);
+  const cloudOwnedByUser = onlineArchive.cases.every((record) => record.user_id === userId) &&
+    onlineArchive.dossiers.every((record) => record.user_id === userId) &&
+    onlineArchive.bonds.every((record) => record.user_id === userId) &&
+    onlineArchive.boardEntries.every((record) => record.user_id === userId);
+
+  if (!localSyncState) {
+    return {
+      status: 'Missing' as const,
+      reason: 'This browser has no synchronization baseline.',
+      canRebuild: cloudOwnedByUser && countsMatch && idsMatch && fingerprintsMatch,
+    };
+  }
+
+  if (localSyncState.investigatorId !== userId) {
+    return {
+      status: 'Foreign Investigator' as const,
+      reason: 'This baseline belongs to a different Investigator Profile.',
+      canRebuild: false,
+    };
+  }
+
+  if (localSyncState.synchronizationVersion !== 1) {
+    return {
+      status: 'Incompatible Version' as const,
+      reason: 'This baseline uses an unsupported synchronization version.',
+      canRebuild: false,
+    };
+  }
+
+  if (!localSyncState.synchronizedFingerprints) {
+    return {
+      status: 'Stale' as const,
+      reason: 'This baseline does not contain record fingerprints.',
+      canRebuild: cloudOwnedByUser && countsMatch && idsMatch && fingerprintsMatch,
+    };
+  }
+
+  const baselineCaseIds = [...(localSyncState.synchronizedRecordIds?.cases ?? [])].sort((left, right) => left.localeCompare(right));
+
+  if (!arraysMatch(baselineCaseIds, localCaseIds)) {
+    return {
+      status: 'References Replaced Case' as const,
+      reason: 'This baseline references a different Investigation than the active Local Archive.',
+      canRebuild: cloudOwnedByUser && countsMatch && idsMatch && fingerprintsMatch,
+    };
+  }
+
+  if (!fingerprintSnapshotsMatch(localSyncState.synchronizedFingerprints, localFingerprints)) {
+    return {
+      status: 'Stale' as const,
+      reason: 'This baseline no longer matches the Local Archive fingerprints.',
+      canRebuild: cloudOwnedByUser && countsMatch && idsMatch && fingerprintsMatch,
+    };
+  }
+
+  if (!countsMatch || !idsMatch || !fingerprintsMatch) {
+    return {
+      status: 'Corrupt' as const,
+      reason: 'This baseline cannot be verified against LoreBound Online.',
+      canRebuild: false,
+    };
+  }
+
+  return {
+    status: 'Valid' as const,
+    reason: 'This browser baseline matches LoreBound Online.',
+    canRebuild: false,
+  };
+}
+
 class LoreBoundSyncService implements SyncService {
   async getStatus(): Promise<SyncStatus> {
     const environment = environmentManager.getEnvironment();
@@ -935,8 +1341,20 @@ class LoreBoundSyncService implements SyncService {
     const localCaseStableId = getPrimaryLocalCaseId(localArchive);
     const cloudCaseStableId = getPrimaryCloudCaseId(onlineArchive);
     const caseNormalizedMatch = hasMatchingPrimaryCaseContent(localArchive, onlineArchive);
+    const emptyShellState = getEmptyLocalCaseShellState(localArchive, onlineArchive, localSyncState, user.id);
     const cloudImageCount = countCloudImages(onlineArchive);
     const plannedImagePaths = getPlannedImagePaths(localArchive, user.id);
+    const cloudImagePaths = getCloudImagePaths(onlineArchive);
+    const localBaselineFingerprints = createLocalFingerprintSnapshot(localArchive, cloudImagePaths);
+    const cloudBaselineFingerprints = createCloudFingerprintSnapshot(onlineArchive);
+    const baselineState = getBaselineState(
+      localArchive,
+      onlineArchive,
+      localSyncState,
+      user.id,
+      localBaselineFingerprints,
+      cloudBaselineFingerprints,
+    );
     const reconciliationStats: ReconciliationStats = {
       invalidIds: 0,
       timestampParseFailures: 0,
@@ -980,13 +1398,21 @@ class LoreBoundSyncService implements SyncService {
         sameInvestigationIdLocalAndCloud,
         localCaseStableId,
         cloudCaseStableId,
-        caseNormalizedMatch,
+        caseNormalizedMatch: caseNormalizedMatch || emptyShellState.qualifies,
+        emptyLocalCaseShell: emptyShellState.qualifies,
+        localCaseNormalizedIdentity: emptyShellState.localIdentity,
+        cloudCaseNormalizedIdentity: emptyShellState.cloudIdentity,
+        caseMeaningfulDifferingFields: emptyShellState.meaningfulDifferingFields,
+        caseIgnoredDifferingFields: emptyShellState.ignoredDifferingFields,
         localImageReferences: localImageCount,
         cloudImageReferences: cloudImageCount,
       },
       reconciliation: {
         ...plan.diagnostics.reconciliation,
         baselineMetadataPresent: Boolean(localSyncState?.synchronizedFingerprints),
+        baselineStatus: baselineState.status,
+        baselineReason: baselineState.reason,
+        canRebuildBaseline: baselineState.canRebuild,
       },
     };
     const comparedSections = {
@@ -1071,11 +1497,117 @@ class LoreBoundSyncService implements SyncService {
             ...comparedSections,
             cases: createMatchingCaseSection(localArchive, onlineArchive),
           }
+        : emptyShellState.qualifies
+          ? {
+              ...comparedSections,
+              cases: createShellRecoveryCaseSection(),
+            }
         : comparedSections;
+    const recordActions = [
+      ...createRecordActions(
+        'cases',
+        localArchive.cases,
+        onlineArchive.cases,
+        (record) => record.dateLastModified,
+        (record) => record.updated_at,
+        (record) =>
+          normalizeCaseContent({
+            ...record,
+            coverImageCloudPath:
+              plannedImagePaths.cases[record.id] ??
+              localSyncState?.cloudImagePaths?.cases?.[record.id] ??
+              null,
+          }),
+        normalizeCaseContent,
+        localSyncState?.synchronizedFingerprints,
+        baselineState.status,
+      ),
+      ...createRecordActions(
+        'dossiers',
+        localArchive.dossiers,
+        onlineArchive.dossiers,
+        (record) => record.dateModified,
+        (record) => record.updated_at,
+        (record) =>
+          normalizeDossierContent({
+            ...record,
+            coverImageCloudPath:
+              plannedImagePaths.dossiers[record.id] ??
+              localSyncState?.cloudImagePaths?.dossiers?.[record.id] ??
+              null,
+            metadata: {
+              ...Object.fromEntries([
+                'alias',
+                'characterStatus',
+                'affiliation',
+                'region',
+                'world',
+                'eventDate',
+                'era',
+                'leader',
+                'organizationType',
+                'theoryConfidence',
+                'theoryStatus',
+              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
+              sections: record.sections,
+            },
+          }),
+        normalizeDossierContent,
+        localSyncState?.synchronizedFingerprints,
+        baselineState.status,
+      ),
+      ...createRecordActions(
+        'bonds',
+        localArchive.bonds,
+        onlineArchive.bonds,
+        (record) => record.dateModified,
+        (record) => record.updated_at,
+        normalizeBondContent,
+        normalizeBondContent,
+        localSyncState?.synchronizedFingerprints,
+        baselineState.status,
+      ),
+      ...createRecordActions(
+        'boardEntries',
+        localArchive.boardPins,
+        onlineArchive.boardEntries,
+        (record) => record.datePinned,
+        (record) => record.updated_at,
+        normalizeBoardEntryContent,
+        normalizeBoardEntryContent,
+        localSyncState?.synchronizedFingerprints,
+        baselineState.status,
+      ),
+    ];
+    const uploadActions = recordActions.filter(
+      (action) => action.action === 'upload-local-only' || action.action === 'upload-local-newer',
+    );
+    const retrievalActions = recordActions.filter(
+      (action) => action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer',
+    );
+    const conflictActions = recordActions.filter(
+      (action) => action.action === 'conflict' || action.action === 'requires-review',
+    );
+    const selectedSynchronizationMode =
+      conflictActions.length > 0
+        ? 'review-required'
+        : uploadActions.length > 0 && retrievalActions.length > 0
+          ? 'bidirectional'
+          : uploadActions.length > 0
+            ? 'upload-only'
+            : retrievalActions.length > 0
+              ? 'retrieve-only'
+              : 'none';
     plan.diagnostics = {
       ...plan.diagnostics,
       reconciliation: {
         ...plan.diagnostics.reconciliation,
+        recordActions,
+        selectedSynchronizationMode,
+        uploadActionsCount: uploadActions.length,
+        retrievalActionsCount: retrievalActions.length,
+        conflictActionsCount: conflictActions.length,
+        outboundGateReason: 'Not reviewed.',
         invalidIds: reconciliationStats.invalidIds,
         timestampParseFailures: reconciliationStats.timestampParseFailures,
         fingerprintMismatches: reconciliationStats.fingerprintMismatches,
@@ -1121,8 +1653,7 @@ class LoreBoundSyncService implements SyncService {
     const isPartialLocalArchive =
       !isLocalArchiveEmpty &&
       !isOnlineArchiveEmpty &&
-      sameInvestigationIdLocalAndCloud &&
-      caseNormalizedMatch &&
+      ((sameInvestigationIdLocalAndCloud && caseNormalizedMatch) || emptyShellState.qualifies) &&
       hasMissingCloudDependents(localArchive, onlineArchive) &&
       caseRecordIsSafeForRepair &&
       !hasConflicts &&
@@ -1171,10 +1702,13 @@ class LoreBoundSyncService implements SyncService {
       ...(imagePreparation.failures.length > 0
         ? ['One or more stored images must be reviewed before synchronization.']
         : []),
+      ...(baselineState.canRebuild
+        ? ['This browser’s synchronization baseline is outdated.']
+        : []),
       ...(hasBlockingReview
         ? ['Archive Reconciliation Required. Review conflicts before synchronization.']
         : []),
-      ...(hasCloudUpdates && !isPartialLocalArchive
+      ...(hasCloudUpdates && !isPartialLocalArchive && selectedSynchronizationMode !== 'bidirectional'
         ? ['LoreBound Online Updates Available. Review retrieval before updating this archive.']
         : []),
       ...(isPartialLocalArchive
@@ -1182,7 +1716,13 @@ class LoreBoundSyncService implements SyncService {
         : []),
     ];
     plan.canSynchronize =
-      hasLocalChanges && !isPartialLocalArchive && plan.blockingReasons.length === 0 && plan.online.isAvailable;
+      uploadActions.length > 0 &&
+      sameInvestigationIdLocalAndCloud &&
+      !baselineState.canRebuild &&
+      !isPartialLocalArchive &&
+      conflictActions.length === 0 &&
+      plan.blockingReasons.length === 0 &&
+      plan.online.isAvailable;
     plan.canRetrieve =
       ((isLocalArchiveEmpty && !isOnlineArchiveEmpty) ||
         isPartialLocalArchive ||
@@ -1190,7 +1730,33 @@ class LoreBoundSyncService implements SyncService {
       dependencyReasons.length === 0 &&
       !hasBlockingReview &&
       plan.online.isAvailable;
+    plan.diagnostics = {
+      ...plan.diagnostics,
+      archiveState: {
+        ...plan.diagnostics.archiveState,
+        classification: archiveClassification,
+        retrievalEligibility: plan.canRetrieve ? 'Available' : 'Blocked',
+        retrievalBlockReason: plan.canRetrieve
+          ? isPartialLocalArchive
+            ? 'Repair Local Archive is available.'
+            : 'Retrieve Investigation is available.'
+          : plan.blockingReasons[0] ?? 'Retrieve Investigation is not available.',
+        repairEligibility: isPartialLocalArchive && plan.canRetrieve ? 'Available' : 'Blocked',
+        repairStage: isPartialLocalArchive ? 'Awaiting repair retrieval.' : 'Not required.',
+        browserOrigin: typeof window !== 'undefined' ? window.location.origin : 'Unknown',
+      },
+    };
     const selectedArchiveAction = getSyncPlanArchiveAction(plan);
+    assertRunnableArchiveActionHasHandler(selectedArchiveAction);
+
+    if (
+      plan.diagnostics.archiveState.classification === 'Partial Local Archive' &&
+      (selectedArchiveAction.kind !== 'repair-local-archive' ||
+        selectedArchiveAction.label !== 'Repair Local Archive' ||
+        !selectedArchiveAction.canRun)
+    ) {
+      throw new Error('Partial Local Archive must produce an enabled Repair Local Archive action.');
+    }
     const retrievalBlockReason =
       plan.canRetrieve
         ? isPartialLocalArchive
@@ -1201,23 +1767,18 @@ class LoreBoundSyncService implements SyncService {
     const disabledReason =
       actionEnabled
         ? 'Enabled.'
-        : selectedArchiveAction.kind === 'retrieve'
+        : selectedArchiveAction.kind === 'retrieve' || selectedArchiveAction.kind === 'repair-local-archive'
           ? retrievalBlockReason
           : plan.blockingReasons[0] ?? selectedArchiveAction.reason;
     plan.diagnostics = {
       ...plan.diagnostics,
       archiveState: {
         ...plan.diagnostics.archiveState,
-        classification: archiveClassification,
         retrievalEligibility: plan.canRetrieve ? 'Available' : 'Blocked',
         retrievalBlockReason,
         actionEnabled,
         disabledReason,
-        handlerPresent:
-          selectedArchiveAction.kind === 'repair-local-archive' ||
-          selectedArchiveAction.kind === 'retrieve' ||
-          selectedArchiveAction.kind === 'sync' ||
-          selectedArchiveAction.kind === 'close',
+        handlerPresent: archiveActionHasHandler(selectedArchiveAction),
         repairEligibility: isPartialLocalArchive && plan.canRetrieve ? 'Available' : 'Blocked',
         repairStage: isPartialLocalArchive ? 'Awaiting repair retrieval.' : 'Not required.',
         selectedAction: selectedArchiveAction.label,
@@ -1227,7 +1788,18 @@ class LoreBoundSyncService implements SyncService {
         ...plan.diagnostics.reconciliation,
         automaticGateReason:
           plan.blockingReasons[0] ??
-          (hasLocalChanges ? 'Local changes waiting.' : 'Archive up to date.'),
+          (baselineState.canRebuild
+            ? 'Synchronization baseline rebuild waiting.'
+            : uploadActions.length > 0
+              ? 'Local changes waiting.'
+              : 'Archive up to date.'),
+        outboundGateReason:
+          plan.canSynchronize
+            ? 'Outbound synchronization available.'
+            : plan.blockingReasons[0] ??
+              (uploadActions.length === 0
+                ? 'No outbound Local Archive changes detected.'
+                : 'Outbound synchronization is blocked by archive safety checks.'),
       },
     };
 
@@ -1263,11 +1835,66 @@ class LoreBoundSyncService implements SyncService {
     }
 
     const localArchive = await readFullLocalArchive();
+    const uploadActionIds = {
+      cases: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'cases' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
+          .map((action) => action.id),
+      ),
+      dossiers: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'dossiers' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
+          .map((action) => action.id),
+      ),
+      bonds: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'bonds' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
+          .map((action) => action.id),
+      ),
+      boardPins: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'boardEntries' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
+          .map((action) => action.id),
+      ),
+    };
+    const retrievalActionIds = {
+      cases: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'cases' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
+          .map((action) => action.id),
+      ),
+      dossiers: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'dossiers' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
+          .map((action) => action.id),
+      ),
+      bonds: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'bonds' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
+          .map((action) => action.id),
+      ),
+      boardPins: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'boardEntries' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
+          .map((action) => action.id),
+      ),
+    };
+    const uploadArchive: LocalArchiveSnapshot = {
+      cases: localArchive.cases.filter((record) => uploadActionIds.cases.has(record.id)),
+      dossiers: localArchive.dossiers.filter((record) => uploadActionIds.dossiers.has(record.id)),
+      bonds: localArchive.bonds.filter((record) => uploadActionIds.bonds.has(record.id)),
+      boardPins: localArchive.boardPins.filter((record) => uploadActionIds.boardPins.has(record.id)),
+      activeCaseId: localArchive.activeCaseId,
+    };
     const totalRecords =
-      localArchive.cases.length +
-      localArchive.dossiers.length +
-      localArchive.bonds.length +
-      localArchive.boardPins.length;
+      uploadArchive.cases.length +
+      uploadArchive.dossiers.length +
+      uploadArchive.bonds.length +
+      uploadArchive.boardPins.length +
+      retrievalActionIds.cases.size +
+      retrievalActionIds.dossiers.size +
+      retrievalActionIds.bonds.size +
+      retrievalActionIds.boardPins.size;
     let activeStage: SyncStage = 'Preparing Archive';
     let completedImages = 0;
     let completedRecords = 0;
@@ -1293,7 +1920,7 @@ class LoreBoundSyncService implements SyncService {
       report('Preparing Archive', 'Reviewing Local Archive records before securing them.');
       completeStage('Preparing Archive');
       report('Preparing Stored Images', 'Preparing stored images for LoreBound Online.');
-      const imagePreparation = await prepareCloudImages(localArchive, user.id);
+      const imagePreparation = await prepareCloudImages(uploadArchive, user.id);
 
       if (imagePreparation.failures.length > 0) {
         throw new Error('One or more stored images must be reviewed before synchronization.');
@@ -1309,15 +1936,15 @@ class LoreBoundSyncService implements SyncService {
           : 0;
       completedImages = uploadedImageCount;
       completeStage('Securing Stored Images');
-      const imagePaths = getPlannedImagePaths(localArchive, user.id);
-      const caseRows = localArchive.cases.map((record) =>
+      const imagePaths = getPlannedImagePaths(uploadArchive, user.id);
+      const caseRows = uploadArchive.cases.map((record) =>
         mapCaseToCloudRow(record, user.id, imagePaths.cases[record.id]),
       );
-      const dossierRows = localArchive.dossiers.map((record) =>
+      const dossierRows = uploadArchive.dossiers.map((record) =>
         mapDossierToCloudRow(record, user.id, imagePaths.dossiers[record.id]),
       );
-      const bondRows = localArchive.bonds.map((record) => mapBondToCloudRow(record, user.id));
-      const boardEntryRows = localArchive.boardPins.map((record) => mapBoardPinToCloudRow(record, user.id));
+      const bondRows = uploadArchive.bonds.map((record) => mapBondToCloudRow(record, user.id));
+      const boardEntryRows = uploadArchive.boardPins.map((record) => mapBoardPinToCloudRow(record, user.id));
 
       report('Synchronizing Investigation', `Securing ${caseRows.length} Investigation records.`);
       await cloudArchiveRepository.upsertCases(caseRows);
@@ -1338,29 +1965,80 @@ class LoreBoundSyncService implements SyncService {
       report('Verifying Investigation', 'Verifying secured Investigation records.');
       const onlineArchive = await cloudArchiveRepository.readArchive();
 
-      this.verifyOnlineArchive(localArchive, onlineArchive, user.id);
+      this.verifyOnlineArchive(uploadArchive, onlineArchive, user.id);
       completeStage('Verifying Investigation');
+      let synchronizedArchive = localArchive;
+
+      if (
+        retrievalActionIds.cases.size > 0 ||
+        retrievalActionIds.dossiers.size > 0 ||
+        retrievalActionIds.bonds.size > 0 ||
+        retrievalActionIds.boardPins.size > 0
+      ) {
+        report('Retrieving Investigations', 'Retrieving safe LoreBound Online updates.');
+        const retrievedCases = await restoreCaseImages(
+          onlineArchive.cases
+            .filter((record) => retrievalActionIds.cases.has(record.id))
+            .map(mapCloudCaseToLocal),
+          onlineArchive.cases,
+        );
+        completeStage('Retrieving Investigations');
+        report('Retrieving Dossiers', 'Retrieving safe Dossier updates.');
+        const retrievedDossiers = await restoreDossierImages(
+          onlineArchive.dossiers
+            .filter((record) => retrievalActionIds.dossiers.has(record.id))
+            .map(mapCloudDossierToLocal),
+          onlineArchive.dossiers,
+        );
+        completeStage('Retrieving Dossiers');
+        report('Retrieving Bonds', 'Retrieving safe Bond updates.');
+        const retrievedBonds = onlineArchive.bonds
+          .filter((record) => retrievalActionIds.bonds.has(record.id))
+          .map(mapCloudBondToLocal);
+        completeStage('Retrieving Bonds');
+        report('Retrieving Evidence Pins', 'Retrieving safe Evidence Board updates.');
+        const retrievedBoardPins = onlineArchive.boardEntries
+          .filter((record) => retrievalActionIds.boardPins.has(record.id))
+          .map(mapCloudBoardEntryToLocal);
+        completeStage('Retrieving Evidence Pins');
+        const casesById = new Map(localArchive.cases.map((record) => [record.id, record]));
+        const dossiersById = new Map(localArchive.dossiers.map((record) => [record.id, record]));
+        const bondsById = new Map(localArchive.bonds.map((record) => [record.id, record]));
+        const boardPinsById = new Map(localArchive.boardPins.map((record) => [record.id, record]));
+
+        retrievedCases.forEach((record) => casesById.set(record.id, record));
+        retrievedDossiers.forEach((record) => dossiersById.set(record.id, record));
+        retrievedBonds.forEach((record) => bondsById.set(record.id, record));
+        retrievedBoardPins.forEach((record) => boardPinsById.set(record.id, record));
+        synchronizedArchive = {
+          cases: [...casesById.values()],
+          dossiers: [...dossiersById.values()],
+          bonds: [...bondsById.values()],
+          boardPins: [...boardPinsById.values()],
+          activeCaseId: localArchive.activeCaseId,
+        };
+        await importFullLocalArchive(synchronizedArchive);
+        completedRecords +=
+          retrievedCases.length +
+          retrievedDossiers.length +
+          retrievedBonds.length +
+          retrievedBoardPins.length;
+        notifyLocalArchiveRestored();
+      }
+
+      this.verifyOnlineArchive(synchronizedArchive, onlineArchive, user.id);
       report('Verifying Stored Images', 'Verifying secured stored images.');
       await verifyPreparedImages(imagePreparation.preparedImages);
       completeStage('Verifying Stored Images');
       report('Finalizing Investigation', 'Recording the local synchronization marker.');
+      const cloudImagePaths = getCloudImagePaths(onlineArchive);
       await recordLocalSyncState({
         investigatorId: user.id,
         lastSuccessfulSynchronizationAt: new Date().toISOString(),
-        synchronizedRecordIds: {
-          cases: localArchive.cases.map((record) => record.id),
-          dossiers: localArchive.dossiers.map((record) => record.id),
-          bonds: localArchive.bonds.map((record) => record.id),
-          boardPins: localArchive.boardPins.map((record) => record.id),
-        },
-        synchronizedUpdatedAt: Object.fromEntries([
-          ...localArchive.cases.map((record) => [record.id, record.dateLastModified]),
-          ...localArchive.dossiers.map((record) => [record.id, record.dateModified]),
-          ...localArchive.bonds.map((record) => [record.id, record.dateModified]),
-          ...localArchive.boardPins.map((record) => [record.id, record.datePinned]),
-        ]),
-        synchronizedFingerprints: createLocalFingerprintSnapshot(localArchive, imagePaths),
-        cloudImagePaths: imagePaths,
+        synchronizedRecordIds: createBaselineRecordIds(synchronizedArchive),
+        synchronizedUpdatedAt: createBaselineUpdatedAt(synchronizedArchive),
+        synchronizedFingerprints: createLocalFingerprintSnapshot(synchronizedArchive, cloudImagePaths),
+        cloudImagePaths,
         synchronizationVersion: 1,
       });
       completeStage('Finalizing Investigation');
@@ -1369,10 +2047,10 @@ class LoreBoundSyncService implements SyncService {
         ok: true,
         message: 'Investigation Secured',
         counts: {
-          cases: localArchive.cases.length,
-          dossiers: localArchive.dossiers.length,
-          bonds: localArchive.bonds.length,
-          boardEntries: localArchive.boardPins.length,
+          cases: synchronizedArchive.cases.length,
+          dossiers: synchronizedArchive.dossiers.length,
+          bonds: synchronizedArchive.bonds.length,
+          boardEntries: synchronizedArchive.boardPins.length,
           images: uploadedImageCount,
         },
         completedStages,
@@ -1402,6 +2080,118 @@ class LoreBoundSyncService implements SyncService {
     }
   }
 
+  async rebuildBaseline(onProgress?: (progress: SyncProgress) => void): Promise<SyncResult> {
+    const user = await authService.getCurrentUser();
+
+    if (!user) {
+      return {
+        ok: false,
+        message: 'Investigator Connect is required before rebuilding the synchronization baseline.',
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        completedStages: [],
+        itemsRequiringReview: 0,
+      };
+    }
+
+    let activeStage: SyncStage = 'Preparing Archive';
+    const completedStages: SyncStage[] = [];
+    const completeStage = (stage: SyncStage) => {
+      if (!completedStages.includes(stage)) {
+        completedStages.push(stage);
+      }
+    };
+    const report = (stage: SyncStage, detail: string) => {
+      activeStage = stage;
+      emit(onProgress, stage, detail);
+    };
+
+    try {
+      report('Preparing Archive', 'Reviewing Local Archive records.');
+      const planResult = await this.createPlan();
+
+      if (!planResult.ok || !planResult.plan.diagnostics.reconciliation.canRebuildBaseline) {
+        return {
+          ok: false,
+          message:
+            planResult.plan.blockingReasons[0] ??
+            planResult.plan.diagnostics.reconciliation.baselineReason ??
+            'Synchronization baseline rebuild is not available.',
+          counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+          failedStage: activeStage,
+          completedStages,
+          itemsRequiringReview: Object.values(planResult.plan.sections).reduce(
+            (total, section) => total + section.itemsRequiringReview,
+            0,
+          ),
+        };
+      }
+
+      completeStage('Preparing Archive');
+      report('Verifying Investigation', 'Verifying Local Archive against LoreBound Online.');
+      const localArchive = await readFullLocalArchive();
+      const onlineArchive = await cloudArchiveRepository.readArchive();
+      const cloudImagePaths = getCloudImagePaths(onlineArchive);
+      const localFingerprints = createLocalFingerprintSnapshot(localArchive, cloudImagePaths);
+      const cloudFingerprints = createCloudFingerprintSnapshot(onlineArchive);
+      const baselineState = getBaselineState(
+        localArchive,
+        onlineArchive,
+        await readLocalSyncState(),
+        user.id,
+        localFingerprints,
+        cloudFingerprints,
+      );
+
+      if (!baselineState.canRebuild) {
+        throw new Error(baselineState.reason);
+      }
+
+      validateDependencies(localArchive).forEach((reason) => {
+        throw new Error(reason);
+      });
+      completeStage('Verifying Investigation');
+      report('Finalizing Investigation', 'Recording the verified synchronization baseline.');
+      await recordLocalSyncState({
+        investigatorId: user.id,
+        lastSuccessfulSynchronizationAt: new Date().toISOString(),
+        synchronizedRecordIds: createBaselineRecordIds(localArchive),
+        synchronizedUpdatedAt: createBaselineUpdatedAt(localArchive),
+        synchronizedFingerprints: localFingerprints,
+        cloudImagePaths,
+        synchronizationVersion: 1,
+      });
+      completeStage('Finalizing Investigation');
+
+      return {
+        ok: true,
+        message: 'Synchronization Baseline Rebuilt',
+        counts: {
+          cases: localArchive.cases.length,
+          dossiers: localArchive.dossiers.length,
+          bonds: localArchive.bonds.length,
+          boardEntries: localArchive.boardPins.length,
+          images: countLocalImages(localArchive),
+        },
+        completedStages,
+        itemsRequiringReview: 0,
+        transferSize: 0,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to rebuild this synchronization baseline. No records were changed.',
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        failedStage: activeStage,
+        completedStages,
+        itemsRequiringReview: 0,
+      };
+    }
+  }
+
   async retrieve(onProgress?: (progress: SyncProgress) => void): Promise<SyncResult> {
     const planResult = await this.createPlan();
 
@@ -1415,6 +2205,7 @@ class LoreBoundSyncService implements SyncService {
 
     const user = await authService.getCurrentUser();
     const isRepair = planResult.plan.diagnostics.archiveState.classification === 'Partial Local Archive';
+    const isEmptyShellRepair = planResult.plan.diagnostics.archiveState.emptyLocalCaseShell;
     let activeStage: SyncStage = 'Retrieving Investigations';
     const completedStages: SyncStage[] = [];
     const completeStage = (stage: SyncStage) => {
@@ -1435,8 +2226,12 @@ class LoreBoundSyncService implements SyncService {
         const localCaseId = getPrimaryLocalCaseId(localArchive);
         const cloudCaseId = getPrimaryCloudCaseId(onlineArchive);
 
-        if (!user || !localCaseId || localCaseId !== cloudCaseId) {
+        if (!user || !cloudCaseId || (!isEmptyShellRepair && localCaseId !== cloudCaseId)) {
           throw new Error('Repair Local Archive could not verify matching Investigation ownership.');
+        }
+
+        if (isEmptyShellRepair && onlineArchive.cases[0]?.user_id !== user.id) {
+          throw new Error('Repair Local Archive could not verify Investigation ownership.');
         }
       }
 
@@ -1458,11 +2253,22 @@ class LoreBoundSyncService implements SyncService {
       report('Retrieving Evidence Pins', `${onlineArchive.boardEntries.length} Evidence Pin records.`);
       const boardPins = onlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
       completeStage('Retrieving Evidence Pins');
-      const repairedArchive = isRepair
-        ? mergePartialRepairArchive(localArchive, { cases, dossiers, bonds, boardPins })
-        : { cases, dossiers, bonds, boardPins, activeCaseId: cases[0]?.id ?? null };
+      const repairedArchive =
+        isRepair && !isEmptyShellRepair
+          ? mergePartialRepairArchive(localArchive, { cases, dossiers, bonds, boardPins })
+          : { cases, dossiers, bonds, boardPins, activeCaseId: cases[0]?.id ?? null };
 
-      await importFullLocalArchive(repairedArchive);
+      if (isEmptyShellRepair) {
+        const shellCaseId = localArchive.cases[0]?.id;
+
+        if (!shellCaseId) {
+          throw new Error('Repair Local Archive could not find the empty local Investigation shell.');
+        }
+
+        await replaceEmptyCaseShellWithCloudArchive(shellCaseId, repairedArchive);
+      } else {
+        await importFullLocalArchive(repairedArchive);
+      }
       report('Verifying Local Archive', isRepair ? 'Verifying repaired Local Archive records.' : 'Verifying retrieved records.');
       const verifiedLocalArchive = await readFullLocalArchive();
 

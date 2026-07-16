@@ -93,10 +93,14 @@ async function upsertRows<T extends { id: string }>(tableName: TableName, rows: 
   }
 
   const client = requireSupabase();
-  const { error } = await client.from(tableName).upsert(rows, { onConflict: 'id' });
+  const { error, status } = await client.from(tableName).upsert(rows, { onConflict: 'id' });
 
   if (error) {
-    throw new Error(error.message);
+    const failedId = rows[0]?.id ?? 'unknown';
+
+    throw new Error(
+      `${tableName} upload failed for ${failedId}: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+    );
   }
 }
 

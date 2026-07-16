@@ -50,6 +50,26 @@ export type SyncDiagnostics = {
   };
   reconciliation: {
     baselineMetadataPresent: boolean;
+    baselineStatus:
+      | 'Valid'
+      | 'Missing'
+      | 'Stale'
+      | 'Foreign Investigator'
+      | 'References Replaced Case'
+      | 'Incompatible Version'
+      | 'Corrupt';
+    baselineReason: string;
+    canRebuildBaseline: boolean;
+    recordActions: SyncRecordAction[];
+    selectedSynchronizationMode: 'none' | 'upload-only' | 'retrieve-only' | 'bidirectional' | 'review-required';
+    uploadActionsCount: number;
+    retrievalActionsCount: number;
+    conflictActionsCount: number;
+    outboundGateReason: string;
+    upsertDossiersInvoked: boolean;
+    lastUploadedDossierId: string | null;
+    cloudVerificationResult: string;
+    baselineUpdated: boolean;
     invalidIds: number;
     timestampParseFailures: number;
     fingerprintMismatches: number;
@@ -71,6 +91,11 @@ export type SyncDiagnostics = {
     localCaseStableId: string | null;
     cloudCaseStableId: string | null;
     caseNormalizedMatch: boolean;
+    emptyLocalCaseShell: boolean;
+    localCaseNormalizedIdentity: Record<string, string>;
+    cloudCaseNormalizedIdentity: Record<string, string>;
+    caseMeaningfulDifferingFields: string[];
+    caseIgnoredDifferingFields: string[];
     retrievalEligibility: 'Available' | 'Blocked';
     retrievalBlockReason: string;
     actionEnabled: boolean;
@@ -80,12 +105,30 @@ export type SyncDiagnostics = {
     repairStage: string;
     selectedAction: string;
     selectedActionReason: string;
+    browserOrigin: string;
     localImageReferences: number;
     cloudImageReferences: number;
   };
 };
 
 export type SyncEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
+
+export type SyncRecordActionKind =
+  | 'upload-local-only'
+  | 'upload-local-newer'
+  | 'retrieve-cloud-only'
+  | 'retrieve-cloud-newer'
+  | 'unchanged'
+  | 'conflict'
+  | 'requires-review';
+
+export type SyncRecordAction = {
+  entityType: SyncEntityType;
+  id: string;
+  action: SyncRecordActionKind;
+  baselineStatus: SyncDiagnostics['reconciliation']['baselineStatus'];
+  safeReason: string;
+};
 
 export type SyncStage =
   | 'Preparing Archive'
@@ -188,7 +231,69 @@ export type SyncResult = {
   completedAt?: string;
 };
 
-export function getSyncPlanArchiveAction(plan: SyncPlan) {
+export type SyncPlanArchiveAction =
+  | {
+      kind: 'close';
+      label: 'Close';
+      reason: string;
+      canRun: true;
+      loadingLabel?: never;
+    }
+  | {
+      kind: 'sync';
+      label: string;
+      reason: string;
+      canRun: boolean;
+      loadingLabel: string;
+    }
+  | {
+      kind: 'retrieve';
+      label: string;
+      reason: string;
+      canRun: boolean;
+      loadingLabel: string;
+    }
+  | {
+      kind: 'repair-local-archive';
+      label: 'Repair Local Archive';
+      reason: string;
+      canRun: boolean;
+      loadingLabel: 'Repairing Local Archive';
+    }
+  | {
+      kind: 'rebuild-baseline';
+      label: 'Rebuild Synchronization Baseline';
+      reason: string;
+      canRun: boolean;
+      loadingLabel: 'Rebuilding Synchronization Baseline';
+    }
+  | {
+      kind: 'review-conflicts' | 'review-required';
+      label: string;
+      reason: string;
+      canRun: false;
+      loadingLabel?: never;
+    };
+
+export function archiveActionHasHandler(action: SyncPlanArchiveAction) {
+  return (
+    action.kind === 'close' ||
+    action.kind === 'sync' ||
+    action.kind === 'retrieve' ||
+    action.kind === 'repair-local-archive' ||
+    action.kind === 'rebuild-baseline'
+  );
+}
+
+export function assertRunnableArchiveActionHasHandler(action: SyncPlanArchiveAction) {
+  const actionLabel = action.label;
+
+  if (action.canRun && !archiveActionHasHandler(action)) {
+    throw new Error(`Archive action "${actionLabel}" is runnable but has no handler.`);
+  }
+}
+
+export function getSyncPlanArchiveAction(plan: SyncPlan): SyncPlanArchiveAction {
   const totals = Object.values(plan.sections).reduce(
     (accumulator, section) => ({
       localOnly: accumulator.localOnly + section.localOnly,
@@ -209,6 +314,8 @@ export function getSyncPlanArchiveAction(plan: SyncPlan) {
   );
   const hasLocalChanges = totals.localOnly > 0 || totals.localNewer > 0;
   const hasCloudChanges = totals.cloudOnly > 0 || totals.cloudNewer > 0;
+  const hasUploadActions = plan.diagnostics.reconciliation.uploadActionsCount > 0;
+  const hasRetrievalActions = plan.diagnostics.reconciliation.retrievalActionsCount > 0;
 
   if (plan.diagnostics.archiveState.classification === 'Partial Local Archive') {
     return {
@@ -220,9 +327,20 @@ export function getSyncPlanArchiveAction(plan: SyncPlan) {
     };
   }
 
+  if (plan.diagnostics.reconciliation.canRebuildBaseline) {
+    return {
+      kind: 'rebuild-baseline' as const,
+      label: 'Rebuild Synchronization Baseline',
+      loadingLabel: 'Rebuilding Synchronization Baseline',
+      reason:
+        'LoreBound verified that this Local Archive matches LoreBound Online, but this browser’s synchronization history is outdated.',
+      canRun: true,
+    };
+  }
+
   if (totals.conflicts > 0) {
     return {
-      kind: 'review' as const,
+      kind: 'review-conflicts' as const,
       label: 'Review Conflicts',
       reason: 'Conflicting records require review.',
       canRun: false,
@@ -231,10 +349,20 @@ export function getSyncPlanArchiveAction(plan: SyncPlan) {
 
   if (totals.requiresReview > 0) {
     return {
-      kind: 'review' as const,
+      kind: 'review-required' as const,
       label: 'Review Required Items',
       reason: 'Some records need review before synchronization.',
       canRun: false,
+    };
+  }
+
+  if (hasUploadActions && hasRetrievalActions && plan.canSynchronize) {
+    return {
+      kind: 'sync' as const,
+      label: 'Synchronize Archive',
+      reason: 'Safe Local Archive and LoreBound Online changes can be synchronized together.',
+      canRun: true,
+      loadingLabel: 'Synchronizing Archive',
     };
   }
 
@@ -244,6 +372,7 @@ export function getSyncPlanArchiveAction(plan: SyncPlan) {
       label: 'Update Investigation',
       reason: 'Only this Local Archive has changes.',
       canRun: plan.canSynchronize,
+      loadingLabel: 'Updating Investigation',
     };
   }
 
@@ -253,12 +382,13 @@ export function getSyncPlanArchiveAction(plan: SyncPlan) {
       label: 'Retrieve Updates',
       reason: 'LoreBound Online contains updates missing from this Local Archive.',
       canRun: plan.canRetrieve,
+      loadingLabel: 'Retrieving Updates',
     };
   }
 
   if (hasLocalChanges && hasCloudChanges) {
     return {
-      kind: 'review' as const,
+      kind: 'review-required' as const,
       label: 'Reconcile Archive',
       reason: 'Both Local Archive and LoreBound Online contain safe changes.',
       canRun: false,

@@ -1,5 +1,6 @@
 import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
+import { createStableId } from '../../../lib/stableId';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
 import { DossierFormDialog } from '../../cases/components/DossierFormDialog';
 import { useBonds } from '../../cases/context/BondContext';
@@ -249,6 +250,37 @@ class DossierRowBoundary extends Component<DossierRowBoundaryProps, DossierRowBo
       </div>
     );
   }
+}
+
+type FieldKitDossierRowProps = {
+  dossier: Dossier;
+  onOpen: (dossier: Dossier) => void;
+  getBondCount: (dossierId: string) => number;
+};
+
+function FieldKitDossierRow({ dossier, onOpen, getBondCount }: FieldKitDossierRowProps) {
+  const typeConfig = getKnowledgeTypeConfig(dossier.dossierType);
+  const secondaryLine = getDossierSecondaryLine(dossier);
+  const bondCount = getBondCount(dossier.id);
+
+  return (
+    <button
+      type="button"
+      className="field-kit-record field-kit-record--button"
+      aria-label={`Open ${dossier.name}, ${typeConfig.singularLabel}`}
+      onClick={() => onOpen(dossier)}
+    >
+      <FieldKitThumbnail image={dossier.coverImage} name={dossier.name} />
+      <span>
+        <strong>{dossier.name}</strong>
+        <small>{typeConfig.singularLabel}</small>
+        <em>
+          {secondaryLine}
+          {` / ${bondCount} Bonds`}
+        </em>
+      </span>
+    </button>
+  );
 }
 
 export function FieldKitDossiers({
@@ -635,30 +667,15 @@ export function FieldKitDossiers({
             </span>
           </div>
         ) : null}
-        {filteredDossiers.map((dossier) => {
-          const typeConfig = getKnowledgeTypeConfig(dossier.dossierType);
-
-          return (
-            <DossierRowBoundary key={dossier.id} dossierName={dossier.name}>
-              <button
-                type="button"
-                className="field-kit-record field-kit-record--button"
-                aria-label={`Open ${dossier.name}, ${typeConfig.singularLabel}`}
-                onClick={() => setSelectedDossier(dossier)}
-              >
-                <FieldKitThumbnail image={dossier.coverImage} name={dossier.name} />
-                <span>
-                  <strong>{dossier.name}</strong>
-                  <small>{typeConfig.singularLabel}</small>
-                  <em>
-                    {getDossierSecondaryLine(dossier)}
-                    {` / ${bondsForDossier(dossier.id).length} Bonds`}
-                  </em>
-                </span>
-              </button>
-            </DossierRowBoundary>
-          );
-        })}
+        {filteredDossiers.map((dossier) => (
+          <DossierRowBoundary key={dossier.id} dossierName={dossier.name}>
+            <FieldKitDossierRow
+              dossier={dossier}
+              onOpen={setSelectedDossier}
+              getBondCount={(dossierId) => bondsForDossier(dossierId).length}
+            />
+          </DossierRowBoundary>
+        ))}
         {filteredDossiers.length === 0 ? (
           <div className="field-kit-empty">
             {isPartialArchive ? (
@@ -935,7 +952,7 @@ function FieldKitDossierView({
     const template = customSectionReusable
       ? saveCustomSectionTemplate(title, customSectionKind)
       : {
-          id: `custom-${crypto.randomUUID()}`,
+          id: createStableId('custom'),
           title,
           kind: customSectionKind,
           isSingleton: false,

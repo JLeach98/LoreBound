@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { authService } from '../auth/AuthService';
 import { syncService } from './SyncService';
+import type { SyncResult } from './SyncTypes';
 
 export type AutomaticSyncState =
   | 'connected'
@@ -25,9 +26,11 @@ type AutomaticSyncContextValue = {
   automaticSyncState: AutomaticSyncState;
   automaticSyncLabel: string;
   lastAutomaticSyncAt: string | null;
+  pendingAutomaticSyncReasons: string[];
+  latestManualSyncRequestAt: string | null;
   setAutomaticSyncEnabled: (enabled: boolean) => void;
   requestAutomaticSync: (reason: string) => void;
-  synchronizeNow: () => Promise<void>;
+  synchronizeNow: () => Promise<SyncResult>;
 };
 
 const automaticSyncPreferenceKey = 'lorebound:auto-sync-enabled';
@@ -79,27 +82,37 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
     navigator.onLine ? 'connected' : 'offline',
   );
   const [lastAutomaticSyncAt, setLastAutomaticSyncAt] = useState<string | null>(null);
+  const [pendingAutomaticSyncReasons, setPendingAutomaticSyncReasons] = useState<string[]>([]);
+  const [latestManualSyncRequestAt, setLatestManualSyncRequestAt] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const isSynchronizingRef = useRef(false);
 
-  const runSynchronization = useCallback(async (respectAutomaticPreference: boolean) => {
+  const runSynchronization = useCallback(async (respectAutomaticPreference: boolean): Promise<SyncResult> => {
+    const emptyResult = (message: string): SyncResult => ({
+      ok: false,
+      message,
+      counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+      completedStages: [],
+      itemsRequiringReview: 0,
+    });
+
     if (
       (respectAutomaticPreference && !isAutomaticSyncEnabled) ||
       isSynchronizingRef.current
     ) {
-      return;
+      return emptyResult('Synchronization is already in progress or Automatic Synchronization is off.');
     }
 
     if (!navigator.onLine) {
       setAutomaticSyncState('offline');
-      return;
+      return emptyResult('LoreBound Online is unavailable while this browser is offline.');
     }
 
     const authStatus = await authService.getStatus();
 
     if (authStatus.state !== 'signed-in') {
       setAutomaticSyncState('connected');
-      return;
+      return emptyResult('Investigator Connect is required before synchronization.');
     }
 
     isSynchronizingRef.current = true;
@@ -131,17 +144,48 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
         planResult.plan.diagnostics.archiveState.classification === 'Partial Local Archive'
       ) {
         setAutomaticSyncState('review-required');
-        return;
+        return emptyResult(
+          planResult.plan.blockingReasons[0] ??
+          planResult.plan.diagnostics.archiveState.disabledReason ??
+          'Archive Synchronization Review is required.',
+        );
+      }
+
+      if (planResult.plan.diagnostics.reconciliation.canRebuildBaseline) {
+        if (respectAutomaticPreference) {
+          setAutomaticSyncState('review-required');
+          return emptyResult('This browser’s synchronization baseline is outdated.');
+        }
+
+        const result = await syncService.rebuildBaseline();
+        setAutomaticSyncState(result.ok ? 'up-to-date' : 'failed');
+
+      if (result.ok) {
+        setLastAutomaticSyncAt(result.completedAt ?? new Date().toISOString());
+      }
+
+        return result;
       }
 
       if (localChangeCount === 0) {
         setAutomaticSyncState('up-to-date');
-        return;
+        return {
+          ok: true,
+          message: 'Archive Up To Date',
+          counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+          completedStages: [],
+          itemsRequiringReview: 0,
+          completedAt: new Date().toISOString(),
+        };
       }
 
       if (!planResult.plan.canSynchronize) {
         setAutomaticSyncState('changes-waiting');
-        return;
+        return emptyResult(
+          planResult.plan.blockingReasons[0] ??
+          planResult.plan.diagnostics.archiveState.disabledReason ??
+          'Synchronization is not available for this archive.',
+        );
       }
 
       const result = await syncService.synchronize();
@@ -152,13 +196,16 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
             ? 'review-required'
             : 'failed',
         );
-        return;
+        return result;
       }
 
       setLastAutomaticSyncAt(result.completedAt ?? new Date().toISOString());
       setAutomaticSyncState('up-to-date');
+      setPendingAutomaticSyncReasons([]);
+      return result;
     } catch {
       setAutomaticSyncState('failed');
+      return emptyResult('Synchronization Failed. Review synchronization before trying again.');
     } finally {
       isSynchronizingRef.current = false;
     }
@@ -170,11 +217,14 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
   );
 
   const scheduleAutomaticSync = useCallback(
-    (_reason: string) => {
+    (reason: string) => {
       if (!isAutomaticSyncEnabled) {
         return;
       }
 
+      setPendingAutomaticSyncReasons((currentReasons) =>
+        [...new Set([...currentReasons, reason])],
+      );
       setAutomaticSyncState(navigator.onLine ? 'changes-waiting' : 'offline');
 
       if (timerRef.current) {
@@ -206,7 +256,8 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
   );
 
   const synchronizeNow = useCallback(async () => {
-    await runSynchronization(false);
+    setLatestManualSyncRequestAt(new Date().toISOString());
+    return runSynchronization(false);
   }, [runSynchronization]);
 
   useEffect(() => {
@@ -249,6 +300,8 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
       automaticSyncState,
       automaticSyncLabel: getStateLabel(automaticSyncState, isAutomaticSyncEnabled),
       lastAutomaticSyncAt,
+      pendingAutomaticSyncReasons,
+      latestManualSyncRequestAt,
       setAutomaticSyncEnabled,
       requestAutomaticSync: scheduleAutomaticSync,
       synchronizeNow,
@@ -257,6 +310,8 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
       automaticSyncState,
       isAutomaticSyncEnabled,
       lastAutomaticSyncAt,
+      latestManualSyncRequestAt,
+      pendingAutomaticSyncReasons,
       scheduleAutomaticSync,
       setAutomaticSyncEnabled,
       synchronizeNow,

@@ -7,6 +7,7 @@ import type {
   DossierTemplate,
   DossierType,
 } from '../types/dossierTypes';
+import { createStableId } from '../../../lib/stableId';
 
 export type SectionTemplate = {
   id: string;
@@ -93,7 +94,7 @@ export const dossierTemplates: Record<DossierType, DossierTemplate> = {
 };
 
 function createSectionId(templateId: string) {
-  return `${templateId}-${crypto.randomUUID()}`;
+  return createStableId(templateId);
 }
 
 function clean(value?: string) {
@@ -296,7 +297,7 @@ export function readCustomSectionTemplates(): SectionTemplate[] {
 
 export function saveCustomSectionTemplate(title: string, kind: DossierSectionKind = 'custom') {
   const template: SectionTemplate = {
-    id: `custom-${crypto.randomUUID()}`,
+    id: createStableId('custom'),
     title: title.trim(),
     kind,
     isSingleton: false,

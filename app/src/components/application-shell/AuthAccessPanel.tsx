@@ -30,6 +30,7 @@ type AuthView =
   | 'edit-profile'
   | 'review'
   | 'confirm-sync'
+  | 'confirm-baseline'
   | 'confirm-retrieve'
   | 'progress'
   | 'complete'
@@ -101,6 +102,19 @@ function emptyPlan(): SyncPlan {
       },
       reconciliation: {
         baselineMetadataPresent: false,
+        baselineStatus: 'Missing',
+        baselineReason: 'Not reviewed.',
+        canRebuildBaseline: false,
+        recordActions: [],
+        selectedSynchronizationMode: 'none',
+        uploadActionsCount: 0,
+        retrievalActionsCount: 0,
+        conflictActionsCount: 0,
+        outboundGateReason: 'Not reviewed.',
+        upsertDossiersInvoked: false,
+        lastUploadedDossierId: null,
+        cloudVerificationResult: 'Not reviewed.',
+        baselineUpdated: false,
         invalidIds: 0,
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
@@ -113,6 +127,11 @@ function emptyPlan(): SyncPlan {
         localCaseStableId: null,
         cloudCaseStableId: null,
         caseNormalizedMatch: false,
+        emptyLocalCaseShell: false,
+        localCaseNormalizedIdentity: {},
+        cloudCaseNormalizedIdentity: {},
+        caseMeaningfulDifferingFields: [],
+        caseIgnoredDifferingFields: [],
         retrievalEligibility: 'Blocked',
         retrievalBlockReason: 'Not reviewed.',
         actionEnabled: false,
@@ -122,6 +141,7 @@ function emptyPlan(): SyncPlan {
         repairStage: 'Not started.',
         selectedAction: 'Not reviewed.',
         selectedActionReason: 'Not reviewed.',
+        browserOrigin: typeof window !== 'undefined' ? window.location.origin : 'Unknown',
         localImageReferences: 0,
         cloudImageReferences: 0,
       },
@@ -385,6 +405,7 @@ export function AuthAccessPanel() {
   const archiveAction = getSyncPlanArchiveAction(syncPlan);
   const isPartialLocalArchive =
     syncPlan.diagnostics.archiveState.classification === 'Partial Local Archive';
+  const isEmptyLocalCaseShell = syncPlan.diagnostics.archiveState.emptyLocalCaseShell;
   const archiveStatusLabel = isPartialLocalArchive
     ? 'Local Archive Incomplete'
     : getArchiveStatusLabel(summaryTotals);
@@ -395,6 +416,7 @@ export function AuthAccessPanel() {
     summaryTotals.itemsRequiringReview;
   const syncActionLabel = archiveAction.kind === 'sync' ? archiveAction.label : 'Synchronize Investigation';
   const isRetrievalAction = archiveAction.kind === 'retrieve' || archiveAction.kind === 'repair-local-archive';
+  const isBaselineAction = archiveAction.kind === 'rebuild-baseline';
   const retrieveActionLabel = isRetrievalAction ? archiveAction.label : 'Retrieve Investigation';
   const reconciliationDiagnosticTotals = Object.values(syncPlan.sections).reduce(
     (totals, section) => ({
@@ -809,13 +831,14 @@ export function AuthAccessPanel() {
 
   async function handleSynchronizeNow() {
     setIsWorking(true);
+    setNotice('Reviewing Local Archive...');
 
     try {
-      await synchronizeNow();
+      const result = await synchronizeNow();
       const nextPlanResult = await syncService.createPlan();
       setSyncPlan(nextPlanResult.plan);
-      setNotice('Investigation Synchronized.');
-      setNoticeState('connected');
+      setNotice(result.message);
+      setNoticeState(result.ok ? 'connected' : 'error');
     } catch {
       setNotice('Synchronization Failed. Review synchronization before trying again.');
       setNoticeState('error');
@@ -887,6 +910,18 @@ export function AuthAccessPanel() {
     setAuthView('progress');
     setSyncResult(null);
     const result = await syncService.synchronize(setSyncProgress);
+    setSyncResult(result);
+    setIsWorking(false);
+    setAuthView(result.ok ? 'complete' : 'sync-error');
+    const nextPlanResult = await syncService.createPlan();
+    setSyncPlan(nextPlanResult.plan);
+  }
+
+  async function runBaselineRebuild() {
+    setIsWorking(true);
+    setAuthView('progress');
+    setSyncResult(null);
+    const result = await syncService.rebuildBaseline(setSyncProgress);
     setSyncResult(result);
     setIsWorking(false);
     setAuthView(result.ok ? 'complete' : 'sync-error');
@@ -1056,11 +1091,17 @@ export function AuthAccessPanel() {
                     onClick={
                       isRetrievalAction
                         ? () => goToView('confirm-retrieve')
+                        : isBaselineAction
+                          ? () => goToView('confirm-baseline')
                         : handleSynchronizeNow
                     }
-                    disabled={isWorking || isProfileLoading || (isRetrievalAction && !archiveAction.canRun)}
+                    disabled={
+                      isWorking ||
+                      isProfileLoading ||
+                      ((isRetrievalAction || isBaselineAction) && !archiveAction.canRun)
+                    }
                   >
-                    {isRetrievalAction ? archiveAction.label : 'Synchronize Now'}
+                    {isRetrievalAction || isBaselineAction ? archiveAction.label : 'Synchronize Now'}
                   </button>
                   <button
                     type="button"
@@ -1115,6 +1156,7 @@ export function AuthAccessPanel() {
               'edit-profile',
               'review',
               'confirm-sync',
+              'confirm-baseline',
               'confirm-retrieve',
               'progress',
               'complete',
@@ -1524,7 +1566,7 @@ export function AuthAccessPanel() {
                 {syncPlan.blockingReasons.length > 0 ? (
                   <p>{syncPlan.blockingReasons[0]}</p>
                 ) : null}
-                {!archiveAction.canRun && archiveAction.kind !== 'close' ? (
+                {!archiveAction.canRun ? (
                   <p>{syncPlan.diagnostics.archiveState.disabledReason}</p>
                 ) : null}
                 <div className="auth-dialog__actions">
@@ -1539,6 +1581,16 @@ export function AuthAccessPanel() {
                       disabled={!archiveAction.canRun || isWorking}
                       onClick={() => goToView('confirm-retrieve')}
                       title={!archiveAction.canRun ? syncPlan.diagnostics.archiveState.retrievalBlockReason : undefined}
+                    >
+                      {archiveAction.label}
+                    </button>
+                  ) : isBaselineAction ? (
+                    <button
+                      type="button"
+                      className="auth-button auth-button--primary"
+                      disabled={!archiveAction.canRun || isWorking}
+                      onClick={() => goToView('confirm-baseline')}
+                      title={!archiveAction.canRun ? syncPlan.diagnostics.reconciliation.baselineReason : undefined}
                     >
                       {archiveAction.label}
                     </button>
@@ -1611,6 +1663,42 @@ export function AuthAccessPanel() {
                         <dd>{syncPlan.diagnostics.archiveState.classification}</dd>
                       </div>
                       <div>
+                        <dt>Current Browser Origin</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.browserOrigin}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline status</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineStatus}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline rebuild available</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.canRebuildBaseline ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected synchronization mode</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.selectedSynchronizationMode}</dd>
+                      </div>
+                      <div>
+                        <dt>Upload actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.uploadActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Retrieval actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.retrievalActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Conflict actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.conflictActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Outbound gate reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.outboundGateReason}</dd>
+                      </div>
+                      <div>
                         <dt>Repair eligible</dt>
                         <dd>{syncPlan.diagnostics.archiveState.repairEligibility === 'Available' ? 'Yes' : 'No'}</dd>
                       </div>
@@ -1637,6 +1725,61 @@ export function AuthAccessPanel() {
                     </dl>
                   </section>
                 ) : null}
+              </section>
+            ) : null}
+
+            {isSignedIn && authView === 'confirm-baseline' ? (
+              <section className="archive-sync-review" aria-live="polite">
+                <div>
+                  <p>Rebuild Synchronization Baseline</p>
+                  <h3>Rebuild Synchronization Baseline</h3>
+                </div>
+                <div className="archive-sync-review__groups">
+                  <section>
+                    <h4>Verified Investigation</h4>
+                    <p>{syncPlan.local.investigationName ?? 'Local Archive Investigation'}</p>
+                  </section>
+                  <section>
+                    <h4>Baseline Review</h4>
+                    <dl>
+                      <div>
+                        <dt>Current Browser Origin</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.browserOrigin}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline Status</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineStatus}</dd>
+                      </div>
+                      <div>
+                        <dt>Reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineReason}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+                <p>
+                  LoreBound verified that this Local Archive matches LoreBound Online, but this
+                  browser’s synchronization history is outdated. Rebuilding the baseline will not
+                  change Investigation records.
+                </p>
+                <div className="auth-dialog__actions">
+                  <button
+                    type="button"
+                    className="auth-button auth-button--quiet"
+                    onClick={() => goToView('review')}
+                    disabled={isWorking}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="auth-button auth-button--primary"
+                    onClick={runBaselineRebuild}
+                    disabled={isWorking || !archiveAction.canRun}
+                  >
+                    Rebuild Synchronization Baseline
+                  </button>
+                </div>
               </section>
             ) : null}
 
@@ -1713,11 +1856,19 @@ export function AuthAccessPanel() {
 
             {isSignedIn && authView === 'confirm-retrieve' ? (
               <section className="archive-sync-review" aria-live="polite">
-                <h3>{isPartialLocalArchive ? 'Repair Local Archive?' : 'Retrieve Investigation from LoreBound Online?'}</h3>
+                <h3>
+                  {isEmptyLocalCaseShell
+                    ? 'Replace Empty Local Case Shell?'
+                    : isPartialLocalArchive
+                      ? 'Repair Local Archive?'
+                      : 'Retrieve Investigation from LoreBound Online?'}
+                </h3>
                 <p>
-                  {isPartialLocalArchive
-                    ? 'LoreBound Online contains additional records for this Investigation. Missing Dossiers, Bonds, Evidence Pins, and stored images will be retrieved without removing existing local records.'
-                    : 'Records will be written into this empty Local Archive.'}
+                  {isEmptyLocalCaseShell
+                    ? 'This browser contains an empty local Investigation shell with no Dossiers, Bonds, Evidence Pins, or Stored Images. LoreBound will replace that empty shell with the complete Investigation stored in LoreBound Online. No LoreBound Online data will be changed.'
+                    : isPartialLocalArchive
+                      ? 'LoreBound Online contains additional records for this Investigation. Missing Dossiers, Bonds, Evidence Pins, and stored images will be retrieved without removing existing local records.'
+                      : 'Records will be written into this empty Local Archive.'}
                 </p>
                 <div className="archive-sync-review__groups">
                   {isPartialLocalArchive ? (
@@ -1770,8 +1921,8 @@ export function AuthAccessPanel() {
                   </section>
                 </div>
                 <div className="auth-dialog__actions">
-                  <button type="button" className="auth-button auth-button--primary" onClick={runRetrieval}>
-                    {retrieveActionLabel}
+                  <button type="button" className="auth-button auth-button--primary" onClick={runRetrieval} disabled={isWorking}>
+                    {isWorking ? archiveAction.loadingLabel ?? 'Repairing Local Archive' : retrieveActionLabel}
                   </button>
                   <button type="button" className="auth-button auth-button--quiet" onClick={() => goToView('review')}>
                     Return to Review

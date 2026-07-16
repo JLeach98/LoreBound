@@ -58,6 +58,11 @@ function countDossiers(dossiers: Dossier[]) {
 
 function friendlyError(error: unknown, fallback: string) {
   console.error(error);
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
   return fallback;
 }
 

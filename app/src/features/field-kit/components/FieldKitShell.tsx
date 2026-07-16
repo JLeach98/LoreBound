@@ -135,6 +135,7 @@ export function FieldKitShell() {
         ) : null}
         {activeDestination === 'dossiers' ? (
           <FieldKitRouteBoundary
+            key={`dossiers-${boardDossier?.id ?? 'list'}`}
             hasSelectedDossier={Boolean(boardDossier)}
             onReturnToFieldKit={() => {
               setBoardDossier(null);
@@ -156,6 +157,7 @@ export function FieldKitShell() {
         {activeDestination === 'board' ? (
           boardDossier ? (
             <FieldKitRouteBoundary
+              key={`board-dossier-${boardDossier.id}`}
               hasSelectedDossier
               onReturnToFieldKit={() => {
                 setBoardDossier(null);

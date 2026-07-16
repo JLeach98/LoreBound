@@ -1,5 +1,6 @@
 import { Button } from '../../../components/ui/Button';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createStableId } from '../../../lib/stableId';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
 import {
@@ -486,7 +487,7 @@ export function DossierSheet({
     const template = customSectionReusable
       ? saveCustomSectionTemplate(title, customSectionKind)
       : {
-          id: `custom-${crypto.randomUUID()}`,
+          id: createStableId('custom'),
           title,
           kind: customSectionKind,
           isSingleton: false,

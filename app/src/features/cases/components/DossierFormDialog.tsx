@@ -85,8 +85,17 @@ export function DossierFormDialog({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!canSubmit) {
+    if (!trimmedName) {
       setSubmitError('Add a Name before saving this Dossier.');
+      return;
+    }
+
+    if (imageError) {
+      setSubmitError('LoreBound could not prepare the selected image.');
+      return;
+    }
+
+    if (isSaving) {
       return;
     }
 
@@ -121,7 +130,11 @@ export function DossierFormDialog({
       });
     } catch (error) {
       console.error(error);
-      setSubmitError('The Dossier could not be saved. Try again.');
+      setSubmitError(
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : 'LoreBound could not save this Dossier to the Local Archive.',
+      );
     } finally {
       setIsSaving(false);
     }

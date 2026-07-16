@@ -63,9 +63,12 @@ export const knowledgeTypeConfigs: Record<KnowledgeTypeKey, KnowledgeTypeConfig>
     pluralLabel: 'Characters',
     fallbackIcon: 'person',
     defaultSectionTemplateId: 'identity',
-    getIdentityMetadata: (dossier) => [dossier.alias, dossier.characterStatus, dossier.affiliation].filter(Boolean) as string[],
-    getListPreview: (dossier) => dossier.alias || dossier.affiliation || dossier.characterStatus || 'Character Dossier',
-    getDetailHeader: (dossier) => dossier.summary || dossier.alias || dossier.affiliation || 'Character Dossier',
+    getIdentityMetadata: (dossier) =>
+      [dossier.alias, dossier.characterStatus, dossier.affiliation].map(toSafeDisplayString).filter(Boolean),
+    getListPreview: (dossier) =>
+      [dossier.alias, dossier.affiliation, dossier.characterStatus].map(toSafeDisplayString).find(Boolean) || 'Character Dossier',
+    getDetailHeader: (dossier) =>
+      [dossier.summary, dossier.alias, dossier.affiliation].map(toSafeDisplayString).find(Boolean) || 'Character Dossier',
   },
   location: {
     canonicalKey: 'location',
@@ -74,9 +77,12 @@ export const knowledgeTypeConfigs: Record<KnowledgeTypeKey, KnowledgeTypeConfig>
     pluralLabel: 'Locations',
     fallbackIcon: 'place',
     defaultSectionTemplateId: 'identity',
-    getIdentityMetadata: (dossier) => [dossier.region, dossier.world].filter(Boolean) as string[],
-    getListPreview: (dossier) => [dossier.region, dossier.world].filter(Boolean).join(', ') || 'Location Dossier',
-    getDetailHeader: (dossier) => dossier.summary || [dossier.region, dossier.world].filter(Boolean).join(', ') || 'Location Dossier',
+    getIdentityMetadata: (dossier) => [dossier.region, dossier.world].map(toSafeDisplayString).filter(Boolean),
+    getListPreview: (dossier) => [dossier.region, dossier.world].map(toSafeDisplayString).filter(Boolean).join(', ') || 'Location Dossier',
+    getDetailHeader: (dossier) =>
+      toSafeDisplayString(dossier.summary) ||
+      [dossier.region, dossier.world].map(toSafeDisplayString).filter(Boolean).join(', ') ||
+      'Location Dossier',
   },
   event: {
     canonicalKey: 'event',
@@ -85,9 +91,12 @@ export const knowledgeTypeConfigs: Record<KnowledgeTypeKey, KnowledgeTypeConfig>
     pluralLabel: 'Events',
     fallbackIcon: 'event',
     defaultSectionTemplateId: 'timeline',
-    getIdentityMetadata: (dossier) => [dossier.eventDate, dossier.era].filter(Boolean) as string[],
-    getListPreview: (dossier) => [dossier.eventDate, dossier.era].filter(Boolean).join(', ') || 'Event Dossier',
-    getDetailHeader: (dossier) => dossier.summary || [dossier.eventDate, dossier.era].filter(Boolean).join(', ') || 'Event Dossier',
+    getIdentityMetadata: (dossier) => [dossier.eventDate, dossier.era].map(toSafeDisplayString).filter(Boolean),
+    getListPreview: (dossier) => [dossier.eventDate, dossier.era].map(toSafeDisplayString).filter(Boolean).join(', ') || 'Event Dossier',
+    getDetailHeader: (dossier) =>
+      toSafeDisplayString(dossier.summary) ||
+      [dossier.eventDate, dossier.era].map(toSafeDisplayString).filter(Boolean).join(', ') ||
+      'Event Dossier',
   },
   organization: {
     canonicalKey: 'organization',
@@ -96,9 +105,12 @@ export const knowledgeTypeConfigs: Record<KnowledgeTypeKey, KnowledgeTypeConfig>
     pluralLabel: 'Organizations',
     fallbackIcon: 'organization',
     defaultSectionTemplateId: 'identity',
-    getIdentityMetadata: (dossier) => [dossier.organizationType, dossier.leader].filter(Boolean) as string[],
-    getListPreview: (dossier) => [dossier.organizationType, dossier.leader].filter(Boolean).join(', ') || 'Organization Dossier',
-    getDetailHeader: (dossier) => dossier.summary || [dossier.organizationType, dossier.leader].filter(Boolean).join(', ') || 'Organization Dossier',
+    getIdentityMetadata: (dossier) => [dossier.organizationType, dossier.leader].map(toSafeDisplayString).filter(Boolean),
+    getListPreview: (dossier) => [dossier.organizationType, dossier.leader].map(toSafeDisplayString).filter(Boolean).join(', ') || 'Organization Dossier',
+    getDetailHeader: (dossier) =>
+      toSafeDisplayString(dossier.summary) ||
+      [dossier.organizationType, dossier.leader].map(toSafeDisplayString).filter(Boolean).join(', ') ||
+      'Organization Dossier',
   },
   theory: {
     canonicalKey: 'theory',
@@ -107,9 +119,12 @@ export const knowledgeTypeConfigs: Record<KnowledgeTypeKey, KnowledgeTypeConfig>
     pluralLabel: 'Theories',
     fallbackIcon: 'theory',
     defaultSectionTemplateId: 'evidence',
-    getIdentityMetadata: (dossier) => [dossier.theoryStatus, dossier.theoryConfidence].filter(Boolean) as string[],
-    getListPreview: (dossier) => [dossier.theoryStatus, dossier.theoryConfidence].filter(Boolean).join(', ') || 'Theory Dossier',
-    getDetailHeader: (dossier) => dossier.summary || [dossier.theoryStatus, dossier.theoryConfidence].filter(Boolean).join(', ') || 'Theory Dossier',
+    getIdentityMetadata: (dossier) => [dossier.theoryStatus, dossier.theoryConfidence].map(toSafeDisplayString).filter(Boolean),
+    getListPreview: (dossier) => [dossier.theoryStatus, dossier.theoryConfidence].map(toSafeDisplayString).filter(Boolean).join(', ') || 'Theory Dossier',
+    getDetailHeader: (dossier) =>
+      toSafeDisplayString(dossier.summary) ||
+      [dossier.theoryStatus, dossier.theoryConfidence].map(toSafeDisplayString).filter(Boolean).join(', ') ||
+      'Theory Dossier',
   },
 };
 
@@ -121,8 +136,8 @@ export const genericKnowledgeTypeConfig: KnowledgeTypeConfig = {
   fallbackIcon: 'dossier',
   defaultSectionTemplateId: 'overview',
   getIdentityMetadata: () => [],
-  getListPreview: (dossier) => dossier.summary || 'Shared Dossier information available',
-  getDetailHeader: (dossier) => dossier.summary || 'Shared Dossier information available',
+  getListPreview: (dossier) => toSafeDisplayString(dossier.summary) || 'Shared Dossier information available',
+  getDetailHeader: (dossier) => toSafeDisplayString(dossier.summary) || 'Shared Dossier information available',
 };
 
 export const fieldKitDossierPluralLabels: Record<DossierType, string> = {
@@ -181,23 +196,47 @@ export function getInitials(name: string) {
   return initials || 'LB';
 }
 
-export function getDossierSecondaryLine(dossier: Dossier) {
-  const sections = ensureDossierSections(dossier);
-  const identityValues = sections
-    .find((section) => section.kind === 'identity')
-    ?.fields?.map((field) => field.value)
-    .filter(Boolean);
-  const overview = sections.find((section) => section.kind === 'overview')?.body;
-  const notes = sections.find((section) => section.kind === 'notes')?.body;
-  const sectionPreview = [...(identityValues ?? []), overview, notes]
-    .find((value) => value?.trim())
-    ?.trim();
-
-  if (sectionPreview) {
-    return sectionPreview;
+export function toSafeDisplayString(value: unknown) {
+  if (typeof value === 'string') {
+    return value.trim();
   }
 
-  return getKnowledgeTypeConfig(dossier.dossierType).getListPreview(dossier);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return '';
+}
+
+export function getDossierSecondaryLine(dossier: Dossier) {
+  try {
+    const sections = ensureDossierSections(dossier);
+    const identitySection = sections.find((section) => section.kind === 'identity');
+    const identityValues = Array.isArray(identitySection?.fields)
+      ? identitySection.fields
+          .map((field) => toSafeDisplayString((field as { value?: unknown })?.value))
+          .filter(Boolean)
+      : [];
+    const overview = toSafeDisplayString(sections.find((section) => section.kind === 'overview')?.body);
+    const notes = toSafeDisplayString(sections.find((section) => section.kind === 'notes')?.body);
+    const sectionPreview = [...identityValues, overview, notes].find(Boolean);
+
+    if (sectionPreview) {
+      return sectionPreview;
+    }
+  } catch {
+    return getKnowledgeTypeConfig(dossier.dossierType).singularLabel || 'Dossier';
+  }
+
+  const config = getKnowledgeTypeConfig(dossier.dossierType);
+  const typePreview = toSafeDisplayString(config.getListPreview(dossier));
+  const summary = toSafeDisplayString(dossier.summary);
+
+  return typePreview || summary || config.singularLabel || 'Dossier';
 }
 
 export function getCaseSecondaryLine(loreCase: LoreCase) {

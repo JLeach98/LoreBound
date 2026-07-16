@@ -185,6 +185,19 @@ function emptyPlan(): SyncPlan {
       },
       reconciliation: {
         baselineMetadataPresent: false,
+        baselineStatus: 'Missing',
+        baselineReason: 'Not reviewed.',
+        canRebuildBaseline: false,
+        recordActions: [],
+        selectedSynchronizationMode: 'none',
+        uploadActionsCount: 0,
+        retrievalActionsCount: 0,
+        conflictActionsCount: 0,
+        outboundGateReason: 'Not reviewed.',
+        upsertDossiersInvoked: false,
+        lastUploadedDossierId: null,
+        cloudVerificationResult: 'Not reviewed.',
+        baselineUpdated: false,
         invalidIds: 0,
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
@@ -197,6 +210,11 @@ function emptyPlan(): SyncPlan {
         localCaseStableId: null,
         cloudCaseStableId: null,
         caseNormalizedMatch: false,
+        emptyLocalCaseShell: false,
+        localCaseNormalizedIdentity: {},
+        cloudCaseNormalizedIdentity: {},
+        caseMeaningfulDifferingFields: [],
+        caseIgnoredDifferingFields: [],
         retrievalEligibility: 'Blocked',
         retrievalBlockReason: 'Not reviewed.',
         actionEnabled: false,
@@ -206,6 +224,7 @@ function emptyPlan(): SyncPlan {
         repairStage: 'Not started.',
         selectedAction: 'Not reviewed.',
         selectedActionReason: 'Not reviewed.',
+        browserOrigin: typeof window !== 'undefined' ? window.location.origin : 'Unknown',
         localImageReferences: 0,
         cloudImageReferences: 0,
       },
@@ -267,6 +286,8 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
     automaticSyncState,
     automaticSyncLabel,
     lastAutomaticSyncAt,
+    pendingAutomaticSyncReasons,
+    latestManualSyncRequestAt,
     setAutomaticSyncEnabled,
     synchronizeNow,
   } = useAutomaticSync();
@@ -503,17 +524,17 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
   }
 
   async function handleSynchronizeNow() {
-    setNotice('Synchronizing Investigation...');
+    setNotice('Reviewing Local Archive...');
 
     try {
-      await synchronizeNow();
+      const result = await synchronizeNow();
       const [nextSyncStatus, nextPlanResult] = await Promise.all([
         syncService.getStatus(),
         syncService.createPlan(),
       ]);
       setSyncStatus(nextSyncStatus);
       setSyncPlan(nextPlanResult.plan);
-      setNotice('Investigation Synchronized');
+      setNotice(result.message);
     } catch {
       setNotice('Synchronization Failed. Review synchronization before trying again.');
     }
@@ -744,6 +765,14 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                         <dd>Unlocked on this device</dd>
                       </div>
                       <div>
+                        <dt>Current Browser Origin</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.browserOrigin}</dd>
+                      </div>
+                      <div>
+                        <dt>Origin scope</dt>
+                        <dd>This Local Archive belongs only to this browser origin.</dd>
+                      </div>
+                      <div>
                         <dt>Application version</dt>
                         <dd>{loreBoundVersion}</dd>
                       </div>
@@ -815,6 +844,18 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                         <dd>{isAutomaticSyncEnabled ? 'Yes' : 'No'}</dd>
                       </div>
                       <div>
+                        <dt>Pending automatic-sync reasons</dt>
+                        <dd>
+                          {pendingAutomaticSyncReasons.length
+                            ? pendingAutomaticSyncReasons.join(', ')
+                            : 'None'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Latest manual-sync request</dt>
+                        <dd>{formatDateTime(latestManualSyncRequestAt)}</dd>
+                      </div>
+                      <div>
                         <dt>Last synchronized</dt>
                         <dd>{formatDateTime(syncPlan.lastSynchronizedAt)}</dd>
                       </div>
@@ -855,6 +896,34 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Case normalized match</dt>
                         <dd>{syncPlan.diagnostics.archiveState.caseNormalizedMatch ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Empty local Case shell</dt>
+                        <dd>{syncPlan.diagnostics.archiveState.emptyLocalCaseShell ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local normalized identity</dt>
+                        <dd>{JSON.stringify(syncPlan.diagnostics.archiveState.localCaseNormalizedIdentity)}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud normalized identity</dt>
+                        <dd>{JSON.stringify(syncPlan.diagnostics.archiveState.cloudCaseNormalizedIdentity)}</dd>
+                      </div>
+                      <div>
+                        <dt>Meaningful differing fields</dt>
+                        <dd>
+                          {syncPlan.diagnostics.archiveState.caseMeaningfulDifferingFields.length
+                            ? syncPlan.diagnostics.archiveState.caseMeaningfulDifferingFields.join(', ')
+                            : 'None'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Ignored differing fields</dt>
+                        <dd>
+                          {syncPlan.diagnostics.archiveState.caseIgnoredDifferingFields.length
+                            ? syncPlan.diagnostics.archiveState.caseIgnoredDifferingFields.join(', ')
+                            : 'None'}
+                        </dd>
                       </div>
                       <div>
                         <dt>Retrieval eligibility</dt>
@@ -981,6 +1050,86 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                         <dd>
                           {syncPlan.diagnostics.reconciliation.baselineMetadataPresent ? 'Yes' : 'No'}
                         </dd>
+                      </div>
+                      <div>
+                        <dt>Baseline status</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineStatus}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline rebuild available</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.canRebuildBaseline ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected synchronization mode</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.selectedSynchronizationMode}</dd>
+                      </div>
+                      <div>
+                        <dt>Upload actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.uploadActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Retrieval actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.retrievalActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Conflict actions</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.conflictActionsCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Outbound synchronization gate reason</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.outboundGateReason}</dd>
+                      </div>
+                      <div>
+                        <dt>Local-only IDs by entity</dt>
+                        <dd>
+                          {Object.entries(syncPlan.sections)
+                            .map(([entity, section]) => `${entity}: ${section.localOnly}`)
+                            .join(', ')}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Local-newer IDs by entity</dt>
+                        <dd>
+                          {Object.entries(syncPlan.sections)
+                            .map(([entity, section]) => `${entity}: ${section.localNewer}`)
+                            .join(', ')}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud-only IDs by entity</dt>
+                        <dd>
+                          {Object.entries(syncPlan.sections)
+                            .map(([entity, section]) => `${entity}: ${section.onlineOnly}`)
+                            .join(', ')}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud-newer IDs by entity</dt>
+                        <dd>
+                          {Object.entries(syncPlan.sections)
+                            .map(([entity, section]) => `${entity}: ${section.onlineNewer}`)
+                            .join(', ')}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Upsert Dossiers invoked</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.upsertDossiersInvoked ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Last uploaded Dossier ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.lastUploadedDossierId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud verification result</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.cloudVerificationResult}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline updated</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.baselineUpdated ? 'Yes' : 'No'}</dd>
                       </div>
                       <div>
                         <dt>Automatic gate reason</dt>
