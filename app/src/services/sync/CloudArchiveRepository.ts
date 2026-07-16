@@ -104,6 +104,23 @@ async function upsertRows<T extends { id: string }>(tableName: TableName, rows: 
   }
 }
 
+async function deleteRows(tableName: TableName, ids: string[]) {
+  if (ids.length === 0) {
+    return;
+  }
+
+  const client = requireSupabase();
+  const { error, status } = await client.from(tableName).delete().in('id', ids);
+
+  if (error) {
+    const failedId = ids[0] ?? 'unknown';
+
+    throw new Error(
+      `${tableName} deletion failed for ${failedId}: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+    );
+  }
+}
+
 class CloudArchiveRepository {
   async readArchive(): Promise<CloudArchiveSnapshot> {
     const [cases, dossiers, bonds, boardEntries] = await Promise.all([
@@ -164,6 +181,22 @@ class CloudArchiveRepository {
 
   async upsertBoardEntries(rows: CloudBoardEntryRow[]) {
     await upsertRows('board_entries', rows);
+  }
+
+  async deleteCases(ids: string[]) {
+    await deleteRows('cases', ids);
+  }
+
+  async deleteDossiers(ids: string[]) {
+    await deleteRows('dossiers', ids);
+  }
+
+  async deleteBonds(ids: string[]) {
+    await deleteRows('bonds', ids);
+  }
+
+  async deleteBoardEntries(ids: string[]) {
+    await deleteRows('board_entries', ids);
   }
 }
 

@@ -1,6 +1,7 @@
 import type { BoardPin } from '../../features/cases/types/boardTypes';
 import type { Bond } from '../../features/cases/types/bondTypes';
 import type { LoreCase } from '../../features/cases/types/caseTypes';
+import type { DeletionTombstone } from '../../features/cases/storage/caseStorage';
 import type { Dossier } from '../../features/cases/types/dossierTypes';
 
 export type LocalArchiveSnapshot = {
@@ -8,6 +9,7 @@ export type LocalArchiveSnapshot = {
   dossiers: Dossier[];
   bonds: Bond[];
   boardPins: BoardPin[];
+  deletionTombstones: DeletionTombstone[];
   activeCaseId: string | null;
 };
 
@@ -90,6 +92,24 @@ export type SyncDiagnostics = {
     timestampParseFailures: number;
     fingerprintMismatches: number;
     automaticGateReason: string;
+    deletionDiagnostics?: {
+      deletionModelVersion: number;
+      localTombstoneCount: number;
+      pendingDeletionCount: number;
+      verifiedDeletionCount: number;
+      failedDeletionCount: number;
+      orphanedTombstoneCount: number;
+      cloudDeleteAttemptedCount: number;
+      cloudDeleteVerifiedCount: number;
+      remoteDeleteAppliedCount: number;
+      staleResurrectionPreventedCount: number;
+      repairRestorationBlockedByTombstoneCount: number;
+      generatedBondPairDeletionsPending: number;
+      lastFailedEntityType: string | null;
+      lastFailedEntityId: string | null;
+      lastFailedDeletionStage: string | null;
+      deletionBaselineCount: number;
+    };
   };
   archiveState: {
     classification:
@@ -134,6 +154,13 @@ export type SyncRecordActionKind =
   | 'upload-local-newer'
   | 'retrieve-cloud-only'
   | 'retrieve-cloud-newer'
+  | 'delete-cloud'
+  | 'delete-local'
+  | 'deletion-pending'
+  | 'deletion-verified'
+  | 'deletion-conflict'
+  | 'tombstone-orphaned'
+  | 'remote-record-recreated'
   | 'unchanged'
   | 'conflict'
   | 'requires-review';

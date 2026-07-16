@@ -14,6 +14,26 @@ const bondStoreName = 'bonds';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
 const syncStateKey = 'syncState';
+const deletionTombstonesKey = 'deletionTombstones';
+const localClientIdKey = 'localClientId';
+
+export const DELETION_SYNC_VERSION = 1;
+
+export type DeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
+
+export type DeletionTombstone = {
+  id: string;
+  caseId: string | null;
+  entityType: DeletionEntityType;
+  entityId: string;
+  deletedAt: string;
+  sourceClientId: string;
+  synchronizationStatus: 'pending' | 'verified' | 'failed';
+  baselineFingerprint?: string;
+  deletionVersion: typeof DELETION_SYNC_VERSION;
+  verifiedAt?: string;
+  lastFailedStage?: string;
+};
 
 export const localArchiveStorageInfo = {
   source: 'caseStorage IndexedDB Local Archive',
@@ -147,6 +167,14 @@ function createBondId() {
   return createStableId('bond');
 }
 
+function createDeletionTombstoneId() {
+  return createStableId('delete');
+}
+
+function createLocalClientId() {
+  return createStableId('client');
+}
+
 function cleanOptional(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -277,7 +305,7 @@ export function readAllCases() {
 
 export async function readFullLocalArchive() {
   const cases = await readAllCases();
-  const [caseRecordGroups, activeCaseId] = await Promise.all([
+  const [caseRecordGroups, activeCaseId, deletionTombstones] = await Promise.all([
     Promise.all(
       cases.map(async (loreCase) => {
         const [dossiers, bonds, boardPins] = await Promise.all([
@@ -290,6 +318,7 @@ export async function readFullLocalArchive() {
       }),
     ),
     readActiveCaseId(),
+    readDeletionTombstones(),
   ]);
 
   return {
@@ -297,6 +326,7 @@ export async function readFullLocalArchive() {
     dossiers: caseRecordGroups.flatMap((group) => group.dossiers),
     bonds: caseRecordGroups.flatMap((group) => group.bonds),
     boardPins: caseRecordGroups.flatMap((group) => group.boardPins),
+    deletionTombstones,
     activeCaseId,
   };
 }
@@ -312,6 +342,13 @@ export type LocalSyncState = {
   };
   synchronizedUpdatedAt: Record<string, string>;
   synchronizedFingerprints?: Record<string, string>;
+  deletionBaselines?: Record<string, {
+    entityType: DeletionEntityType;
+    entityId: string;
+    deletedAt: string;
+    deletionFingerprint: string;
+    deletionVersion: typeof DELETION_SYNC_VERSION;
+  }>;
   cloudImagePaths?: {
     cases: Record<string, string>;
     dossiers: Record<string, string>;
@@ -333,6 +370,165 @@ export async function recordLocalSyncState(syncState: LocalSyncState) {
   );
 }
 
+export async function readDeletionTombstones() {
+  const result = await runTransaction<DeletionTombstone[] | undefined>(metaStoreName, 'readonly', (store) =>
+    store.get(deletionTombstonesKey),
+  );
+
+  return result ?? [];
+}
+
+async function writeDeletionTombstones(tombstones: DeletionTombstone[]) {
+  await runTransaction<IDBValidKey>(metaStoreName, 'readwrite', (store) =>
+    store.put(tombstones, deletionTombstonesKey),
+  );
+}
+
+async function readOrCreateLocalClientId() {
+  const existingClientId = await runTransaction<string | undefined>(metaStoreName, 'readonly', (store) =>
+    store.get(localClientIdKey),
+  );
+
+  if (existingClientId) {
+    return existingClientId;
+  }
+
+  const clientId = createLocalClientId();
+  await runTransaction<IDBValidKey>(metaStoreName, 'readwrite', (store) =>
+    store.put(clientId, localClientIdKey),
+  );
+
+  return clientId;
+}
+
+function getDeletionFingerprint(tombstone: Pick<DeletionTombstone, 'entityType' | 'entityId' | 'deletedAt' | 'deletionVersion'>) {
+  return JSON.stringify({
+    state: 'deleted',
+    entityType: tombstone.entityType,
+    entityId: tombstone.entityId,
+    deletedAt: tombstone.deletedAt,
+    deletionVersion: tombstone.deletionVersion,
+  });
+}
+
+async function deleteRecordWithTombstone<TRecord extends { id: string }>(
+  storeName: string,
+  entityType: DeletionEntityType,
+  entityId: string,
+  getCaseId: (record: TRecord) => string | null,
+) {
+  const sourceClientId = await readOrCreateLocalClientId();
+  const syncState = await readLocalSyncState();
+
+  await runMultiStoreTransaction([storeName, metaStoreName], 'readwrite', async (stores) => {
+    const record = await requestToPromise(stores[storeName].get(entityId)) as TRecord | undefined;
+
+    if (!record) {
+      return;
+    }
+
+    const existingTombstones =
+      ((await requestToPromise(stores[metaStoreName].get(deletionTombstonesKey))) as DeletionTombstone[] | undefined) ??
+      [];
+    const existingTombstone = existingTombstones.find(
+      (tombstone) => tombstone.entityType === entityType && tombstone.entityId === entityId,
+    );
+    const deletedAt = existingTombstone?.deletedAt ?? new Date().toISOString();
+    const tombstone: DeletionTombstone = {
+      id: existingTombstone?.id ?? createDeletionTombstoneId(),
+      caseId: getCaseId(record),
+      entityType,
+      entityId,
+      deletedAt,
+      sourceClientId: existingTombstone?.sourceClientId ?? sourceClientId,
+      synchronizationStatus: existingTombstone?.synchronizationStatus ?? 'pending',
+      baselineFingerprint:
+        existingTombstone?.baselineFingerprint ??
+        syncState?.synchronizedFingerprints?.[`${entityType}:${entityId}`],
+      deletionVersion: DELETION_SYNC_VERSION,
+      verifiedAt: existingTombstone?.verifiedAt,
+      lastFailedStage: existingTombstone?.lastFailedStage,
+    };
+
+    await requestToPromise(
+      stores[metaStoreName].put(
+        [
+          ...existingTombstones.filter(
+            (candidate) => !(candidate.entityType === entityType && candidate.entityId === entityId),
+          ),
+          tombstone,
+        ],
+        deletionTombstonesKey,
+      ),
+    );
+    await requestToPromise(stores[storeName].delete(entityId));
+  });
+}
+
+export async function markDeletionTombstonesVerified(tombstonesToVerify: DeletionTombstone[]) {
+  if (tombstonesToVerify.length === 0) {
+    return;
+  }
+
+  const tombstones = await readDeletionTombstones();
+  const verifiedIds = new Set(tombstonesToVerify.map((tombstone) => tombstone.id));
+  const verifiedAt = new Date().toISOString();
+
+  await writeDeletionTombstones(
+    tombstones.map((tombstone) =>
+      verifiedIds.has(tombstone.id)
+        ? {
+            ...tombstone,
+            synchronizationStatus: 'verified',
+            verifiedAt,
+            lastFailedStage: undefined,
+          }
+        : tombstone,
+    ),
+  );
+}
+
+export async function markDeletionTombstoneFailed(tombstone: DeletionTombstone, failedStage: string) {
+  const tombstones = await readDeletionTombstones();
+
+  await writeDeletionTombstones(
+    tombstones.map((candidate) =>
+      candidate.id === tombstone.id
+        ? {
+            ...candidate,
+            synchronizationStatus: 'failed',
+            lastFailedStage: failedStage,
+          }
+        : candidate,
+    ),
+  );
+}
+
+export type DeletionBaselineEntries = Record<string, {
+  entityType: DeletionEntityType;
+  entityId: string;
+  deletedAt: string;
+  deletionFingerprint: string;
+  deletionVersion: typeof DELETION_SYNC_VERSION;
+}>;
+
+export function createDeletionBaselineEntries(tombstones: DeletionTombstone[]): DeletionBaselineEntries {
+  return Object.fromEntries(
+    tombstones
+      .filter((tombstone) => tombstone.synchronizationStatus === 'verified')
+      .map((tombstone) => [
+        `${tombstone.entityType}:${tombstone.entityId}`,
+        {
+          entityType: tombstone.entityType,
+          entityId: tombstone.entityId,
+          deletedAt: tombstone.deletedAt,
+          deletionFingerprint: getDeletionFingerprint(tombstone),
+          deletionVersion: DELETION_SYNC_VERSION,
+        },
+      ]),
+  ) as DeletionBaselineEntries;
+}
+
 export async function importFullLocalArchive(records: {
   cases: LoreCase[];
   dossiers: Dossier[];
@@ -344,6 +540,35 @@ export async function importFullLocalArchive(records: {
     [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, metaStoreName],
     'readwrite',
     async (stores) => {
+      const caseIds = new Set(records.cases.map((record) => record.id));
+      const dossierIds = new Set(records.dossiers.map((record) => record.id));
+      const bondIds = new Set(records.bonds.map((record) => record.id));
+      const boardPinIds = new Set(records.boardPins.map((record) => record.id));
+
+      for (const key of await requestToPromise(stores[caseStoreName].getAllKeys())) {
+        if (!caseIds.has(String(key))) {
+          await requestToPromise(stores[caseStoreName].delete(key));
+        }
+      }
+
+      for (const key of await requestToPromise(stores[dossierStoreName].getAllKeys())) {
+        if (!dossierIds.has(String(key))) {
+          await requestToPromise(stores[dossierStoreName].delete(key));
+        }
+      }
+
+      for (const key of await requestToPromise(stores[bondStoreName].getAllKeys())) {
+        if (!bondIds.has(String(key))) {
+          await requestToPromise(stores[bondStoreName].delete(key));
+        }
+      }
+
+      for (const key of await requestToPromise(stores[boardPinStoreName].getAllKeys())) {
+        if (!boardPinIds.has(String(key))) {
+          await requestToPromise(stores[boardPinStoreName].delete(key));
+        }
+      }
+
       for (const loreCase of records.cases) {
         await requestToPromise(stores[caseStoreName].put(loreCase));
       }
@@ -440,7 +665,12 @@ export async function updateCase(id: string, values: CaseFormValues) {
 }
 
 export function deleteCase(id: string) {
-  return runTransaction<undefined>(caseStoreName, 'readwrite', (store) => store.delete(id));
+  return deleteRecordWithTombstone<LoreCase>(
+    caseStoreName,
+    'cases',
+    id,
+    (record) => record.id,
+  );
 }
 
 export async function readActiveCaseId() {
@@ -562,8 +792,11 @@ export async function updateDossier(id: string, values: DossierFormValues) {
 export async function deleteDossier(id: string) {
   await deleteBondsByDossierId(id);
   await deleteBoardPinsByDossierId(id);
-  return runTransaction<undefined>(dossierStoreName, 'readwrite', (store) =>
-    store.delete(id),
+  return deleteRecordWithTombstone<Dossier>(
+    dossierStoreName,
+    'dossiers',
+    id,
+    (record) => record.caseId,
   );
 }
 
@@ -629,8 +862,11 @@ export async function pinDossierToBoard(
 }
 
 export function removeBoardPin(id: string) {
-  return runTransaction<undefined>(boardPinStoreName, 'readwrite', (store) =>
-    store.delete(id),
+  return deleteRecordWithTombstone<BoardPin>(
+    boardPinStoreName,
+    'boardEntries',
+    id,
+    (record) => record.caseId,
   );
 }
 
@@ -786,8 +1022,11 @@ export async function updateBond(id: string, values: BondFormValues) {
 }
 
 export function deleteBond(id: string) {
-  return runTransaction<undefined>(bondStoreName, 'readwrite', (store) =>
-    store.delete(id),
+  return deleteRecordWithTombstone<Bond>(
+    bondStoreName,
+    'bonds',
+    id,
+    (record) => record.caseId,
   );
 }
 
