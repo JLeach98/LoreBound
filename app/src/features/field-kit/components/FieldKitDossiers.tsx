@@ -1,7 +1,10 @@
 import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { createStableId } from '../../../lib/stableId';
-import { ThreadmarkAuthoringTextarea } from '../../threadmarks/ThreadmarkAuthoringTextarea';
+import {
+  executeThreadmarkBondReconciliation,
+  ThreadmarkAuthoringTextarea,
+} from '../../threadmarks';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
 import { DossierFormDialog } from '../../cases/components/DossierFormDialog';
 import { useBonds } from '../../cases/context/BondContext';
@@ -291,7 +294,13 @@ export function FieldKitDossiers({
 }: FieldKitDossiersProps) {
   const { activeCase } = useCases();
   const { dossiers, createNewDossier, updateExistingDossier, deleteExistingDossier, refreshDossiers } = useDossiers();
-  const { createNewBond, updateExistingBond, deleteExistingBond, bondsForDossier } = useBonds();
+  const {
+    bonds,
+    createNewBond,
+    updateExistingBond,
+    deleteExistingBond,
+    bondsForDossier,
+  } = useBonds();
   const { isDossierPinned, pinDossier, removeDossierFromBoard } = useBoard();
   const [activeType, setActiveType] = useState<DossierType>(
     getDossierTypeFromKnowledgeType(initialType) ?? 'Character',
@@ -492,10 +501,24 @@ export function FieldKitDossiers({
   }
 
   async function handleSaveSections(dossier: Dossier, sections: DossierSection[]) {
+    const normalizedSections = normalizeSectionOrder(sections);
     const updatedDossier = await updateExistingDossier(dossier.id, {
       ...dossierToFormValues(dossier),
-      sections: normalizeSectionOrder(sections),
+      sections: normalizedSections,
     });
+    await executeThreadmarkBondReconciliation(
+      {
+        sourceDossier: updatedDossier,
+        sections: normalizedSections,
+        dossiers: safeDossiers,
+        bonds,
+      },
+      {
+        createBond: createNewBond,
+        updateBond: updateExistingBond,
+        deleteBond: deleteExistingBond,
+      },
+    );
     setSelectedDossier(updatedDossier);
     return updatedDossier;
   }

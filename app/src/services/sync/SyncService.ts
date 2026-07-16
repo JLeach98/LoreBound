@@ -729,7 +729,15 @@ function normalizeBondContent(record: {
   status?: string | null;
   notes?: string | null;
   evidence?: Record<string, unknown>;
+  origin?: string;
+  threadmark?: Record<string, unknown>;
 }) {
+  const evidence = {
+    ...(record.evidence ?? {}),
+    origin: record.origin,
+    threadmark: record.threadmark,
+  };
+
   return {
     id: record.id,
     caseId: normalizeOptional(record.case_id ?? record.caseId),
@@ -741,7 +749,7 @@ function normalizeBondContent(record: {
     targetLabel: normalizeOptional(record.target_label ?? record.targetLabel),
     status: normalizeOptional(record.status),
     notes: normalizeOptional(record.notes),
-    evidence: canonicalize(record.evidence ?? {}),
+    evidence: canonicalize(evidence),
   };
 }
 

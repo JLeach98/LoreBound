@@ -3,6 +3,26 @@ export const bondStatuses = ['Confirmed', 'Theory', 'Unknown', 'Disputed', 'Debu
 
 export type BondBehavior = (typeof bondBehaviors)[number];
 export type BondStatus = (typeof bondStatuses)[number];
+export type BondOrigin = 'manual' | 'threadmark';
+
+export type ThreadmarkBondRole = 'forward' | 'inverse';
+
+export type ThreadmarkBondMetadata = {
+  origin: 'threadmark';
+  ownerId: string;
+  sourceDossierId: string;
+  sourceSectionId: string;
+  relationshipKey: string;
+  targetDossierId: string;
+  occurrenceFingerprint: string;
+  generatedAt: string;
+  registryVersion: number;
+  parserVersion: number;
+  resolverVersion: number;
+  reconciliationVersion: number;
+  pairId: string;
+  role: ThreadmarkBondRole;
+};
 
 export type BondEvidence = {
   sourceTitle?: string;
@@ -25,9 +45,12 @@ export type Bond = {
   status?: BondStatus;
   notes?: string;
   evidence?: BondEvidence;
+  origin?: BondOrigin;
+  threadmark?: ThreadmarkBondMetadata;
 };
 
 export type BondFormValues = {
+  id?: string;
   sourceDossierId: string;
   targetDossierId: string;
   bondType: string;
@@ -37,6 +60,8 @@ export type BondFormValues = {
   status?: BondStatus;
   notes?: string;
   evidence?: BondEvidence;
+  origin?: BondOrigin;
+  threadmark?: ThreadmarkBondMetadata;
 };
 
 export type BondTypeDefinition = {

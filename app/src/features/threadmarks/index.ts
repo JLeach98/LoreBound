@@ -41,6 +41,12 @@ export {
   resolveThreadmarkOccurrence,
 } from './threadmarkResolver';
 export {
+  executeThreadmarkBondReconciliation,
+  getThreadmarkReconciliationDiagnostics,
+  isThreadmarkGeneratedBond,
+  planThreadmarkBondReconciliation,
+} from './threadmarkReconciliation';
+export {
   buildThreadmarkResolutionIndex,
   isThreadmarkResolutionCandidateAvailable,
   normalizeResolutionText,
@@ -119,6 +125,9 @@ export type {
 export { THREADMARK_AUTHORING_VERSION } from './threadmarkAuthoringTypes';
 export { THREADMARK_PARSER_VERSION } from './threadmarkParserTypes';
 export {
+  THREADMARK_RECONCILIATION_VERSION,
+} from './threadmarkReconciliationTypes';
+export {
   THREADMARK_REGISTRY_VERSION,
   threadmarkCategories,
 } from './threadmarkTypes';
@@ -129,3 +138,15 @@ export {
   normalizeThreadmarkAlias,
   validateThreadmarkRegistry,
 } from './threadmarkValidation';
+export type {
+  ThreadmarkDesiredBond,
+  ThreadmarkReconciliationAction,
+  ThreadmarkReconciliationConflict,
+  ThreadmarkReconciliationConflictCode,
+  ThreadmarkReconciliationDiagnostics,
+  ThreadmarkReconciliationExecutionResult,
+  ThreadmarkReconciliationExecutor,
+  ThreadmarkReconciliationPlan,
+  ThreadmarkReconciliationRequest,
+  ThreadmarkReconciliationSummary,
+} from './threadmarkReconciliationTypes';

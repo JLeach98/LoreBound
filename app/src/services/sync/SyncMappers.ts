@@ -1,5 +1,10 @@
 import type { BoardPin } from '../../features/cases/types/boardTypes';
-import type { Bond, BondEvidence } from '../../features/cases/types/bondTypes';
+import type {
+  Bond,
+  BondEvidence,
+  BondOrigin,
+  ThreadmarkBondMetadata,
+} from '../../features/cases/types/bondTypes';
 import type { LoreCase, UniverseType } from '../../features/cases/types/caseTypes';
 import type {
   CharacterStatus,
@@ -40,6 +45,28 @@ function removeEmptyValues(values: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''),
   );
+}
+
+function buildBondEvidencePayload(bond: Bond) {
+  return removeEmptyValues({
+    ...((bond.evidence ?? {}) as Record<string, unknown>),
+    origin: bond.origin,
+    threadmark: bond.threadmark,
+  });
+}
+
+function extractBondEvidencePayload(evidence: Record<string, unknown> | null | undefined) {
+  const {
+    origin,
+    threadmark,
+    ...evidenceValues
+  } = removeEmptyValues(evidence ?? {});
+
+  return {
+    evidence: removeEmptyValues(evidenceValues) as BondEvidence,
+    origin: origin as BondOrigin | undefined,
+    threadmark: threadmark as ThreadmarkBondMetadata | undefined,
+  };
 }
 
 const sectionKinds: DossierSectionKind[] = [
@@ -194,7 +221,7 @@ export function mapBondToCloudRow(bond: Bond, userId: string): CloudBondRow {
     target_label: optional(bond.targetLabel),
     status: optional(bond.status),
     notes: optional(bond.notes),
-    evidence: removeEmptyValues((bond.evidence ?? {}) as Record<string, unknown>),
+    evidence: buildBondEvidencePayload(bond),
     created_at: bond.dateCreated,
     updated_at: bond.dateModified,
   };
@@ -259,6 +286,8 @@ export function mapCloudDossierToLocal(row: CloudDossierRow): Dossier {
 }
 
 export function mapCloudBondToLocal(row: CloudBondRow): Bond {
+  const bondEvidence = extractBondEvidencePayload(row.evidence);
+
   return {
     id: row.id,
     caseId: row.case_id,
@@ -272,7 +301,9 @@ export function mapCloudBondToLocal(row: CloudBondRow): Bond {
     targetLabel: row.target_label ?? undefined,
     status: row.status as Bond['status'],
     notes: row.notes ?? undefined,
-    evidence: removeEmptyValues(row.evidence ?? {}) as BondEvidence,
+    evidence: Object.keys(bondEvidence.evidence).length ? bondEvidence.evidence : undefined,
+    origin: bondEvidence.origin,
+    threadmark: bondEvidence.threadmark,
   };
 }
 

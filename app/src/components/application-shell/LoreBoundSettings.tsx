@@ -9,6 +9,7 @@ import { loreBoundVersion } from '../../app/version';
 import {
   getThreadmarkAuthoringDiagnostics,
   getThreadmarkParserDiagnostics,
+  getThreadmarkReconciliationDiagnostics,
   getThreadmarkResolverDiagnostics,
   threadmarkRegistryDiagnostics,
 } from '../../features/threadmarks';
@@ -412,6 +413,7 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
   const threadmarkParserDiagnostics = getThreadmarkParserDiagnostics();
   const threadmarkAuthoringDiagnostics = getThreadmarkAuthoringDiagnostics();
   const threadmarkResolverDiagnostics = getThreadmarkResolverDiagnostics();
+  const threadmarkReconciliationDiagnostics = getThreadmarkReconciliationDiagnostics();
 
   const navigationItems = useMemo(
     () => [
@@ -1662,6 +1664,63 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Parser version used</dt>
                         <dd>{threadmarkResolverDiagnostics.parserVersionUsed}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Threadmark Reconciliation</summary>
+                    <dl>
+                      <div>
+                        <dt>Reconciliation version</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.reconciliationVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Reconciliation available</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.reconciliationAvailable ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Most recent source Dossier</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.mostRecentSourceDossierId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Most recent Section count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.mostRecentSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Resolved Threadmark count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.mostRecentResolvedThreadmarkCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Desired Bond count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.desiredBondCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated Bond count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedBondCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Create action count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.createActionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Update action count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.updateActionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Remove action count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.removeActionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Conflict count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.conflictCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Unresolved Threadmark count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.unresolvedThreadmarkCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Execution failure count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.executionFailureCount}</dd>
                       </div>
                     </dl>
                   </details>

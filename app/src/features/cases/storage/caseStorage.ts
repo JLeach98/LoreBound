@@ -248,6 +248,8 @@ function cleanBondValues(values: BondFormValues) {
     status: values.status,
     notes: cleanOptional(values.notes),
     evidence: cleanBondEvidence(values.evidence),
+    origin: values.origin,
+    threadmark: values.threadmark,
   };
 }
 
@@ -743,7 +745,7 @@ export async function createBond(caseId: string, values: BondFormValues) {
   await validateBond(caseId, values);
   const now = new Date().toISOString();
   const bond: Bond = {
-    id: createBondId(),
+    id: values.id ?? createBondId(),
     caseId,
     dateCreated: now,
     dateModified: now,
@@ -762,9 +764,12 @@ export async function updateBond(id: string, values: BondFormValues) {
   }
 
   await validateBond(existingBond.caseId, values, id);
+  const cleanedValues = cleanBondValues(values);
   const updatedBond: Bond = {
     ...existingBond,
-    ...cleanBondValues(values),
+    ...cleanedValues,
+    origin: cleanedValues.origin ?? existingBond.origin,
+    threadmark: cleanedValues.threadmark ?? existingBond.threadmark,
     dateModified: new Date().toISOString(),
   };
 

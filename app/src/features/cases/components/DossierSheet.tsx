@@ -1,7 +1,10 @@
 import { Button } from '../../../components/ui/Button';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createStableId } from '../../../lib/stableId';
-import { ThreadmarkAuthoringTextarea } from '../../threadmarks/ThreadmarkAuthoringTextarea';
+import {
+  executeThreadmarkBondReconciliation,
+  ThreadmarkAuthoringTextarea,
+} from '../../threadmarks';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
 import {
@@ -392,10 +395,24 @@ export function DossierSheet({
   }
 
   async function saveSectionChanges(nextSections: DossierSection[]) {
+    const normalizedSections = normalizeSectionOrder(nextSections);
     const updatedDossier = await updateExistingDossier(workingDossier.id, {
       ...dossierToFormValues(workingDossier),
-      sections: normalizeSectionOrder(nextSections),
+      sections: normalizedSections,
     });
+    await executeThreadmarkBondReconciliation(
+      {
+        sourceDossier: updatedDossier,
+        sections: normalizedSections,
+        dossiers,
+        bonds,
+      },
+      {
+        createBond: createNewBond,
+        updateBond: updateExistingBond,
+        deleteBond: deleteExistingBond,
+      },
+    );
     setWorkingDossier(updatedDossier);
   }
 
