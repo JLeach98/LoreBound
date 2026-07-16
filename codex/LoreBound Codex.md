@@ -1425,6 +1425,215 @@ and more like returning to their personal archive.
 The experience should encourage curiosity, reward exploration, and inspire users to continue
 expanding their investigations over months and years.
 
+### 4.15 The Natural First Principle
+
+One of LoreBound's defining philosophies is that investigators should never feel as though they are filling out a database.
+
+Whenever multiple interaction methods are possible, LoreBound should always prefer the one that feels most natural to the investigator while preserving the integrity of the underlying knowledge.
+
+Structured information exists to empower the investigation.
+
+Never to burden the investigator.
+
+Every feature introduced into LoreBound should first ask one question:
+
+> **Can this interaction feel natural before requiring a form?**
+
+If the answer is yes, the natural workflow should always take precedence.
+
+Forms, dialogs, editors, and configuration panels remain valuable tools, but they should supplement investigation rather than define it.
+
+LoreBound should always feel like a detective's notebook.
+
+Never like database software.
+
+---
+
+### 4.16 Threadmarks
+
+Threadmarks are LoreBound's native interaction language.
+
+They allow investigators to naturally create structured knowledge simply by writing.
+
+Rather than requiring users to manually create relationships, references, and other connections through dedicated forms, LoreBound interprets intentional Threadmarks and quietly constructs the underlying knowledge graph.
+
+**The investigator writes naturally.**
+
+**LoreBound builds the investigation.**
+
+Threadmarks are intended to become a universal interaction model throughout LoreBound and should be preferred whenever they provide a more intuitive workflow than traditional data-entry interfaces.
+
+### Design Philosophy
+
+Every Threadmark should satisfy the following principles:
+
+- Natural to write.
+- Easy to discover.
+- Consistent throughout LoreBound.
+- Human-readable.
+- Machine-interpretable.
+- Fully reversible.
+- Visually unobtrusive.
+
+Threadmarks exist to reduce friction.
+
+Never to introduce additional complexity.
+
+### Relationship Threadmarks
+
+The first implementation of Threadmarks replaces manual Bond creation.
+
+Example:
+
+```text
+@mother @Lilith Sorrengail
+@father @Asher Sorrengail
+@sister @Mira Sorrengail
+@brother @Brennan Sorrengail
+@romanticPartner @Xaden Riorson
+@bonded @Tairn
+@bonded @Andarna
+```
+
+The first Threadmark identifies the relationship.
+
+The second Threadmark identifies the referenced Dossier.
+
+Upon saving, LoreBound automatically creates the corresponding Bond while preserving the investigator's natural writing.
+
+### Reading vs. Writing
+
+Threadmarks exist only while editing.
+
+View Mode should never expose Threadmark syntax.
+
+Instead, LoreBound should render the resulting information naturally.
+
+Example:
+
+```text
+Bonds
+
+Mother
+Lilith Sorrengail
+
+Father
+Asher Sorrengail
+
+Brother
+Brennan Sorrengail
+
+Sister
+Mira Sorrengail
+
+Romantic Partner
+Xaden Riorson
+
+Bonded
+Tairn
+
+Bonded
+Andarna
+```
+
+The investigator experiences a polished dossier.
+
+LoreBound manages the structured knowledge behind the scenes.
+
+### Autocomplete
+
+Typing the `@` character invokes the Threadmark suggestion system.
+
+Investigators should never be expected to memorize Threadmarks.
+
+LoreBound should guide discovery through autocomplete, intelligent searching, and contextual suggestions.
+
+After selecting a Threadmark type, LoreBound should immediately search compatible Dossiers within the active Case.
+
+### The Relationship Registry
+
+Relationship Threadmarks are powered by an internal Relationship Registry.
+
+The registry defines:
+
+- Canonical relationship
+- Accepted aliases
+- Display name
+- Valid target Knowledge Types
+- Inverse relationship
+- Validation rules
+- Search behavior
+- Timeline behavior
+- Graph behavior
+
+The Relationship Registry exists entirely behind the scenes.
+
+Investigators should never interact with it directly.
+
+New relationship types should be introduced by extending the registry rather than redesigning the interaction model.
+
+### Automatic Inverse Relationships
+
+Whenever a relationship can be determined with certainty, LoreBound should automatically create its inverse.
+
+Examples include:
+
+- Mother ↔ Daughter / Son
+- Father ↔ Daughter / Son
+- Brother ↔ Sister / Brother
+- Sister ↔ Brother / Sister
+- Mentor ↔ Student
+- Leader ↔ Member
+- Bonded ↔ Bonded
+
+LoreBound should never invent uncertain information.
+
+Only relationships that can be confidently inferred should be generated automatically.
+
+### Future Expansion
+
+Relationship Threadmarks represent only the first generation of the Threadmark system.
+
+Future Threadmarks should eventually support:
+
+- Character references
+- Location references
+- Organization references
+- Event references
+- Timeline entries
+- Theory references
+- Evidence references
+- Investigation Board references
+- Cross-Dossier references
+
+Threadmarks should become the universal interaction language shared throughout LoreBound.
+
+### Artificial Intelligence
+
+Future AI capabilities may identify possible Threadmarks within ordinary prose and suggest structured relationships.
+
+However, LoreBound shall never automatically create structured knowledge from inferred intent.
+
+Artificial Intelligence may suggest.
+
+Only the investigator may confirm.
+
+Design Lock
+
+Threadmarks are a permanent architectural philosophy of LoreBound.
+
+Future interaction systems should extend Threadmarks rather than introduce competing methods of creating structured knowledge.
+
+Whenever practical, investigators should be able to write naturally while LoreBound quietly constructs the interconnected investigation beneath the surface.
+
+👨‍💻 Developer Notes
+
+Threadmarks are not merely a replacement for the Bond editor.
+
+They represent LoreBound's long-term interaction philosophy.
+
+Future systems should favor natural writing over manual data entry whenever doing so improves the investigative experience without sacrificing clarity, accuracy, or user control.
+
 🔒 Design Lock
 
 The philosophical principles in this chapter supersede individual feature decisions.
