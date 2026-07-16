@@ -13,6 +13,7 @@ import {
   readBondsByCaseId,
   updateBond,
 } from '../storage/caseStorage';
+import { markThreadmarkFieldKitBondRefreshCompleted } from '../../threadmarks';
 import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import type { Bond, BondFormValues } from '../types/bondTypes';
 import { useCases } from './CaseContext';
@@ -74,14 +75,17 @@ export function BondProvider({ children }: { children: ReactNode }) {
   }, [refreshBonds]);
 
   useEffect(() => {
-    function handleLocalArchiveRestored() {
+    function refreshStoredBonds() {
       void refreshBonds();
+      markThreadmarkFieldKitBondRefreshCompleted();
     }
 
-    window.addEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+    window.addEventListener('lorebound:local-archive-restored', refreshStoredBonds);
+    window.addEventListener('lorebound:synchronization-completed', refreshStoredBonds);
 
     return () => {
-      window.removeEventListener('lorebound:local-archive-restored', handleLocalArchiveRestored);
+      window.removeEventListener('lorebound:local-archive-restored', refreshStoredBonds);
+      window.removeEventListener('lorebound:synchronization-completed', refreshStoredBonds);
     };
   }, [refreshBonds]);
 

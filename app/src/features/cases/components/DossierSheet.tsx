@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createStableId } from '../../../lib/stableId';
 import {
   executeThreadmarkBondReconciliation,
+  isThreadmarkGeneratedBond,
   ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
 import { useBonds } from '../context/BondContext';
@@ -226,8 +227,23 @@ export function DossierSheet({
     [workingDossier],
   );
   const dossierBonds = useMemo(
-    () =>
-      [...bondsForDossier(workingDossier.id)].sort((left, right) => {
+    () => {
+      const relatedBonds = bondsForDossier(workingDossier.id);
+      return relatedBonds
+        .filter((bond) => {
+          if (!isThreadmarkGeneratedBond(bond) || bond.sourceDossierId === workingDossier.id) {
+            return true;
+          }
+
+          return !relatedBonds.some(
+            (candidate) =>
+              isThreadmarkGeneratedBond(candidate) &&
+              candidate.threadmark?.ownerId === bond.threadmark?.ownerId &&
+              candidate.threadmark?.pairId === bond.threadmark?.pairId &&
+              candidate.sourceDossierId === workingDossier.id,
+          );
+        })
+        .sort((left, right) => {
         const leftLabel = getBondLabelFromPerspective(left, workingDossier.id);
         const rightLabel = getBondLabelFromPerspective(right, workingDossier.id);
         const leftDossier = getConnectedDossier(left, workingDossier.id, dossiers);
@@ -236,7 +252,8 @@ export function DossierSheet({
         return `${leftLabel} ${leftDossier?.name ?? ''}`.localeCompare(
           `${rightLabel} ${rightDossier?.name ?? ''}`,
         );
-      }),
+      });
+    },
     [bondsForDossier, workingDossier.id, bonds, dossiers],
   );
   const hasImage = Boolean(workingDossier.coverImage);
@@ -400,6 +417,7 @@ export function DossierSheet({
       ...dossierToFormValues(workingDossier),
       sections: normalizedSections,
     });
+    setWorkingDossier(updatedDossier);
     await executeThreadmarkBondReconciliation(
       {
         sourceDossier: updatedDossier,
@@ -413,7 +431,6 @@ export function DossierSheet({
         deleteBond: deleteExistingBond,
       },
     );
-    setWorkingDossier(updatedDossier);
   }
 
   function enterSectionEditMode() {
@@ -423,12 +440,22 @@ export function DossierSheet({
   }
 
   async function saveSectionDraft() {
-    await saveSectionChanges(draftSections);
-    setIsEditingSections(false);
-    setIsAddSectionOpen(false);
-    setRenamingSectionId(null);
-    setRemovingSection(null);
-    setSectionNotice('Investigation Updated');
+    try {
+      await saveSectionChanges(draftSections);
+      setIsEditingSections(false);
+      setIsAddSectionOpen(false);
+      setRenamingSectionId(null);
+      setRemovingSection(null);
+      setSectionNotice('Investigation Updated');
+    } catch {
+      setIsEditingSections(false);
+      setIsAddSectionOpen(false);
+      setRenamingSectionId(null);
+      setRemovingSection(null);
+      setSectionNotice(
+        'Relationship Update Incomplete. LoreBound saved the Dossier, but one or more Threadmark relationships could not be completed.',
+      );
+    }
   }
 
   function cancelSectionDraft() {
@@ -947,6 +974,7 @@ export function DossierSheet({
                   const connectedDossier = getConnectedDossier(bond, workingDossier.id, dossiers);
                   const label = getBondLabelFromPerspective(bond, workingDossier.id);
                   const evidenceCount = getBondEvidenceCount(bond);
+                  const isGeneratedBond = isThreadmarkGeneratedBond(bond);
 
                   return (
                     <li key={bond.id} className="dossier-bonds__item">
@@ -983,7 +1011,7 @@ export function DossierSheet({
                           </span>
                         </div>
                       )}
-                      {isEditingSections ? (
+                      {isEditingSections && !isGeneratedBond ? (
                         <div className="dossier-bonds__actions">
                           <button
                             type="button"

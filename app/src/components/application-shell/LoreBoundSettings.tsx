@@ -1695,12 +1695,28 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                         <dd>{threadmarkReconciliationDiagnostics.desiredBondCount}</dd>
                       </div>
                       <div>
+                        <dt>Desired forward count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.desiredForwardCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Desired inverse count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.desiredInverseCount}</dd>
+                      </div>
+                      <div>
                         <dt>Generated Bond count</dt>
                         <dd>{threadmarkReconciliationDiagnostics.generatedBondCount}</dd>
                       </div>
                       <div>
                         <dt>Create action count</dt>
                         <dd>{threadmarkReconciliationDiagnostics.createActionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Created forward count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.createdForwardCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Created inverse count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.createdInverseCount}</dd>
                       </div>
                       <div>
                         <dt>Update action count</dt>
@@ -1721,6 +1737,82 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Execution failure count</dt>
                         <dd>{threadmarkReconciliationDiagnostics.executionFailureCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Missing forward count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.missingForwardCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Missing inverse count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.missingInverseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Complete pair count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.completePairCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Incomplete pair count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.incompletePairCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Contextual inverse count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.contextualInverseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Neutral inverse fallback count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.neutralInverseFallbackCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Suggested inverse count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.suggestedInverseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Inverse skipped count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.inverseSkippedCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Pair integrity failure count</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.pairIntegrityFailureCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated Bonds pending upload</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedBondsPendingUpload}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated forward Bonds pending upload</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedForwardBondsPendingUpload}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated inverse Bonds pending upload</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedInverseBondsPendingUpload}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated Bonds uploaded</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedBondsUploaded}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated Bonds verified in cloud</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedBondsVerifiedInCloud}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated Bonds retrieved</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedBondsRetrieved}</dd>
+                      </div>
+                      <div>
+                        <dt>Generated metadata preserved</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.generatedMetadataPreserved ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Last failed Bond ID</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.lastFailedBondId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Last failed stage</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.lastFailedStage}</dd>
+                      </div>
+                      <div>
+                        <dt>Field Kit Bond refresh completed</dt>
+                        <dd>{threadmarkReconciliationDiagnostics.fieldKitBondRefreshCompleted ? 'Yes' : 'No'}</dd>
                       </div>
                     </dl>
                   </details>

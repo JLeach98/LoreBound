@@ -15,7 +15,9 @@ export type ThreadmarkReconciliationConflictCode =
   | 'generated-bond-id-conflict'
   | 'unsupported-threadmark'
   | 'unresolved-threadmark'
-  | 'inverse-context-required';
+  | 'inverse-context-required'
+  | 'suggested-inverse-skipped'
+  | 'inverse-skipped';
 
 export type ThreadmarkReconciliationConflict = Readonly<{
   code: ThreadmarkReconciliationConflictCode;
@@ -79,6 +81,29 @@ export type ThreadmarkReconciliationDiagnostics = Readonly<{
   conflictCount: number;
   unresolvedThreadmarkCount: number;
   executionFailureCount: number;
+  desiredForwardCount: number;
+  desiredInverseCount: number;
+  createdForwardCount: number;
+  createdInverseCount: number;
+  missingForwardCount: number;
+  missingInverseCount: number;
+  completePairCount: number;
+  incompletePairCount: number;
+  contextualInverseCount: number;
+  neutralInverseFallbackCount: number;
+  suggestedInverseCount: number;
+  inverseSkippedCount: number;
+  pairIntegrityFailureCount: number;
+  generatedBondsPendingUpload: number;
+  generatedForwardBondsPendingUpload: number;
+  generatedInverseBondsPendingUpload: number;
+  generatedBondsUploaded: number;
+  generatedBondsVerifiedInCloud: number;
+  generatedBondsRetrieved: number;
+  generatedMetadataPreserved: boolean;
+  lastFailedBondId: string | null;
+  lastFailedStage: string;
+  fieldKitBondRefreshCompleted: boolean;
 }>;
 
 export type ThreadmarkReconciliationRequest = Readonly<{
@@ -100,3 +125,5 @@ export type ThreadmarkReconciliationExecutionResult = Readonly<{
   updated: readonly Bond[];
   removed: readonly Bond[];
 }>;
+
+export type ThreadmarkPairIntegrityState = 'complete' | 'missing-forward' | 'missing-inverse' | 'missing-both';

@@ -3,6 +3,7 @@ import { Button } from '../../../components/ui/Button';
 import { createStableId } from '../../../lib/stableId';
 import {
   executeThreadmarkBondReconciliation,
+  isThreadmarkGeneratedBond,
   ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
@@ -506,6 +507,7 @@ export function FieldKitDossiers({
       ...dossierToFormValues(dossier),
       sections: normalizedSections,
     });
+    setSelectedDossier(updatedDossier);
     await executeThreadmarkBondReconciliation(
       {
         sourceDossier: updatedDossier,
@@ -519,7 +521,6 @@ export function FieldKitDossiers({
         deleteBond: deleteExistingBond,
       },
     );
-    setSelectedDossier(updatedDossier);
     return updatedDossier;
   }
 
@@ -843,7 +844,21 @@ function FieldKitDossierView({
   }, [availableSectionTemplates]);
   const displayBonds = useMemo(
     () =>
-      [...bonds].sort((left, right) => {
+      bonds
+        .filter((bond) => {
+          if (!isThreadmarkGeneratedBond(bond) || bond.sourceDossierId === dossier.id) {
+            return true;
+          }
+
+          return !bonds.some(
+            (candidate) =>
+              isThreadmarkGeneratedBond(candidate) &&
+              candidate.threadmark?.ownerId === bond.threadmark?.ownerId &&
+              candidate.threadmark?.pairId === bond.threadmark?.pairId &&
+              candidate.sourceDossierId === dossier.id,
+          );
+        })
+        .sort((left, right) => {
         const leftDossier = getConnectedDossier(left);
         const rightDossier = getConnectedDossier(right);
 
@@ -1054,8 +1069,12 @@ function FieldKitDossierView({
       setSectionNotice('Investigation Updated');
       onDoneEditing();
     } catch {
-      setLastSaveStatus('Failed');
-      setSectionNotice('Save failed. Try again.');
+      setMobileChangeDetected(true);
+      setLastSaveStatus('Relationship Update Incomplete');
+      setSectionNotice(
+        'Relationship Update Incomplete. LoreBound saved the Dossier, but one or more Threadmark relationships could not be completed.',
+      );
+      onDoneEditing();
     } finally {
       setIsSavingSections(false);
     }
@@ -1259,6 +1278,7 @@ function FieldKitDossierView({
         {displayBonds.map((bond) => {
           const connectedDossier = getConnectedDossier(bond);
           const bondLabel = getBondLabel(bond, dossier.id);
+          const isGeneratedBond = isThreadmarkGeneratedBond(bond);
 
           return (
             <article key={bond.id} className="field-kit-bond-card">
@@ -1290,7 +1310,7 @@ function FieldKitDossierView({
                   </span>
                 </div>
               )}
-              {isEditing ? (
+              {isEditing && !isGeneratedBond ? (
                 <div className="field-kit-inline-actions">
                   <Button
                     type="button"

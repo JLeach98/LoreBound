@@ -716,6 +716,7 @@ async function validateBond(caseId: string, values: BondFormValues, currentBondI
     throw new Error('Bonds cannot connect Dossiers from different Cases.');
   }
 
+  const incomingThreadmark = values.threadmark;
   const labels = [
     cleanOptional(values.sourceLabel) ?? '',
     cleanOptional(values.targetLabel) ?? '',
@@ -727,12 +728,19 @@ async function validateBond(caseId: string, values: BondFormValues, currentBondI
       (bond.sourceDossierId === values.targetDossierId &&
         bond.targetDossierId === values.sourceDossierId);
     const bondLabels = [bond.sourceLabel ?? '', bond.targetLabel ?? ''].join('|');
+    const isThreadmarkPairMember =
+      incomingThreadmark?.origin === 'threadmark' &&
+      bond.threadmark?.origin === 'threadmark' &&
+      incomingThreadmark.ownerId === bond.threadmark.ownerId &&
+      incomingThreadmark.pairId === bond.threadmark.pairId &&
+      incomingThreadmark.role !== bond.threadmark.role;
 
     return (
       bond.id !== currentBondId &&
       samePair &&
       bond.bondType === values.bondType &&
-      bondLabels === labels
+      bondLabels === labels &&
+      !isThreadmarkPairMember
     );
   });
 

@@ -44,6 +44,7 @@ export {
   executeThreadmarkBondReconciliation,
   getThreadmarkReconciliationDiagnostics,
   isThreadmarkGeneratedBond,
+  markThreadmarkFieldKitBondRefreshCompleted,
   planThreadmarkBondReconciliation,
 } from './threadmarkReconciliation';
 export {

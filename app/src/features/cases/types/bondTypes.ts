@@ -13,6 +13,8 @@ export type ThreadmarkBondMetadata = {
   sourceDossierId: string;
   sourceSectionId: string;
   relationshipKey: string;
+  sourceRelationshipKey?: string;
+  effectiveRelationshipKey?: string;
   targetDossierId: string;
   occurrenceFingerprint: string;
   generatedAt: string;
@@ -78,6 +80,8 @@ export const builtInBondTypes: BondTypeDefinition[] = [
   { name: 'Daughter / Parent', behavior: 'Inverse', sourceLabel: 'Daughter', targetLabel: 'Parent' },
   { name: 'Son / Parent', behavior: 'Inverse', sourceLabel: 'Son', targetLabel: 'Parent' },
   { name: 'Child / Parent', behavior: 'Inverse', sourceLabel: 'Child', targetLabel: 'Parent' },
+  { name: 'Sister / Sibling', behavior: 'Inverse', sourceLabel: 'Sister', targetLabel: 'Sibling' },
+  { name: 'Brother / Sibling', behavior: 'Inverse', sourceLabel: 'Brother', targetLabel: 'Sibling' },
   { name: 'Sibling', behavior: 'Symmetric', sourceLabel: 'Sibling' },
   { name: 'Ally', behavior: 'Symmetric', sourceLabel: 'Ally' },
   { name: 'Rival', behavior: 'Symmetric', sourceLabel: 'Rival' },

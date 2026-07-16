@@ -8,6 +8,8 @@ const bondTypeThreadmarkPairs = [
   ['Daughter / Parent', 'daughter'],
   ['Son / Parent', 'son'],
   ['Child / Parent', 'child'],
+  ['Sister / Sibling', 'sister'],
+  ['Brother / Sibling', 'brother'],
   ['Sibling', 'sibling'],
   ['Ally', 'ally'],
   ['Rival', 'rival'],

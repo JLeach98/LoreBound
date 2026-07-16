@@ -6,7 +6,7 @@ import {
   type ThreadmarkBondRole,
 } from '../cases/types/bondTypes';
 import type { Dossier, DossierSection, DossierSectionField } from '../cases/types/dossierTypes';
-import { getThreadmarkDefinition } from './threadmarkSelectors';
+import { getThreadmarkDefinition, resolveInverseThreadmark } from './threadmarkSelectors';
 import { threadmarkKeyToBondType } from './bondThreadmarkCompatibility';
 import { resolveThreadmarkDocument } from './threadmarkResolver';
 import { canProceedToBondIntegration } from './threadmarkResolutionValidation';
@@ -38,10 +38,36 @@ const defaultReconciliationDiagnostics: ThreadmarkReconciliationDiagnostics = Ob
   conflictCount: 0,
   unresolvedThreadmarkCount: 0,
   executionFailureCount: 0,
+  desiredForwardCount: 0,
+  desiredInverseCount: 0,
+  createdForwardCount: 0,
+  createdInverseCount: 0,
+  missingForwardCount: 0,
+  missingInverseCount: 0,
+  completePairCount: 0,
+  incompletePairCount: 0,
+  contextualInverseCount: 0,
+  neutralInverseFallbackCount: 0,
+  suggestedInverseCount: 0,
+  inverseSkippedCount: 0,
+  pairIntegrityFailureCount: 0,
+  generatedBondsPendingUpload: 0,
+  generatedForwardBondsPendingUpload: 0,
+  generatedInverseBondsPendingUpload: 0,
+  generatedBondsUploaded: 0,
+  generatedBondsVerifiedInCloud: 0,
+  generatedBondsRetrieved: 0,
+  generatedMetadataPreserved: true,
+  lastFailedBondId: null,
+  lastFailedStage: 'None',
+  fieldKitBondRefreshCompleted: false,
 });
 
 let latestReconciliationDiagnostics = defaultReconciliationDiagnostics;
 let executionFailureCount = 0;
+let lastFailedBondId: string | null = null;
+let lastFailedStage = 'None';
+let fieldKitBondRefreshCompleted = false;
 
 function deterministicHash(value: string) {
   let hash = 2166136261;
@@ -169,6 +195,12 @@ function createDesiredBond({
   ordinal,
   role,
   generatedAt,
+  sourceRelationshipKey,
+  effectiveRelationshipKey,
+  effectiveSourceDossierId,
+  effectiveTargetDossierId,
+  ownerId,
+  pairId,
 }: {
   sourceDossier: Dossier;
   section: DossierSection;
@@ -177,17 +209,26 @@ function createDesiredBond({
   ordinal: number;
   role: ThreadmarkBondRole;
   generatedAt: string;
+  sourceRelationshipKey?: string;
+  effectiveRelationshipKey?: string;
+  effectiveSourceDossierId?: string;
+  effectiveTargetDossierId?: string;
+  ownerId?: string;
+  pairId?: string;
 }): ThreadmarkDesiredBond | ThreadmarkReconciliationConflict {
-  const relationshipKey = result.relationshipKey;
-  const targetDossierId = result.targetDossierId;
+  const originalRelationshipKey = result.relationshipKey;
+  const originalTargetDossierId = result.targetDossierId;
+  const relationshipKey = effectiveRelationshipKey ?? originalRelationshipKey;
+  const bondSourceDossierId = effectiveSourceDossierId ?? sourceDossier.id;
+  const bondTargetDossierId = effectiveTargetDossierId ?? originalTargetDossierId;
 
-  if (!relationshipKey || !targetDossierId) {
+  if (!originalRelationshipKey || !relationshipKey || !originalTargetDossierId || !bondTargetDossierId) {
     return Object.freeze({
       code: 'unresolved-threadmark',
       severity: 'warning',
       message: 'Threadmark could not be resolved into a Bond.',
       sourceDossierId: sourceDossier.id,
-      relationshipKey,
+      relationshipKey: originalRelationshipKey,
     });
   }
 
@@ -200,44 +241,46 @@ function createDesiredBond({
       severity: 'warning',
       message: 'Threadmark has no compatible Bond Type mapping.',
       sourceDossierId: sourceDossier.id,
-      targetDossierId,
+      targetDossierId: originalTargetDossierId,
       relationshipKey,
     });
   }
 
-  const ownerId = [
+  const threadmarkOwnerId = ownerId ?? [
     'threadmark',
     sourceDossier.id,
     section.id,
     field?.id ?? 'body',
-    relationshipKey,
-    targetDossierId,
+    originalRelationshipKey,
+    originalTargetDossierId,
     ordinal,
   ].join(':');
-  const pairId = stableThreadmarkId(
+  const threadmarkPairId = pairId ?? stableThreadmarkId(
     'threadmark-pair',
-    `${sourceDossier.id}:${targetDossierId}:${relationshipKey}:${ownerId}`,
+    `${sourceDossier.id}:${originalTargetDossierId}:${originalRelationshipKey}:${threadmarkOwnerId}`,
   );
   const metadata: ThreadmarkBondMetadata = {
     origin: 'threadmark',
-    ownerId,
+    ownerId: threadmarkOwnerId,
     sourceDossierId: sourceDossier.id,
     sourceSectionId: section.id,
-    relationshipKey,
-    targetDossierId,
+    relationshipKey: sourceRelationshipKey ?? originalRelationshipKey,
+    sourceRelationshipKey: sourceRelationshipKey ?? originalRelationshipKey,
+    effectiveRelationshipKey: relationshipKey,
+    targetDossierId: originalTargetDossierId,
     occurrenceFingerprint: occurrenceFingerprint({ section, field, result }),
     generatedAt,
     registryVersion: THREADMARK_REGISTRY_VERSION,
     parserVersion: result.parserVersion || THREADMARK_PARSER_VERSION,
     resolverVersion: result.resolverVersion || THREADMARK_RESOLVER_VERSION,
     reconciliationVersion: THREADMARK_RECONCILIATION_VERSION,
-    pairId,
+    pairId: threadmarkPairId,
     role,
   };
   const formValues: BondFormValues = {
-    id: stableThreadmarkId('bond-threadmark', `${ownerId}:${role}`),
-    sourceDossierId: sourceDossier.id,
-    targetDossierId,
+    id: stableThreadmarkId('bond-threadmark', `${threadmarkOwnerId}:${role}`),
+    sourceDossierId: bondSourceDossierId,
+    targetDossierId: bondTargetDossierId,
     bondType: bondDefinition.name,
     bondBehavior: bondDefinition.behavior,
     sourceLabel: bondDefinition.sourceLabel,
@@ -249,13 +292,106 @@ function createDesiredBond({
 
   return Object.freeze({
     id: formValues.id as string,
-    ownerId,
-    pairId,
+    ownerId: threadmarkOwnerId,
+    pairId: threadmarkPairId,
     role,
     formValues,
     metadata,
     resolution: result,
   });
+}
+
+function findDossier(dossiers: readonly Dossier[], dossierId?: string) {
+  return dossiers.find((dossier) => dossier.id === dossierId) ?? null;
+}
+
+function getInverseRelationshipKey({
+  result,
+  sourceDossier,
+  targetDossier,
+}: {
+  result: ThreadmarkResolutionResult;
+  sourceDossier: Dossier;
+  targetDossier: Dossier | null;
+}) {
+  const relationshipKey = result.relationshipKey;
+  const definition = relationshipKey ? getThreadmarkDefinition(relationshipKey) : undefined;
+
+  if (!definition) {
+    return {
+      key: undefined,
+      mode: 'none' as const,
+      conflict: Object.freeze({
+        code: 'inverse-skipped' as const,
+        severity: 'warning' as const,
+        message: 'Inverse relationship was skipped because the Threadmark definition is unavailable.',
+        sourceDossierId: sourceDossier.id,
+        targetDossierId: result.targetDossierId,
+        relationshipKey,
+      }),
+    };
+  }
+
+  if (definition.reciprocalBehavior === 'none') {
+    return { key: undefined, mode: 'none' as const };
+  }
+
+  if (definition.reciprocalBehavior === 'suggested') {
+    return {
+      key: undefined,
+      mode: 'suggested' as const,
+      conflict: Object.freeze({
+        code: 'suggested-inverse-skipped' as const,
+        severity: 'info' as const,
+        message: 'Suggested inverse relationship was not created automatically.',
+        sourceDossierId: sourceDossier.id,
+        targetDossierId: result.targetDossierId,
+        relationshipKey,
+      }),
+    };
+  }
+
+  const inverseResolution = resolveInverseThreadmark({
+    relationshipKey: definition.key,
+    sourceDossier,
+    targetDossier,
+  });
+
+  if (inverseResolution.status === 'resolved' && inverseResolution.key) {
+    return { key: inverseResolution.key, mode: 'automatic' as const };
+  }
+
+  if (
+    definition.reciprocalBehavior === 'contextual' &&
+    inverseResolution.status === 'context-required' &&
+    inverseResolution.key
+  ) {
+    return {
+      key: inverseResolution.key,
+      mode: 'contextual-neutral' as const,
+      conflict: Object.freeze({
+        code: 'inverse-context-required' as const,
+        severity: 'info' as const,
+        message: 'Contextual inverse used the Registry neutral inverse fallback.',
+        sourceDossierId: sourceDossier.id,
+        targetDossierId: result.targetDossierId,
+        relationshipKey,
+      }),
+    };
+  }
+
+  return {
+    key: undefined,
+    mode: 'skipped' as const,
+    conflict: Object.freeze({
+      code: 'inverse-skipped' as const,
+      severity: 'info' as const,
+      message: inverseResolution.reason ?? 'No inverse Bond was created for this Threadmark.',
+      sourceDossierId: sourceDossier.id,
+      targetDossierId: result.targetDossierId,
+      relationshipKey,
+    }),
+  };
 }
 
 function collectDesiredBonds(request: ThreadmarkReconciliationRequest, generatedAt: string) {
@@ -264,6 +400,10 @@ function collectDesiredBonds(request: ThreadmarkReconciliationRequest, generated
   const occurrenceCounts = new Map<string, number>();
   let unresolvedCount = 0;
   let resolvedCount = 0;
+  let contextualInverseCount = 0;
+  let neutralInverseFallbackCount = 0;
+  let suggestedInverseCount = 0;
+  let inverseSkippedCount = 0;
 
   request.sections.forEach((section) => {
     getSectionTexts(section).forEach(({ text, field }) => {
@@ -309,6 +449,50 @@ function collectDesiredBonds(request: ThreadmarkReconciliationRequest, generated
 
         if ('formValues' in desiredBond) {
           desired.push(desiredBond);
+
+          const targetDossier = findDossier(request.dossiers, result.targetDossierId);
+          const inverse = getInverseRelationshipKey({
+            result,
+            sourceDossier: request.sourceDossier,
+            targetDossier,
+          });
+
+          if (inverse.mode === 'contextual-neutral') {
+            contextualInverseCount += 1;
+            neutralInverseFallbackCount += 1;
+          } else if (inverse.mode === 'suggested') {
+            suggestedInverseCount += 1;
+          } else if (inverse.mode === 'skipped' || inverse.mode === 'none') {
+            inverseSkippedCount += 1;
+          }
+
+          if (inverse.conflict) {
+            conflicts.push(inverse.conflict);
+          }
+
+          if (inverse.key && result.targetDossierId) {
+            const inverseDesiredBond = createDesiredBond({
+              sourceDossier: request.sourceDossier,
+              section,
+              field,
+              result,
+              ordinal,
+              role: 'inverse',
+              generatedAt,
+              sourceRelationshipKey: result.relationshipKey,
+              effectiveRelationshipKey: inverse.key,
+              effectiveSourceDossierId: result.targetDossierId,
+              effectiveTargetDossierId: request.sourceDossier.id,
+              ownerId: desiredBond.ownerId,
+              pairId: desiredBond.pairId,
+            });
+
+            if ('formValues' in inverseDesiredBond) {
+              desired.push(inverseDesiredBond);
+            } else {
+              conflicts.push(inverseDesiredBond);
+            }
+          }
         } else {
           conflicts.push(desiredBond);
         }
@@ -316,7 +500,16 @@ function collectDesiredBonds(request: ThreadmarkReconciliationRequest, generated
     });
   });
 
-  return { desired, conflicts, unresolvedCount, resolvedCount };
+  return {
+    desired,
+    conflicts,
+    unresolvedCount,
+    resolvedCount,
+    contextualInverseCount,
+    neutralInverseFallbackCount,
+    suggestedInverseCount,
+    inverseSkippedCount,
+  };
 }
 
 function withGeneratedAt(desired: ThreadmarkDesiredBond, generatedAt: string) {
@@ -332,7 +525,72 @@ function withGeneratedAt(desired: ThreadmarkDesiredBond, generatedAt: string) {
   });
 }
 
-function updateDiagnostics(plan: ThreadmarkReconciliationPlan, sectionCount: number, resolvedCount: number) {
+function getPairIntegrity(plan: ThreadmarkReconciliationPlan) {
+  const desiredPairs = new Map<string, { forward: boolean; inverse: boolean }>();
+  const generatedPairs = new Map<string, { forward: boolean; inverse: boolean }>();
+
+  plan.desired.forEach((desired) => {
+    const pair = desiredPairs.get(desired.pairId) ?? { forward: false, inverse: false };
+    pair[desired.role] = true;
+    desiredPairs.set(desired.pairId, pair);
+  });
+
+  plan.generated.forEach((bond) => {
+    if (!bond.threadmark?.pairId) {
+      return;
+    }
+
+    const pair = generatedPairs.get(bond.threadmark.pairId) ?? { forward: false, inverse: false };
+    pair[bond.threadmark.role] = true;
+    generatedPairs.set(bond.threadmark.pairId, pair);
+  });
+
+  let completePairCount = 0;
+  let incompletePairCount = 0;
+  let missingForwardCount = 0;
+  let missingInverseCount = 0;
+
+  desiredPairs.forEach((desiredPair, pairId) => {
+    const generatedPair = generatedPairs.get(pairId) ?? { forward: false, inverse: false };
+    const forwardComplete = !desiredPair.forward || generatedPair.forward;
+    const inverseComplete = !desiredPair.inverse || generatedPair.inverse;
+
+    if (forwardComplete && inverseComplete) {
+      completePairCount += 1;
+      return;
+    }
+
+    incompletePairCount += 1;
+
+    if (!forwardComplete) {
+      missingForwardCount += 1;
+    }
+
+    if (!inverseComplete) {
+      missingInverseCount += 1;
+    }
+  });
+
+  return {
+    completePairCount,
+    incompletePairCount,
+    missingForwardCount,
+    missingInverseCount,
+  };
+}
+
+function updateDiagnostics(
+  plan: ThreadmarkReconciliationPlan,
+  sectionCount: number,
+  resolvedCount: number,
+  collected?: ReturnType<typeof collectDesiredBonds>,
+) {
+  const pairIntegrity = getPairIntegrity(plan);
+  const desiredForwardCount = plan.desired.filter((desired) => desired.role === 'forward').length;
+  const desiredInverseCount = plan.desired.filter((desired) => desired.role === 'inverse').length;
+  const createdForwardCount = plan.create.filter((desired) => desired.role === 'forward').length;
+  const createdInverseCount = plan.create.filter((desired) => desired.role === 'inverse').length;
+
   latestReconciliationDiagnostics = Object.freeze({
     reconciliationVersion: THREADMARK_RECONCILIATION_VERSION,
     reconciliationAvailable: true,
@@ -347,6 +605,35 @@ function updateDiagnostics(plan: ThreadmarkReconciliationPlan, sectionCount: num
     conflictCount: plan.conflicts.length,
     unresolvedThreadmarkCount: plan.summary.unresolvedCount,
     executionFailureCount,
+    desiredForwardCount,
+    desiredInverseCount,
+    createdForwardCount,
+    createdInverseCount,
+    missingForwardCount: pairIntegrity.missingForwardCount,
+    missingInverseCount: pairIntegrity.missingInverseCount,
+    completePairCount: pairIntegrity.completePairCount,
+    incompletePairCount: pairIntegrity.incompletePairCount,
+    contextualInverseCount: collected?.contextualInverseCount ?? latestReconciliationDiagnostics.contextualInverseCount,
+    neutralInverseFallbackCount:
+      collected?.neutralInverseFallbackCount ?? latestReconciliationDiagnostics.neutralInverseFallbackCount,
+    suggestedInverseCount: collected?.suggestedInverseCount ?? latestReconciliationDiagnostics.suggestedInverseCount,
+    inverseSkippedCount: collected?.inverseSkippedCount ?? latestReconciliationDiagnostics.inverseSkippedCount,
+    pairIntegrityFailureCount: pairIntegrity.incompletePairCount,
+    generatedBondsPendingUpload:
+      plan.create.length + plan.update.length,
+    generatedForwardBondsPendingUpload:
+      plan.create.filter((desired) => desired.role === 'forward').length +
+      plan.update.filter((entry) => entry.desired.role === 'forward').length,
+    generatedInverseBondsPendingUpload:
+      plan.create.filter((desired) => desired.role === 'inverse').length +
+      plan.update.filter((entry) => entry.desired.role === 'inverse').length,
+    generatedBondsUploaded: 0,
+    generatedBondsVerifiedInCloud: 0,
+    generatedBondsRetrieved: 0,
+    generatedMetadataPreserved: true,
+    lastFailedBondId,
+    lastFailedStage,
+    fieldKitBondRefreshCompleted,
   });
 }
 
@@ -455,7 +742,7 @@ export function planThreadmarkBondReconciliation(
     },
   });
 
-  updateDiagnostics(plan, request.sections.length, collected.resolvedCount);
+  updateDiagnostics(plan, request.sections.length, collected.resolvedCount, collected);
   return plan;
 }
 
@@ -470,16 +757,34 @@ export async function executeThreadmarkBondReconciliation(
 
   try {
     for (const desired of plan.create) {
-      created.push(await executor.createBond(desired.formValues));
+      try {
+        created.push(await executor.createBond(desired.formValues));
+      } catch (error) {
+        lastFailedBondId = desired.id;
+        lastFailedStage = `create-${desired.role}`;
+        throw error;
+      }
     }
 
     for (const update of plan.update) {
-      updated.push(await executor.updateBond(update.bond.id, update.desired.formValues));
+      try {
+        updated.push(await executor.updateBond(update.bond.id, update.desired.formValues));
+      } catch (error) {
+        lastFailedBondId = update.bond.id;
+        lastFailedStage = `update-${update.desired.role}`;
+        throw error;
+      }
     }
 
     for (const bond of plan.remove) {
-      await executor.deleteBond(bond.id);
-      removed.push(bond);
+      try {
+        await executor.deleteBond(bond.id);
+        removed.push(bond);
+      } catch (error) {
+        lastFailedBondId = bond.id;
+        lastFailedStage = `remove-${bond.threadmark?.role ?? 'unknown'}`;
+        throw error;
+      }
     }
   } catch (error) {
     executionFailureCount += 1;
@@ -487,6 +792,8 @@ export async function executeThreadmarkBondReconciliation(
     throw error;
   }
 
+  lastFailedBondId = null;
+  lastFailedStage = 'None';
   updateDiagnostics(plan, request.sections.length, plan.summary.desiredCount);
 
   return Object.freeze({
@@ -499,4 +806,12 @@ export async function executeThreadmarkBondReconciliation(
 
 export function getThreadmarkReconciliationDiagnostics() {
   return latestReconciliationDiagnostics;
+}
+
+export function markThreadmarkFieldKitBondRefreshCompleted() {
+  fieldKitBondRefreshCompleted = true;
+  latestReconciliationDiagnostics = Object.freeze({
+    ...latestReconciliationDiagnostics,
+    fieldKitBondRefreshCompleted,
+  });
 }
