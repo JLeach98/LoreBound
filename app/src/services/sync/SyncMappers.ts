@@ -4,6 +4,9 @@ import type { LoreCase, UniverseType } from '../../features/cases/types/caseType
 import type {
   CharacterStatus,
   Dossier,
+  DossierSection,
+  DossierSectionField,
+  DossierSectionKind,
   DossierType,
   TheoryConfidence,
   TheoryStatus,
@@ -39,6 +42,101 @@ function removeEmptyValues(values: Record<string, unknown>) {
   );
 }
 
+const sectionKinds: DossierSectionKind[] = [
+  'identity',
+  'overview',
+  'notes',
+  'relationships',
+  'timeline',
+  'gallery',
+  'evidence',
+  'custom',
+];
+
+function normalizeSectionFieldForSync(field: unknown, index: number): DossierSectionField | null {
+  if (!field || typeof field !== 'object') {
+    return null;
+  }
+
+  const value = field as Partial<DossierSectionField>;
+  const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim() : `field-${index}`;
+  const label = typeof value.label === 'string' ? value.label : '';
+  const fieldValue = typeof value.value === 'string' ? value.value : '';
+
+  return {
+    id,
+    label,
+    value: fieldValue,
+  };
+}
+
+export function normalizeDossierSectionsForSync(sections: unknown): DossierSection[] | undefined {
+  if (!Array.isArray(sections)) {
+    return undefined;
+  }
+
+  const normalizedSections = sections
+    .map((section, index) => {
+      if (!section || typeof section !== 'object') {
+        return null;
+      }
+
+      const value = section as Partial<DossierSection>;
+      const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim() : null;
+      const title = typeof value.title === 'string' ? value.title : null;
+      const kind = sectionKinds.includes(value.kind as DossierSectionKind)
+        ? value.kind as DossierSectionKind
+        : 'custom';
+
+      if (!id || title === null) {
+        return null;
+      }
+
+      const fields = Array.isArray(value.fields)
+        ? value.fields
+            .map((field, fieldIndex) => normalizeSectionFieldForSync(field, fieldIndex))
+            .filter((field): field is DossierSectionField => Boolean(field))
+        : undefined;
+      const normalizedSection: DossierSection = {
+        id,
+        templateId:
+          typeof value.templateId === 'string' && value.templateId.trim()
+            ? value.templateId.trim()
+            : id,
+        kind,
+        title,
+        order: Number.isFinite(value.order) ? Number(value.order) : index,
+        isCollapsed: Boolean(value.isCollapsed),
+        isSingleton: Boolean(value.isSingleton),
+      };
+
+      if (typeof value.body === 'string') {
+        normalizedSection.body = value.body;
+      }
+
+      if (fields) {
+        normalizedSection.fields = fields;
+      }
+
+      return normalizedSection;
+    })
+    .filter((section): section is DossierSection => Boolean(section))
+    .sort((left, right) => left.order - right.order)
+    .map((section, index) => ({ ...section, order: index }));
+
+  return normalizedSections.length ? normalizedSections : undefined;
+}
+
+export function buildDossierMetadataForSync(dossier: Dossier) {
+  return removeEmptyValues({
+    ...metadataFields.reduce<Record<string, unknown>>((values, field) => {
+      values[field] = dossier[field];
+      return values;
+    }, {}),
+    sections: normalizeDossierSectionsForSync(dossier.sections),
+  });
+}
+
 export function mapCaseToCloudRow(
   loreCase: LoreCase,
   userId: string,
@@ -65,15 +163,7 @@ export function mapDossierToCloudRow(
   userId: string,
   cloudImagePath?: string | null,
 ): CloudDossierRow {
-  const metadata = removeEmptyValues(
-    {
-      ...metadataFields.reduce<Record<string, unknown>>((values, field) => {
-        values[field] = dossier[field];
-        return values;
-      }, {}),
-      sections: dossier.sections,
-    },
-  );
+  const metadata = buildDossierMetadataForSync(dossier);
 
   return {
     id: dossier.id,
@@ -164,7 +254,7 @@ export function mapCloudDossierToLocal(row: CloudDossierRow): Dossier {
     organizationType: metadata.organizationType as string | undefined,
     theoryConfidence: metadata.theoryConfidence as TheoryConfidence | undefined,
     theoryStatus: metadata.theoryStatus as TheoryStatus | undefined,
-    sections: Array.isArray(metadata.sections) ? metadata.sections as Dossier['sections'] : undefined,
+    sections: normalizeDossierSectionsForSync(metadata.sections),
   };
 }
 

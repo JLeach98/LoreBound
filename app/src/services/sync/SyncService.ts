@@ -27,6 +27,8 @@ import {
   mapCloudCaseToLocal,
   mapCloudDossierToLocal,
   mapDossierToCloudRow,
+  buildDossierMetadataForSync,
+  normalizeDossierSectionsForSync,
 } from './SyncMappers';
 import {
   archiveActionHasHandler,
@@ -183,6 +185,22 @@ function createEmptyPlan(): SyncPlan {
         lastUploadedDossierId: null,
         cloudVerificationResult: 'Not reviewed.',
         baselineUpdated: false,
+        sectionDiagnostics: {
+          localSectionCount: 0,
+          cloudSectionCount: 0,
+          lastSyncedSectionCount: 0,
+          localSectionIds: [],
+          cloudSectionIds: [],
+          sectionsIncludedInFingerprint: false,
+          localDossierFingerprint: null,
+          cloudDossierFingerprint: null,
+          baselineDossierFingerprint: null,
+          dossierClassification: 'Not reviewed.',
+          sectionSerializationSucceeded: false,
+          cloudSectionVerificationSucceeded: false,
+          retrievalAppliedCloudSections: false,
+          receivingIndexedDbSectionCount: 0,
+        },
         invalidIds: 0,
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
@@ -675,6 +693,11 @@ function normalizeDossierContent(record: {
   notes?: string | null;
   metadata?: Record<string, unknown>;
 }) {
+  const metadata = canonicalize({
+    ...(record.metadata ?? {}),
+    sections: normalizeDossierSectionsForSync(record.metadata?.sections),
+  });
+
   return {
     id: record.id,
     caseId: normalizeOptional(record.case_id ?? record.caseId),
@@ -683,7 +706,7 @@ function normalizeDossierContent(record: {
     coverImageCloudPath: normalizeOptional(record.cover_image_cloud_path ?? record.coverImageCloudPath),
     summary: normalizeOptional(record.summary),
     notes: normalizeOptional(record.notes),
-    metadata: canonicalize(record.metadata ?? {}),
+    metadata,
   };
 }
 
@@ -1068,22 +1091,7 @@ function createLocalFingerprintSnapshot(
         normalizeDossierContent({
           ...record,
           coverImageCloudPath: imagePaths.dossiers[record.id] ?? null,
-          metadata: {
-            ...Object.fromEntries([
-              'alias',
-              'characterStatus',
-              'affiliation',
-              'region',
-              'world',
-              'eventDate',
-              'era',
-              'leader',
-              'organizationType',
-              'theoryConfidence',
-              'theoryStatus',
-            ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
-            sections: record.sections,
-          },
+          metadata: buildDossierMetadataForSync(record),
         }),
       ),
     ]),
@@ -1267,6 +1275,90 @@ function getBaselineState(
   };
 }
 
+function getSectionIds(sections: unknown) {
+  return (normalizeDossierSectionsForSync(sections) ?? []).map((section) => section.id);
+}
+
+function getSectionCount(sections: unknown) {
+  return normalizeDossierSectionsForSync(sections)?.length ?? 0;
+}
+
+function getBaselineSectionCount(baselineFingerprint?: string) {
+  if (!baselineFingerprint) {
+    return 0;
+  }
+
+  try {
+    const parsedValue = JSON.parse(baselineFingerprint) as {
+      metadata?: { sections?: unknown };
+    };
+
+    return getSectionCount(parsedValue.metadata?.sections);
+  } catch {
+    return 0;
+  }
+}
+
+function summarizeFingerprint(value: string | null) {
+  return value ? `Present (${value.length} characters)` : null;
+}
+
+function createSectionDiagnostics(
+  localArchive: LocalArchiveSnapshot,
+  onlineArchive: CloudArchiveSnapshot,
+  baselineFingerprints: Record<string, string> | undefined,
+  recordActions: SyncRecordAction[],
+) {
+  const localDossier = [...localArchive.dossiers].sort(
+    (left, right) => new Date(right.dateModified).getTime() - new Date(left.dateModified).getTime(),
+  )[0] ?? null;
+  const cloudDossier = localDossier
+    ? onlineArchive.dossiers.find((record) => record.id === localDossier.id) ?? null
+    : onlineArchive.dossiers[0] ?? null;
+  const dossierId = localDossier?.id ?? cloudDossier?.id ?? null;
+  const localFingerprint = localDossier
+    ? fingerprint(
+        normalizeDossierContent({
+          ...localDossier,
+          coverImageCloudPath: cloudDossier?.cover_image_cloud_path ?? null,
+          metadata: buildDossierMetadataForSync(localDossier),
+        }),
+      )
+    : null;
+  const cloudFingerprint = cloudDossier ? fingerprint(normalizeDossierContent(cloudDossier)) : null;
+  const baselineFingerprint = dossierId
+    ? baselineFingerprints?.[getFingerprintKey('dossiers', dossierId)] ?? null
+    : null;
+  const dossierAction = dossierId
+    ? recordActions.find((action) => action.entityType === 'dossiers' && action.id === dossierId)
+    : undefined;
+  const cloudSections = cloudDossier?.metadata?.sections;
+  const localSections = localDossier?.sections;
+
+  return {
+    localSectionCount: getSectionCount(localSections),
+    cloudSectionCount: getSectionCount(cloudSections),
+    lastSyncedSectionCount: getBaselineSectionCount(baselineFingerprint ?? undefined),
+    localSectionIds: getSectionIds(localSections),
+    cloudSectionIds: getSectionIds(cloudSections),
+    sectionsIncludedInFingerprint: true,
+    localDossierFingerprint: summarizeFingerprint(localFingerprint),
+    cloudDossierFingerprint: summarizeFingerprint(cloudFingerprint),
+    baselineDossierFingerprint: summarizeFingerprint(baselineFingerprint),
+    dossierClassification: dossierAction?.action ?? 'unchanged',
+    sectionSerializationSucceeded: localDossier
+      ? Array.isArray(buildDossierMetadataForSync(localDossier).sections)
+      : false,
+    cloudSectionVerificationSucceeded:
+      !localDossier ||
+      !cloudDossier ||
+      localFingerprint === cloudFingerprint ||
+      getSectionCount(cloudSections) > 0,
+    retrievalAppliedCloudSections: Boolean(cloudDossier && getSectionCount(cloudSections) > 0),
+    receivingIndexedDbSectionCount: getSectionCount(localSections),
+  };
+}
+
 class LoreBoundSyncService implements SyncService {
   async getStatus(): Promise<SyncStatus> {
     const environment = environmentManager.getEnvironment();
@@ -1447,22 +1539,7 @@ class LoreBoundSyncService implements SyncService {
               plannedImagePaths.dossiers[record.id] ??
               localSyncState?.cloudImagePaths?.dossiers?.[record.id] ??
               null,
-            metadata: {
-              ...Object.fromEntries([
-                'alias',
-                'characterStatus',
-                'affiliation',
-                'region',
-                'world',
-                'eventDate',
-                'era',
-                'leader',
-                'organizationType',
-                'theoryConfidence',
-                'theoryStatus',
-              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
-              sections: record.sections,
-            },
+            metadata: buildDossierMetadataForSync(record),
           }),
         normalizeDossierContent,
         localSyncState?.synchronizedFingerprints,
@@ -1535,22 +1612,7 @@ class LoreBoundSyncService implements SyncService {
               plannedImagePaths.dossiers[record.id] ??
               localSyncState?.cloudImagePaths?.dossiers?.[record.id] ??
               null,
-            metadata: {
-              ...Object.fromEntries([
-                'alias',
-                'characterStatus',
-                'affiliation',
-                'region',
-                'world',
-                'eventDate',
-                'era',
-                'leader',
-                'organizationType',
-                'theoryConfidence',
-                'theoryStatus',
-              ].map((field) => [field, (record as unknown as Record<string, unknown>)[field]])),
-              sections: record.sections,
-            },
+            metadata: buildDossierMetadataForSync(record),
           }),
         normalizeDossierContent,
         localSyncState?.synchronizedFingerprints,
@@ -1598,6 +1660,12 @@ class LoreBoundSyncService implements SyncService {
             : retrievalActions.length > 0
               ? 'retrieve-only'
               : 'none';
+    const sectionDiagnostics = createSectionDiagnostics(
+      localArchive,
+      onlineArchive,
+      localSyncState?.synchronizedFingerprints,
+      recordActions,
+    );
     plan.diagnostics = {
       ...plan.diagnostics,
       reconciliation: {
@@ -1608,6 +1676,7 @@ class LoreBoundSyncService implements SyncService {
         retrievalActionsCount: retrievalActions.length,
         conflictActionsCount: conflictActions.length,
         outboundGateReason: 'Not reviewed.',
+        sectionDiagnostics,
         invalidIds: reconciliationStats.invalidIds,
         timestampParseFailures: reconciliationStats.timestampParseFailures,
         fingerprintMismatches: reconciliationStats.fingerprintMismatches,
@@ -2369,6 +2438,19 @@ class LoreBoundSyncService implements SyncService {
 
       if (!onlineRecord || onlineRecord.user_id !== userId || !onlineCases.has(record.caseId)) {
         throw new Error('Unable to verify synchronized Dossiers.');
+      }
+
+      const localFingerprint = fingerprint(
+        normalizeDossierContent({
+          ...record,
+          coverImageCloudPath: onlineRecord.cover_image_cloud_path,
+          metadata: buildDossierMetadataForSync(record),
+        }),
+      );
+      const cloudFingerprint = fingerprint(normalizeDossierContent(onlineRecord));
+
+      if (localFingerprint !== cloudFingerprint) {
+        throw new Error('Unable to verify synchronized Dossier sections.');
       }
     });
 

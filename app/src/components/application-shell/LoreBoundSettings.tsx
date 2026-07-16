@@ -198,6 +198,22 @@ function emptyPlan(): SyncPlan {
         lastUploadedDossierId: null,
         cloudVerificationResult: 'Not reviewed.',
         baselineUpdated: false,
+        sectionDiagnostics: {
+          localSectionCount: 0,
+          cloudSectionCount: 0,
+          lastSyncedSectionCount: 0,
+          localSectionIds: [],
+          cloudSectionIds: [],
+          sectionsIncludedInFingerprint: false,
+          localDossierFingerprint: null,
+          cloudDossierFingerprint: null,
+          baselineDossierFingerprint: null,
+          dossierClassification: 'Not reviewed.',
+          sectionSerializationSucceeded: false,
+          cloudSectionVerificationSucceeded: false,
+          retrievalAppliedCloudSections: false,
+          receivingIndexedDbSectionCount: 0,
+        },
         invalidIds: 0,
         timestampParseFailures: 0,
         fingerprintMismatches: 0,
@@ -1130,6 +1146,86 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Baseline updated</dt>
                         <dd>{syncPlan.diagnostics.reconciliation.baselineUpdated ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local section count</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.localSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud section count</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.cloudSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Last-synced section count</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.lastSyncedSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Local section IDs</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.localSectionIds.length
+                            ? syncPlan.diagnostics.reconciliation.sectionDiagnostics.localSectionIds.join(', ')
+                            : 'None'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud section IDs</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.cloudSectionIds.length
+                            ? syncPlan.diagnostics.reconciliation.sectionDiagnostics.cloudSectionIds.join(', ')
+                            : 'None'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Sections included in fingerprint</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.sectionsIncludedInFingerprint
+                            ? 'Yes'
+                            : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Dossier classification</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.dossierClassification}</dd>
+                      </div>
+                      <div>
+                        <dt>Section serialization succeeded</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.sectionSerializationSucceeded
+                            ? 'Yes'
+                            : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Cloud section verification succeeded</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.cloudSectionVerificationSucceeded
+                            ? 'Yes'
+                            : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Retrieval applied cloud sections</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.sectionDiagnostics.retrievalAppliedCloudSections
+                            ? 'Yes'
+                            : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Receiving IndexedDB section count</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.receivingIndexedDbSectionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Local Dossier fingerprint</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.localDossierFingerprint ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Cloud Dossier fingerprint</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.cloudDossierFingerprint ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Baseline Dossier fingerprint</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.sectionDiagnostics.baselineDossierFingerprint ?? 'None'}</dd>
                       </div>
                       <div>
                         <dt>Automatic gate reason</dt>

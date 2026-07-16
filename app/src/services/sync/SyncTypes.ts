@@ -70,6 +70,22 @@ export type SyncDiagnostics = {
     lastUploadedDossierId: string | null;
     cloudVerificationResult: string;
     baselineUpdated: boolean;
+    sectionDiagnostics: {
+      localSectionCount: number;
+      cloudSectionCount: number;
+      lastSyncedSectionCount: number;
+      localSectionIds: string[];
+      cloudSectionIds: string[];
+      sectionsIncludedInFingerprint: boolean;
+      localDossierFingerprint: string | null;
+      cloudDossierFingerprint: string | null;
+      baselineDossierFingerprint: string | null;
+      dossierClassification: string;
+      sectionSerializationSucceeded: boolean;
+      cloudSectionVerificationSucceeded: boolean;
+      retrievalAppliedCloudSections: boolean;
+      receivingIndexedDbSectionCount: number;
+    };
     invalidIds: number;
     timestampParseFailures: number;
     fingerprintMismatches: number;
