@@ -15,6 +15,7 @@ export {
   getRelationshipThreadmarks,
   getThreadmarkByAlias,
   getThreadmarkDefinition,
+  getThreadmarkPrefixMatches,
   getThreadmarkReplacement,
   getThreadmarksByCategory,
   getValidThreadmarksForPair,
@@ -24,6 +25,24 @@ export {
   resolveCanonicalThreadmarkKey,
   resolveInverseThreadmark,
 } from './threadmarkSelectors';
+export {
+  getCompatibleBondTypeForThreadmark,
+  getSupportedThreadmarkParserCategories,
+  getThreadmarkParseResultAtOffset,
+  getThreadmarkParseResultsAfterOffset,
+  getThreadmarkParseResultsBeforeOffset,
+  getThreadmarkKeyForCompatibleBondType,
+  getThreadmarkParserDiagnostics,
+  parseThreadmarks,
+} from './threadmarkParser';
+export {
+  filterValidThreadmarks,
+  getThreadmarkParseErrors,
+  getThreadmarkParseWarnings,
+  hasIncompleteThreadmarks,
+  hasValidThreadmarks,
+  validateThreadmarkParseResult,
+} from './threadmarkParserValidation';
 export type {
   ThreadmarkCategory,
   ThreadmarkDefinition,
@@ -36,6 +55,17 @@ export type {
   ThreadmarkValidationIssue,
   ThreadmarkValidationResult,
 } from './threadmarkTypes';
+export type {
+  ThreadmarkParseDiagnostic,
+  ThreadmarkParseDiagnosticSeverity,
+  ThreadmarkParseExpectedToken,
+  ThreadmarkParseOptions,
+  ThreadmarkParseResult,
+  ThreadmarkParseStatus,
+  ThreadmarkParserDiagnostics,
+  ThreadmarkSourceRange,
+} from './threadmarkParserTypes';
+export { THREADMARK_PARSER_VERSION } from './threadmarkParserTypes';
 export {
   THREADMARK_REGISTRY_VERSION,
   threadmarkCategories,
@@ -47,4 +77,3 @@ export {
   normalizeThreadmarkAlias,
   validateThreadmarkRegistry,
 } from './threadmarkValidation';
-

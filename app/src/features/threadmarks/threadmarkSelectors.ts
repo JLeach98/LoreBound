@@ -45,6 +45,24 @@ export function getThreadmarkByAlias(input: string) {
   return definitionsByAlias.get(normalizeThreadmarkAlias(input));
 }
 
+export function getThreadmarkPrefixMatches(input: string) {
+  const normalizedInput = normalizeThreadmarkAlias(input);
+
+  if (!normalizedInput) {
+    return Object.freeze([]);
+  }
+
+  return Object.freeze(
+    sortedThreadmarks.filter((definition) =>
+      [
+        definition.key,
+        definition.displayName,
+        ...definition.aliases,
+      ].some((alias) => normalizeThreadmarkAlias(alias).startsWith(normalizedInput)),
+    ),
+  );
+}
+
 export function getThreadmarksByCategory(category: ThreadmarkCategory) {
   return Object.freeze(
     sortedThreadmarks.filter((definition) => definition.category === category),
@@ -164,4 +182,3 @@ export function resolveInverseThreadmark({
     displayName: inverse.displayName,
   });
 }
-

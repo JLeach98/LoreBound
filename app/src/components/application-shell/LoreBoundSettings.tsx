@@ -6,7 +6,10 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { loreBoundVersion } from '../../app/version';
-import { threadmarkRegistryDiagnostics } from '../../features/threadmarks';
+import {
+  getThreadmarkParserDiagnostics,
+  threadmarkRegistryDiagnostics,
+} from '../../features/threadmarks';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { authService, type AuthStatus } from '../../services/auth/AuthService';
 import { useOperationsConsole } from '../../services/preferences/OperationsConsoleContext';
@@ -404,6 +407,7 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
     }),
     [],
   );
+  const threadmarkParserDiagnostics = getThreadmarkParserDiagnostics();
 
   const navigationItems = useMemo(
     () => [
@@ -1451,6 +1455,63 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Unmapped Bond Type count</dt>
                         <dd>{threadmarkRegistryDiagnostics.unmappedBondTypeCount}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Threadmark Parser</summary>
+                    <dl>
+                      <div>
+                        <dt>Parser version</dt>
+                        <dd>{threadmarkParserDiagnostics.parserVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Parser available</dt>
+                        <dd>{threadmarkParserDiagnostics.parserAvailable ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Most recent test input length</dt>
+                        <dd>{threadmarkParserDiagnostics.mostRecentTestInputLength}</dd>
+                      </div>
+                      <div>
+                        <dt>Total parse results</dt>
+                        <dd>{threadmarkParserDiagnostics.totalParseResults}</dd>
+                      </div>
+                      <div>
+                        <dt>Valid result count</dt>
+                        <dd>{threadmarkParserDiagnostics.validResultCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Incomplete result count</dt>
+                        <dd>{threadmarkParserDiagnostics.incompleteResultCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Unknown result count</dt>
+                        <dd>{threadmarkParserDiagnostics.unknownResultCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Malformed result count</dt>
+                        <dd>{threadmarkParserDiagnostics.malformedResultCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Escaped token count</dt>
+                        <dd>{threadmarkParserDiagnostics.escapedTokenCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Excluded range count</dt>
+                        <dd>{threadmarkParserDiagnostics.excludedRangeCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Parse duration</dt>
+                        <dd>{threadmarkParserDiagnostics.parseDurationMs.toFixed(2)} ms</dd>
+                      </div>
+                      <div>
+                        <dt>Maximum result limit reached</dt>
+                        <dd>{threadmarkParserDiagnostics.maximumResultLimitReached ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Registry version used</dt>
+                        <dd>{threadmarkParserDiagnostics.registryVersionUsed}</dd>
                       </div>
                     </dl>
                   </details>
