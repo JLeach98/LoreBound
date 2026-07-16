@@ -36,6 +36,26 @@ export {
   parseThreadmarks,
 } from './threadmarkParser';
 export {
+  getThreadmarkResolverDiagnostics,
+  resolveThreadmarkDocument,
+  resolveThreadmarkOccurrence,
+} from './threadmarkResolver';
+export {
+  buildThreadmarkResolutionIndex,
+  isThreadmarkResolutionCandidateAvailable,
+  normalizeResolutionText,
+  normalizeResolutionTextCaseFold,
+} from './threadmarkResolutionIndex';
+export {
+  canProceedToBondIntegration,
+  getResolvedTargetId,
+  getResolutionIssues,
+  getResolutionSummary,
+  isThreadmarkAmbiguous,
+  isThreadmarkResolved,
+  isThreadmarkUnavailable,
+} from './threadmarkResolutionValidation';
+export {
   getThreadmarkAuthoringDiagnostics,
   updateThreadmarkAuthoringDiagnostics,
 } from './threadmarkAutocomplete';
@@ -70,6 +90,22 @@ export type {
   ThreadmarkParserDiagnostics,
   ThreadmarkSourceRange,
 } from './threadmarkParserTypes';
+export type {
+  ThreadmarkDocumentResolutionRequest,
+  ThreadmarkDocumentResolutionResult,
+  ThreadmarkPriorResolution,
+  ThreadmarkResolutionCandidate,
+  ThreadmarkResolutionDiagnostic,
+  ThreadmarkResolutionDossierCandidate,
+  ThreadmarkResolutionMatchMethod,
+  ThreadmarkResolutionRequest,
+  ThreadmarkResolutionResult,
+  ThreadmarkResolutionSelection,
+  ThreadmarkResolutionStatus,
+  ThreadmarkResolutionSummary,
+  ThreadmarkResolverDiagnostics,
+} from './threadmarkResolverTypes';
+export { THREADMARK_RESOLVER_VERSION } from './threadmarkResolverTypes';
 export type {
   ThreadmarkAuthoringDiagnostics,
   ThreadmarkAuthoringMode,

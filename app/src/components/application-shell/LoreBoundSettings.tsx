@@ -9,6 +9,7 @@ import { loreBoundVersion } from '../../app/version';
 import {
   getThreadmarkAuthoringDiagnostics,
   getThreadmarkParserDiagnostics,
+  getThreadmarkResolverDiagnostics,
   threadmarkRegistryDiagnostics,
 } from '../../features/threadmarks';
 import { isSupabaseConfigured } from '../../lib/supabase';
@@ -410,6 +411,7 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
   );
   const threadmarkParserDiagnostics = getThreadmarkParserDiagnostics();
   const threadmarkAuthoringDiagnostics = getThreadmarkAuthoringDiagnostics();
+  const threadmarkResolverDiagnostics = getThreadmarkResolverDiagnostics();
 
   const navigationItems = useMemo(
     () => [
@@ -1575,6 +1577,91 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Desktop anchor active</dt>
                         <dd>{threadmarkAuthoringDiagnostics.desktopAnchorActive ? 'Yes' : 'No'}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Threadmark Resolver</summary>
+                    <dl>
+                      <div>
+                        <dt>Resolver version</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolverVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Resolver available</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolverAvailable ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Active Investigation Dossier count</dt>
+                        <dd>{threadmarkResolverDiagnostics.activeInvestigationDossierCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Resolution index size</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolutionIndexSize}</dd>
+                      </div>
+                      <div>
+                        <dt>Name index key count</dt>
+                        <dd>{threadmarkResolverDiagnostics.nameIndexKeyCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Alias index key count</dt>
+                        <dd>{threadmarkResolverDiagnostics.aliasIndexKeyCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Most recent occurrence count</dt>
+                        <dd>{threadmarkResolverDiagnostics.mostRecentOccurrenceCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Resolved count</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolvedCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Unresolved count</dt>
+                        <dd>{threadmarkResolverDiagnostics.unresolvedCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Ambiguous count</dt>
+                        <dd>{threadmarkResolverDiagnostics.ambiguousCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Incompatible count</dt>
+                        <dd>{threadmarkResolverDiagnostics.incompatibleCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Unavailable count</dt>
+                        <dd>{threadmarkResolverDiagnostics.unavailableCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected-ID resolution count</dt>
+                        <dd>{threadmarkResolverDiagnostics.selectedIdResolutionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Exact-name resolution count</dt>
+                        <dd>{threadmarkResolverDiagnostics.exactNameResolutionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Exact-alias resolution count</dt>
+                        <dd>{threadmarkResolverDiagnostics.exactAliasResolutionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Renamed target count</dt>
+                        <dd>{threadmarkResolverDiagnostics.renamedTargetCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Resolution duration</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolutionDurationMs.toFixed(2)} ms</dd>
+                      </div>
+                      <div>
+                        <dt>Resolver exception count</dt>
+                        <dd>{threadmarkResolverDiagnostics.resolverExceptionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Registry version used</dt>
+                        <dd>{threadmarkResolverDiagnostics.registryVersionUsed}</dd>
+                      </div>
+                      <div>
+                        <dt>Parser version used</dt>
+                        <dd>{threadmarkResolverDiagnostics.parserVersionUsed}</dd>
                       </div>
                     </dl>
                   </details>
