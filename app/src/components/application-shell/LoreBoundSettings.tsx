@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { loreBoundVersion } from '../../app/version';
+import { threadmarkRegistryDiagnostics } from '../../features/threadmarks';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { authService, type AuthStatus } from '../../services/auth/AuthService';
 import { useOperationsConsole } from '../../services/preferences/OperationsConsoleContext';
@@ -1401,6 +1402,55 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Character-only accessor detected</dt>
                         <dd>{fieldKitDossierDiagnostics.characterOnlyAccessorDetected ? 'Yes' : 'No'}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Threadmark Registry</summary>
+                    <dl>
+                      <div>
+                        <dt>Registry version</dt>
+                        <dd>{threadmarkRegistryDiagnostics.version}</dd>
+                      </div>
+                      <div>
+                        <dt>Total Threadmark definitions</dt>
+                        <dd>{threadmarkRegistryDiagnostics.totalDefinitions}</dd>
+                      </div>
+                      <div>
+                        <dt>Relationship definitions</dt>
+                        <dd>{threadmarkRegistryDiagnostics.relationshipDefinitionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Alias count</dt>
+                        <dd>{threadmarkRegistryDiagnostics.aliasCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Deprecated definitions</dt>
+                        <dd>{threadmarkRegistryDiagnostics.deprecatedDefinitionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Registry validation passed</dt>
+                        <dd>{threadmarkRegistryDiagnostics.validationPassed ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Duplicate alias count</dt>
+                        <dd>{threadmarkRegistryDiagnostics.duplicateAliasCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Missing inverse count</dt>
+                        <dd>{threadmarkRegistryDiagnostics.missingInverseCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Invalid Knowledge Type rule count</dt>
+                        <dd>{threadmarkRegistryDiagnostics.invalidKnowledgeTypeRuleCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Current Bond Type mapping coverage</dt>
+                        <dd>{threadmarkRegistryDiagnostics.bondTypeMappingCoverage}</dd>
+                      </div>
+                      <div>
+                        <dt>Unmapped Bond Type count</dt>
+                        <dd>{threadmarkRegistryDiagnostics.unmappedBondTypeCount}</dd>
                       </div>
                     </dl>
                   </details>
