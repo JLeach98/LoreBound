@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { loreBoundVersion } from '../../app/version';
 import {
+  getThreadmarkAuthoringDiagnostics,
   getThreadmarkParserDiagnostics,
   threadmarkRegistryDiagnostics,
 } from '../../features/threadmarks';
@@ -408,6 +409,7 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
     [],
   );
   const threadmarkParserDiagnostics = getThreadmarkParserDiagnostics();
+  const threadmarkAuthoringDiagnostics = getThreadmarkAuthoringDiagnostics();
 
   const navigationItems = useMemo(
     () => [
@@ -1512,6 +1514,67 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                       <div>
                         <dt>Registry version used</dt>
                         <dd>{threadmarkParserDiagnostics.registryVersionUsed}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
+                    <summary>Threadmark Authoring</summary>
+                    <dl>
+                      <div>
+                        <dt>Autocomplete version</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.version}</dd>
+                      </div>
+                      <div>
+                        <dt>Active authoring state</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.activeState}</dd>
+                      </div>
+                      <div>
+                        <dt>Relationship menu open</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.relationshipMenuOpen ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Target menu open</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.targetMenuOpen ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Current source Knowledge Type</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.currentSourceKnowledgeType}</dd>
+                      </div>
+                      <div>
+                        <dt>Relationship suggestion count</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.relationshipSuggestionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Target suggestion count</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.targetSuggestionCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Parser version</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.parserVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Registry version</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.registryVersion}</dd>
+                      </div>
+                      <div>
+                        <dt>Selection inserted</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.selectionInserted ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Insertion failure count</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.insertionFailureCount}</dd>
+                      </div>
+                      <div>
+                        <dt>Target search duration</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.targetSearchDurationMs.toFixed(2)} ms</dd>
+                      </div>
+                      <div>
+                        <dt>Mobile sheet active</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.mobileSheetActive ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Desktop anchor active</dt>
+                        <dd>{threadmarkAuthoringDiagnostics.desktopAnchorActive ? 'Yes' : 'No'}</dd>
                       </div>
                     </dl>
                   </details>

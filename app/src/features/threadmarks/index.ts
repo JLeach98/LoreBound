@@ -36,6 +36,11 @@ export {
   parseThreadmarks,
 } from './threadmarkParser';
 export {
+  getThreadmarkAuthoringDiagnostics,
+  updateThreadmarkAuthoringDiagnostics,
+} from './threadmarkAutocomplete';
+export { ThreadmarkAuthoringTextarea } from './ThreadmarkAuthoringTextarea';
+export {
   filterValidThreadmarks,
   getThreadmarkParseErrors,
   getThreadmarkParseWarnings,
@@ -65,6 +70,17 @@ export type {
   ThreadmarkParserDiagnostics,
   ThreadmarkSourceRange,
 } from './threadmarkParserTypes';
+export type {
+  ThreadmarkAuthoringDiagnostics,
+  ThreadmarkAuthoringMode,
+  ThreadmarkAuthoringRange,
+  ThreadmarkAuthoringState,
+  ThreadmarkAuthoringStateName,
+  ThreadmarkAuthoringSuggestion,
+  ThreadmarkRelationshipSuggestion,
+  ThreadmarkTargetSuggestion,
+} from './threadmarkAuthoringTypes';
+export { THREADMARK_AUTHORING_VERSION } from './threadmarkAuthoringTypes';
 export { THREADMARK_PARSER_VERSION } from './threadmarkParserTypes';
 export {
   THREADMARK_REGISTRY_VERSION,

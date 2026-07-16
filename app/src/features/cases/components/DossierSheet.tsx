@@ -1,6 +1,7 @@
 import { Button } from '../../../components/ui/Button';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createStableId } from '../../../lib/stableId';
+import { ThreadmarkAuthoringTextarea } from '../../threadmarks/ThreadmarkAuthoringTextarea';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
 import {
@@ -595,10 +596,13 @@ export function DossierSheet({
       return (
         <label className="dossier-dynamic-section__body-editor">
           Section Notes
-          <textarea
+          <ThreadmarkAuthoringTextarea
             rows={4}
             value={section.body ?? ''}
-            onChange={(event) => updateSectionBody(section.id, event.target.value)}
+            dossier={workingDossier}
+            sectionId={section.id}
+            dossiers={dossiers}
+            onChange={(value) => updateSectionBody(section.id, value)}
           />
         </label>
       );

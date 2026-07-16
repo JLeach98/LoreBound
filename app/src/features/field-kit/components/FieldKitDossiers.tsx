@@ -1,6 +1,7 @@
 import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { createStableId } from '../../../lib/stableId';
+import { ThreadmarkAuthoringTextarea } from '../../threadmarks/ThreadmarkAuthoringTextarea';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
 import { DossierFormDialog } from '../../cases/components/DossierFormDialog';
 import { useBonds } from '../../cases/context/BondContext';
@@ -1210,7 +1211,7 @@ function FieldKitDossierView({
               {section.isCollapsed ? (
                 <p className="field-kit-section-empty">Section collapsed.</p>
               ) : (
-                renderFieldKitSection(section, isEditing, updateSectionBody)
+                renderFieldKitSection(section, isEditing, dossier, dossiers, updateSectionBody)
               )}
             </section>
           );
@@ -1401,6 +1402,8 @@ function FieldKitDossierView({
 function renderFieldKitSection(
   section: DossierSection,
   isEditing: boolean,
+  dossier: Dossier,
+  dossiers: Dossier[],
   onBodyChange: (sectionId: string, body: string) => void,
 ) {
   if (section.kind === 'identity') {
@@ -1431,10 +1434,14 @@ function renderFieldKitSection(
     return (
       <label className="field-kit-section-editor">
         Section Notes
-        <textarea
+        <ThreadmarkAuthoringTextarea
           rows={5}
           value={section.body ?? ''}
-          onChange={(event) => onBodyChange(section.id, event.target.value)}
+          dossier={dossier}
+          sectionId={section.id}
+          dossiers={dossiers}
+          isMobile
+          onChange={(value) => onBodyChange(section.id, value)}
         />
       </label>
     );

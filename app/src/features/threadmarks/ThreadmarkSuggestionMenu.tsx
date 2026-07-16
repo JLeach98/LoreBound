@@ -1,0 +1,72 @@
+import type { ThreadmarkAuthoringMode, ThreadmarkAuthoringSuggestion } from './threadmarkAuthoringTypes';
+
+export function ThreadmarkSuggestionMenu({
+  id,
+  mode,
+  suggestions,
+  highlightedIndex,
+  isMobile,
+  onSelect,
+}: {
+  id: string;
+  mode: ThreadmarkAuthoringMode;
+  suggestions: readonly ThreadmarkAuthoringSuggestion[];
+  highlightedIndex: number;
+  isMobile: boolean;
+  onSelect: (suggestion: ThreadmarkAuthoringSuggestion) => void;
+}) {
+  return (
+    <div
+      id={id}
+      className={`threadmark-menu ${isMobile ? 'threadmark-menu--mobile' : 'threadmark-menu--desktop'}`}
+      role="listbox"
+      aria-label={mode === 'relationship' ? 'Relationship Threadmarks' : 'Dossier targets'}
+    >
+      {suggestions.length ? (
+        suggestions.map((suggestion, index) => {
+          const isHighlighted = index === highlightedIndex;
+
+          return (
+            <button
+              key={suggestion.id}
+              id={`${id}-option-${index}`}
+              type="button"
+              className={`threadmark-menu__option${isHighlighted ? ' threadmark-menu__option--active' : ''}`}
+              role="option"
+              aria-selected={isHighlighted}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onSelect(suggestion)}
+            >
+              {suggestion.kind === 'relationship' ? (
+                <>
+                  <span className="threadmark-menu__title">{suggestion.displayName}</span>
+                  <span className="threadmark-menu__meta">{suggestion.description}</span>
+                  <span className="threadmark-menu__hint">{suggestion.targetTypeSummary}</span>
+                </>
+              ) : (
+                <>
+                  <span className="threadmark-menu__target">
+                    {suggestion.dossier.coverImage ? (
+                      <img src={suggestion.dossier.coverImage} alt="" />
+                    ) : (
+                      <span>{suggestion.initials}</span>
+                    )}
+                  </span>
+                  <span className="threadmark-menu__target-copy">
+                    <span className="threadmark-menu__title">{suggestion.name}</span>
+                    <span className="threadmark-menu__meta">{suggestion.secondaryLine}</span>
+                  </span>
+                </>
+              )}
+            </button>
+          );
+        })
+      ) : (
+        <p className="threadmark-menu__empty" role="status">
+          {mode === 'relationship' ? 'No matching Threadmarks found' : 'No matching Dossier found'}
+        </p>
+      )}
+    </div>
+  );
+}
+
