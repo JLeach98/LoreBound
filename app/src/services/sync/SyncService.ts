@@ -7,10 +7,11 @@ import {
   markDeletionTombstonesVerified,
   readFullLocalArchive,
   readLocalSyncState,
+  readOrCreateLocalClientId,
   recordLocalSyncState,
   replaceEmptyCaseShellWithCloudArchive,
 } from '../../features/cases/storage/caseStorage';
-import type { DeletionEntityType, DeletionTombstone } from '../../features/cases/storage/caseStorage';
+import type { DeletionEntityType, DeletionTombstone, LocalSyncState } from '../../features/cases/storage/caseStorage';
 import { recordThreadmarkSynchronizationDiagnostics } from '../../features/threadmarks';
 import type { LoreCase } from '../../features/cases/types/caseTypes';
 import type { Dossier } from '../../features/cases/types/dossierTypes';
@@ -32,6 +33,8 @@ import {
   mapCloudBondToLocal,
   mapCloudCaseToLocal,
   mapCloudDossierToLocal,
+  mapCloudDeletionLedgerToLocalTombstone,
+  mapDeletionTombstoneToCloudLedgerRow,
   mapDossierToCloudRow,
   buildDossierMetadataForSync,
   normalizeDossierSectionsForSync,
@@ -75,6 +78,8 @@ export type SyncPlanResult =
 export interface SyncService {
   getStatus: () => Promise<SyncStatus>;
   createPlan: () => Promise<SyncPlanResult>;
+  discoverCloudCases: () => Promise<LoreCase[]>;
+  retrieveCase: (caseId: string, onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
   synchronize: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
   retrieve: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
   rebuildBaseline: (onProgress?: (progress: SyncProgress) => void) => Promise<SyncResult>;
@@ -183,6 +188,7 @@ function createEmptyPlan(): SyncPlan {
         dossiers: failedQuery,
         bonds: failedQuery,
         boardEntries: failedQuery,
+        deletionLedger: failedQuery,
       },
       storage: {
         bucketReachable: false,
@@ -244,6 +250,26 @@ function createEmptyPlan(): SyncPlan {
           lastFailedEntityId: null,
           lastFailedDeletionStage: null,
           deletionBaselineCount: 0,
+          cloudLedgerAvailable: false,
+          cloudLedgerRowCount: 0,
+          ledgerUpsertAttempted: 0,
+          ledgerUpsertSucceeded: 0,
+          ledgerVerificationSucceeded: 0,
+          ledgerReadFailureCount: 0,
+          acknowledgedRowCount: 0,
+          compactedRowCount: 0,
+          sharedDeletionAuthorityCount: 0,
+          localTombstoneOnlyCount: 0,
+          cloudLedgerOnlyCount: 0,
+          combinedAuthorityCount: 0,
+          liveLocalRecordsSuppressed: 0,
+          liveCloudRecordsSuppressed: 0,
+          staleUploadsBlocked: 0,
+          staleImportsBlocked: 0,
+          repairRestorationsBlocked: 0,
+          contradictoryDeletionRetrievalPlanCount: 0,
+          cloudDeleteVerificationFailureCount: 0,
+          liveDeletedBaselineCollisionCount: 0,
         },
       },
       archiveState: {
@@ -302,8 +328,52 @@ function getPrimaryLocalCaseId(localArchive: LocalArchiveSnapshot) {
   return localArchive.cases[0]?.id ?? null;
 }
 
+function sortCasesByCloudUpdatedAt(cases: LoreCase[]) {
+  return [...cases].sort(
+    (left, right) =>
+      new Date(right.dateLastModified).getTime() - new Date(left.dateLastModified).getTime(),
+  );
+}
+
+function scopeLocalArchiveToCase(localArchive: LocalArchiveSnapshot, caseId: string | null): LocalArchiveSnapshot {
+  if (!caseId) {
+    return localArchive;
+  }
+
+  return {
+    cases: localArchive.cases.filter((record) => record.id === caseId),
+    dossiers: localArchive.dossiers.filter((record) => record.caseId === caseId),
+    bonds: localArchive.bonds.filter((record) => record.caseId === caseId),
+    boardPins: localArchive.boardPins.filter((record) => record.caseId === caseId),
+    deletionTombstones: localArchive.deletionTombstones.filter(
+      (tombstone) =>
+        tombstone.caseId === caseId ||
+        (tombstone.entityType === 'cases' && tombstone.entityId === caseId),
+    ),
+    activeCaseId: caseId,
+  };
+}
+
 function getPrimaryCloudCaseId(onlineArchive: CloudArchiveSnapshot) {
   return onlineArchive.cases[0]?.id ?? null;
+}
+
+function scopeCloudArchiveToCase(onlineArchive: CloudArchiveSnapshot, caseId: string | null): CloudArchiveSnapshot {
+  if (!caseId) {
+    return onlineArchive;
+  }
+
+  return {
+    cases: onlineArchive.cases.filter((record) => record.id === caseId),
+    dossiers: onlineArchive.dossiers.filter((record) => record.case_id === caseId),
+    bonds: onlineArchive.bonds.filter((record) => record.case_id === caseId),
+    boardEntries: onlineArchive.boardEntries.filter((record) => record.case_id === caseId),
+    deletionLedger: onlineArchive.deletionLedger.filter(
+      (record) =>
+        record.case_id === caseId ||
+        (record.entity_type === 'cases' && record.entity_id === caseId),
+    ),
+  };
 }
 
 function hasSamePrimaryInvestigation(localArchive: LocalArchiveSnapshot, onlineArchive: CloudArchiveSnapshot) {
@@ -407,20 +477,21 @@ function getEmptyLocalCaseShellState(
   };
 }
 
-function hasMissingCloudDependents(localArchive: LocalArchiveSnapshot, onlineArchive: CloudArchiveSnapshot) {
+function hasMissingCloudDependents(
+  localArchive: LocalArchiveSnapshot,
+  onlineArchive: CloudArchiveSnapshot,
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+) {
   const localDossierIds = new Set(localArchive.dossiers.map((record) => record.id));
   const localBondIds = new Set(localArchive.bonds.map((record) => record.id));
   const localBoardPinIds = new Set(localArchive.boardPins.map((record) => record.id));
-  const tombstoneKeys = new Set(
-    localArchive.deletionTombstones.map((tombstone) => getDeletionKey(tombstone.entityType, tombstone.entityId)),
-  );
   const localImageCount = countLocalImages(localArchive);
   const cloudImageCount = countCloudImages(onlineArchive);
 
   return (
-    onlineArchive.dossiers.some((record) => !localDossierIds.has(record.id) && !tombstoneKeys.has(getDeletionKey('dossiers', record.id))) ||
-    onlineArchive.bonds.some((record) => !localBondIds.has(record.id) && !tombstoneKeys.has(getDeletionKey('bonds', record.id))) ||
-    onlineArchive.boardEntries.some((record) => !localBoardPinIds.has(record.id) && !tombstoneKeys.has(getDeletionKey('boardEntries', record.id))) ||
+    onlineArchive.dossiers.some((record) => !localDossierIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'dossiers', record.id)) ||
+    onlineArchive.bonds.some((record) => !localBondIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'bonds', record.id)) ||
+    onlineArchive.boardEntries.some((record) => !localBoardPinIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'boardEntries', record.id)) ||
     cloudImageCount > localImageCount
   );
 }
@@ -435,8 +506,7 @@ function createMatchingCaseSection(localArchive: LocalArchiveSnapshot, onlineArc
     normalizeCaseForRepairIdentity,
     normalizeCaseForRepairIdentity,
     undefined,
-    [],
-    new Set(),
+    new Map(),
     { invalidIds: 0, timestampParseFailures: 0, fingerprintMismatches: 0 },
   );
 
@@ -463,6 +533,14 @@ function createShellRecoveryCaseSection() {
     ...emptyPlanSection,
     existingRecords: 1,
     unchangedRecords: 1,
+  };
+}
+
+function createLocalOnlyPlanSection(recordCount: number): SyncPlanSection {
+  return {
+    ...emptyPlanSection,
+    newRecords: recordCount,
+    localOnly: recordCount,
   };
 }
 
@@ -646,6 +724,44 @@ function mergePartialRepairArchive(
   };
 }
 
+function mergeScopedArchiveIntoFullArchive(
+  fullArchive: LocalArchiveSnapshot,
+  scopedArchive: LocalArchiveSnapshot,
+  caseId: string | null,
+): LocalArchiveSnapshot {
+  if (!caseId) {
+    return scopedArchive;
+  }
+
+  return {
+    cases: [
+      ...fullArchive.cases.filter((record) => record.id !== caseId),
+      ...scopedArchive.cases,
+    ],
+    dossiers: [
+      ...fullArchive.dossiers.filter((record) => record.caseId !== caseId),
+      ...scopedArchive.dossiers,
+    ],
+    bonds: [
+      ...fullArchive.bonds.filter((record) => record.caseId !== caseId),
+      ...scopedArchive.bonds,
+    ],
+    boardPins: [
+      ...fullArchive.boardPins.filter((record) => record.caseId !== caseId),
+      ...scopedArchive.boardPins,
+    ],
+    deletionTombstones: [
+      ...fullArchive.deletionTombstones.filter(
+        (tombstone) =>
+          tombstone.caseId !== caseId &&
+          !(tombstone.entityType === 'cases' && tombstone.entityId === caseId),
+      ),
+      ...scopedArchive.deletionTombstones,
+    ],
+    activeCaseId: fullArchive.activeCaseId ?? scopedArchive.activeCaseId,
+  };
+}
+
 function notifyLocalArchiveRestored() {
   window.dispatchEvent(new CustomEvent('lorebound:local-archive-restored'));
 }
@@ -706,14 +822,247 @@ function syncEntityTypeToDeletionEntityType(entityType: SyncEntityType): Deletio
   return entityType === 'boardEntries' ? 'boardEntries' : entityType;
 }
 
-function tombstonesForEntityType(tombstones: DeletionTombstone[], entityType: SyncEntityType) {
-  const deletionEntityType = syncEntityTypeToDeletionEntityType(entityType);
-
-  return tombstones.filter((tombstone) => tombstone.entityType === deletionEntityType);
-}
-
 function getDeletedBaselineKeys(localSyncState: Awaited<ReturnType<typeof readLocalSyncState>>) {
   return new Set(Object.keys(localSyncState?.deletionBaselines ?? {}));
+}
+
+type SharedDeletionAuthorityEntry = {
+  key: string;
+  entityType: SyncEntityType;
+  deletionEntityType: DeletionEntityType;
+  entityId: string;
+  caseId: string | null;
+  deletedAt: string;
+  source: 'cloud-ledger' | 'local-tombstone' | 'deleted-baseline';
+  tombstone?: DeletionTombstone;
+};
+
+function deletionEntityTypeToSyncEntityType(entityType: DeletionEntityType): SyncEntityType {
+  return entityType === 'boardEntries' ? 'boardEntries' : entityType;
+}
+
+function getAuthorityEntryPriority(entry: SharedDeletionAuthorityEntry) {
+  if (entry.source === 'cloud-ledger') {
+    return 3;
+  }
+
+  if (entry.source === 'local-tombstone') {
+    return 2;
+  }
+
+  return 1;
+}
+
+function createSharedDeletionAuthority(
+  localTombstones: DeletionTombstone[],
+  cloudLedger: CloudArchiveSnapshot['deletionLedger'],
+  localSyncState: Awaited<ReturnType<typeof readLocalSyncState>>,
+) {
+  const entries = new Map<string, SharedDeletionAuthorityEntry>();
+  const addEntry = (entry: SharedDeletionAuthorityEntry) => {
+    const existingEntry = entries.get(entry.key);
+
+    if (!existingEntry || getAuthorityEntryPriority(entry) > getAuthorityEntryPriority(existingEntry)) {
+      entries.set(entry.key, entry);
+    }
+  };
+
+  Object.values(localSyncState?.deletionBaselines ?? {}).forEach((baseline) => {
+    const syncEntityType = deletionEntityTypeToSyncEntityType(baseline.entityType);
+
+    addEntry({
+      key: getDeletionKey(syncEntityType, baseline.entityId),
+      entityType: syncEntityType,
+      deletionEntityType: baseline.entityType,
+      entityId: baseline.entityId,
+      caseId: null,
+      deletedAt: baseline.deletedAt,
+      source: 'deleted-baseline',
+    });
+  });
+
+  localTombstones.forEach((tombstone) => {
+    const syncEntityType = deletionEntityTypeToSyncEntityType(tombstone.entityType);
+
+    addEntry({
+      key: getDeletionKey(syncEntityType, tombstone.entityId),
+      entityType: syncEntityType,
+      deletionEntityType: tombstone.entityType,
+      entityId: tombstone.entityId,
+      caseId: tombstone.caseId,
+      deletedAt: tombstone.deletedAt,
+      source: 'local-tombstone',
+      tombstone,
+    });
+  });
+
+  cloudLedger.forEach((row) => {
+    const tombstone = mapCloudDeletionLedgerToLocalTombstone(row);
+    const syncEntityType = deletionEntityTypeToSyncEntityType(tombstone.entityType);
+
+    addEntry({
+      key: getDeletionKey(syncEntityType, tombstone.entityId),
+      entityType: syncEntityType,
+      deletionEntityType: tombstone.entityType,
+      entityId: tombstone.entityId,
+      caseId: tombstone.caseId,
+      deletedAt: tombstone.deletedAt,
+      source: 'cloud-ledger',
+      tombstone,
+    });
+  });
+
+  return entries;
+}
+
+function expandDeletionAuthorityWithCaseDependents(
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+  localArchive: LocalArchiveSnapshot,
+  onlineArchive: CloudArchiveSnapshot,
+) {
+  const entries = new Map(deletionAuthority);
+  const addDerivedEntry = (
+    entityType: SyncEntityType,
+    entityId: string,
+    caseId: string | null,
+    parentEntry: SharedDeletionAuthorityEntry,
+  ) => {
+    const deletionEntityType = syncEntityTypeToDeletionEntityType(entityType);
+    const key = getDeletionKey(entityType, entityId);
+
+    if (entries.has(key)) {
+      return;
+    }
+
+    entries.set(key, {
+      key,
+      entityType,
+      deletionEntityType,
+      entityId,
+      caseId,
+      deletedAt: parentEntry.deletedAt,
+      source: parentEntry.source,
+    });
+  };
+  const deletedCaseEntries = [...entries.values()].filter((entry) => entry.entityType === 'cases');
+  const deletedCaseIds = new Set(deletedCaseEntries.map((entry) => entry.entityId));
+
+  deletedCaseEntries.forEach((caseEntry) => {
+    localArchive.dossiers
+      .filter((record) => record.caseId === caseEntry.entityId)
+      .forEach((record) => addDerivedEntry('dossiers', record.id, record.caseId, caseEntry));
+    onlineArchive.dossiers
+      .filter((record) => record.case_id === caseEntry.entityId)
+      .forEach((record) => addDerivedEntry('dossiers', record.id, record.case_id, caseEntry));
+  });
+
+  const deletedDossierIds = new Set(
+    [...entries.values()]
+      .filter((entry) => entry.entityType === 'dossiers')
+      .map((entry) => entry.entityId),
+  );
+
+  deletedCaseEntries.forEach((caseEntry) => {
+    localArchive.bonds
+      .filter(
+        (record) =>
+          record.caseId === caseEntry.entityId ||
+          deletedDossierIds.has(record.sourceDossierId) ||
+          deletedDossierIds.has(record.targetDossierId),
+      )
+      .forEach((record) => addDerivedEntry('bonds', record.id, record.caseId, caseEntry));
+    onlineArchive.bonds
+      .filter(
+        (record) =>
+          record.case_id === caseEntry.entityId ||
+          deletedDossierIds.has(record.source_dossier_id) ||
+          deletedDossierIds.has(record.target_dossier_id),
+      )
+      .forEach((record) => addDerivedEntry('bonds', record.id, record.case_id, caseEntry));
+    localArchive.boardPins
+      .filter(
+        (record) =>
+          record.caseId === caseEntry.entityId ||
+          deletedDossierIds.has(record.dossierId),
+      )
+      .forEach((record) => addDerivedEntry('boardEntries', record.id, record.caseId, caseEntry));
+    onlineArchive.boardEntries
+      .filter(
+        (record) =>
+          record.case_id === caseEntry.entityId ||
+          deletedDossierIds.has(record.dossier_id),
+      )
+      .forEach((record) => addDerivedEntry('boardEntries', record.id, record.case_id, caseEntry));
+  });
+
+  deletedCaseIds.forEach((caseId) => {
+    const caseEntry = entries.get(getDeletionKey('cases', caseId));
+
+    if (!caseEntry) {
+      return;
+    }
+
+    [...entries.values()]
+      .filter((entry) => entry.caseId === caseId && entry.entityType !== 'cases')
+      .forEach((entry) => {
+        if (!entries.has(entry.key)) {
+          entries.set(entry.key, entry);
+        }
+      });
+  });
+
+  return entries;
+}
+
+function hasDeletionAuthority(
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+  entityType: SyncEntityType,
+  entityId: string,
+) {
+  return deletionAuthority.has(getDeletionKey(entityType, entityId));
+}
+
+function filterRecordsByDeletionAuthority<TRecord extends { id: string }>(
+  records: TRecord[],
+  entityType: SyncEntityType,
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+) {
+  return records.filter((record) => !hasDeletionAuthority(deletionAuthority, entityType, record.id));
+}
+
+function getDeletionAuthorityIds(
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+  entityType: SyncEntityType,
+) {
+  return new Set(
+    [...deletionAuthority.values()]
+      .filter((entry) => entry.entityType === entityType)
+      .map((entry) => entry.entityId),
+  );
+}
+
+function hasActionId(
+  actionIds: {
+    cases: Set<string>;
+    dossiers: Set<string>;
+    bonds: Set<string>;
+    boardPins: Set<string>;
+  },
+  entry: SharedDeletionAuthorityEntry,
+) {
+  if (entry.entityType === 'cases') {
+    return actionIds.cases.has(entry.entityId);
+  }
+
+  if (entry.entityType === 'dossiers') {
+    return actionIds.dossiers.has(entry.entityId);
+  }
+
+  if (entry.entityType === 'bonds') {
+    return actionIds.bonds.has(entry.entityId);
+  }
+
+  return actionIds.boardPins.has(entry.entityId);
 }
 
 function sanitizeEntityId(id: string | null | undefined) {
@@ -776,6 +1125,17 @@ function createRemoteDeletionBaselineEntries(deletedIds: {
       ]),
     ),
   };
+}
+
+function createDeletionBaselineEntriesFromAuthority(
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+) {
+  return Object.fromEntries(
+    [...deletionAuthority.values()].map((entry) => [
+      entry.key,
+      createRemoteDeletionBaselineEntry(entry.entityType, entry.entityId, entry.deletedAt),
+    ]),
+  );
 }
 
 function isValidStableId(value: unknown) {
@@ -858,10 +1218,12 @@ function normalizeBondContent(record: {
   origin?: string;
   threadmark?: Record<string, unknown>;
 }) {
+  const origin = record.origin ?? record.evidence?.origin;
+  const threadmark = record.threadmark ?? record.evidence?.threadmark;
   const evidence = {
     ...(record.evidence ?? {}),
-    origin: record.origin,
-    threadmark: record.threadmark,
+    origin,
+    threadmark,
   };
 
   return {
@@ -980,14 +1342,12 @@ function compareById<TLocal extends { id: string }, TOnline extends { id: string
   normalizeLocalForComparison: (record: TLocal) => unknown,
   normalizeOnlineForComparison: (record: TOnline) => unknown,
   baselineFingerprints: Record<string, string> | undefined,
-  tombstones: DeletionTombstone[],
-  deletedBaselineKeys: Set<string>,
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
   stats: ReconciliationStats,
 ) {
   const onlineById = new Map(onlineRecords.map((record) => [record.id, record]));
   const localIds = new Set(localRecords.map((record) => record.id));
-  const entityTombstones = tombstonesForEntityType(tombstones, entityType);
-  const tombstonedIds = new Set(entityTombstones.map((tombstone) => tombstone.entityId));
+  const deletionAuthorityIds = getDeletionAuthorityIds(deletionAuthority, entityType);
   const section = { ...emptyPlanSection };
 
   localRecords.forEach((localRecord) => {
@@ -999,18 +1359,17 @@ function compareById<TLocal extends { id: string }, TOnline extends { id: string
       return;
     }
 
+    if (deletionAuthorityIds.has(localRecord.id)) {
+      section.cloudUpdatesAvailable += 1;
+      section.onlineNewer += 1;
+      return;
+    }
+
     const onlineRecord = onlineById.get(localRecord.id);
 
     if (!onlineRecord) {
-      const deletionKey = getDeletionKey(entityType, localRecord.id);
-
-      if (deletedBaselineKeys.has(deletionKey)) {
-        section.cloudUpdatesAvailable += 1;
-        section.onlineNewer += 1;
-      } else {
-        section.localOnly += 1;
-        section.newRecords += 1;
-      }
+      section.localOnly += 1;
+      section.newRecords += 1;
       return;
     }
 
@@ -1078,15 +1437,9 @@ function compareById<TLocal extends { id: string }, TOnline extends { id: string
       return;
     }
 
-    if (tombstonedIds.has(record.id)) {
+    if (deletionAuthorityIds.has(record.id)) {
       section.localNewer += 1;
       section.updatedRecords += 1;
-      return;
-    }
-
-    if (deletedBaselineKeys.has(getDeletionKey(entityType, record.id))) {
-      section.conflicts += 1;
-      section.conflictRecords += 1;
       return;
     }
 
@@ -1109,13 +1462,12 @@ function createRecordActions<TLocal extends { id: string }, TOnline extends { id
   normalizeOnlineForComparison: (record: TOnline) => unknown,
   baselineFingerprints: Record<string, string> | undefined,
   baselineStatus: SyncRecordAction['baselineStatus'],
-  tombstones: DeletionTombstone[],
-  deletedBaselineKeys: Set<string>,
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
 ): SyncRecordAction[] {
   const onlineById = new Map(onlineRecords.map((record) => [record.id, record]));
   const localIds = new Set(localRecords.map((record) => record.id));
-  const entityTombstones = tombstonesForEntityType(tombstones, entityType);
-  const tombstonedIds = new Set(entityTombstones.map((tombstone) => tombstone.entityId));
+  const deletionAuthorityEntries = [...deletionAuthority.values()].filter((entry) => entry.entityType === entityType);
+  const deletionAuthorityIds = new Set(deletionAuthorityEntries.map((entry) => entry.entityId));
   const actions: SyncRecordAction[] = [];
 
   localRecords.forEach((localRecord) => {
@@ -1130,22 +1482,22 @@ function createRecordActions<TLocal extends { id: string }, TOnline extends { id
       return;
     }
 
+    if (deletionAuthorityIds.has(localRecord.id)) {
+      actions.push({
+        entityType,
+        id: localRecord.id,
+        action: 'delete-local',
+        baselineStatus,
+        safeReason: 'Shared deletion authority marks this local record deleted.',
+      });
+      return;
+    }
+
     const onlineRecord = onlineById.get(localRecord.id);
 
     if (!onlineRecord) {
       const deletionKey = getDeletionKey(entityType, localRecord.id);
       const baselineFingerprint = baselineFingerprints?.[deletionKey];
-
-      if (deletedBaselineKeys.has(deletionKey)) {
-        actions.push({
-          entityType,
-          id: localRecord.id,
-          action: 'delete-local',
-          baselineStatus,
-          safeReason: 'LoreBound Online no longer contains this record and the baseline marks it deleted.',
-        });
-        return;
-      }
 
       if (baselineFingerprint) {
         const localFingerprint = fingerprint(normalizeLocalForComparison(localRecord));
@@ -1278,24 +1630,13 @@ function createRecordActions<TLocal extends { id: string }, TOnline extends { id
       return;
     }
 
-    if (tombstonedIds.has(onlineRecord.id)) {
+    if (deletionAuthorityIds.has(onlineRecord.id)) {
       actions.push({
         entityType,
         id: onlineRecord.id,
         action: 'delete-cloud',
         baselineStatus,
         safeReason: 'This record was intentionally deleted from the Local Archive and must be removed from LoreBound Online.',
-      });
-      return;
-    }
-
-    if (deletedBaselineKeys.has(getDeletionKey(entityType, onlineRecord.id))) {
-      actions.push({
-        entityType,
-        id: onlineRecord.id,
-        action: 'remote-record-recreated',
-        baselineStatus,
-        safeReason: 'A stale client appears to have recreated a deleted record. LoreBound will preserve the deletion.',
       });
       return;
     }
@@ -1311,27 +1652,55 @@ function createRecordActions<TLocal extends { id: string }, TOnline extends { id
     }
   });
 
-  entityTombstones.forEach((tombstone) => {
-    if (localIds.has(tombstone.entityId) || onlineById.has(tombstone.entityId)) {
+  deletionAuthorityEntries.forEach((entry) => {
+    if (localIds.has(entry.entityId) || onlineById.has(entry.entityId)) {
       return;
     }
 
     actions.push({
       entityType,
-      id: tombstone.entityId,
+      id: entry.entityId,
       action:
-        tombstone.synchronizationStatus === 'verified'
+        entry.tombstone?.synchronizationStatus === 'verified' || entry.source === 'cloud-ledger'
           ? 'deletion-verified'
           : 'deletion-pending',
       baselineStatus,
       safeReason:
-        tombstone.synchronizationStatus === 'verified'
+        entry.tombstone?.synchronizationStatus === 'verified' || entry.source === 'cloud-ledger'
           ? 'This deletion has been verified against LoreBound Online.'
           : 'This deletion is waiting for LoreBound Online verification.',
     });
   });
 
   return actions;
+}
+
+function findContradictoryDeletionActions(actions: SyncRecordAction[]) {
+  const actionsByEntity = new Map<string, Set<SyncRecordAction['action']>>();
+
+  actions.forEach((action) => {
+    const key = getDeletionKey(action.entityType, action.id);
+    const entityActions = actionsByEntity.get(key) ?? new Set<SyncRecordAction['action']>();
+    entityActions.add(action.action);
+    actionsByEntity.set(key, entityActions);
+  });
+
+  return [...actionsByEntity.entries()].filter(([, entityActions]) => {
+    const hasDeletionAction =
+      entityActions.has('delete-cloud') ||
+      entityActions.has('delete-local') ||
+      entityActions.has('deletion-pending') ||
+      entityActions.has('deletion-verified') ||
+      entityActions.has('remote-record-recreated');
+    const hasLiveAction =
+      entityActions.has('upload-local-only') ||
+      entityActions.has('upload-local-newer') ||
+      entityActions.has('retrieve-cloud-only') ||
+      entityActions.has('retrieve-cloud-newer') ||
+      entityActions.has('unchanged');
+
+    return hasDeletionAction && hasLiveAction;
+  });
 }
 
 function isArchiveEmpty(snapshot: { cases: unknown[]; dossiers: unknown[]; bonds: unknown[]; boardEntries?: unknown[]; boardPins?: unknown[] }) {
@@ -1479,6 +1848,145 @@ function createBaselineUpdatedAt(localArchive: LocalArchiveSnapshot) {
     ...localArchive.bonds.map((record) => [record.id, record.dateModified]),
     ...localArchive.boardPins.map((record) => [record.id, record.datePinned]),
   ]);
+}
+
+function createRecordKeySet(localArchive: LocalArchiveSnapshot) {
+  return new Set([
+    ...localArchive.cases.map((record) => getFingerprintKey('cases', record.id)),
+    ...localArchive.dossiers.map((record) => getFingerprintKey('dossiers', record.id)),
+    ...localArchive.bonds.map((record) => getFingerprintKey('bonds', record.id)),
+    ...localArchive.boardPins.map((record) => getFingerprintKey('boardEntries', record.id)),
+  ]);
+}
+
+function filterObjectByKeys<T>(values: Record<string, T> | undefined, keys: Set<string>) {
+  return Object.fromEntries(
+    Object.entries(values ?? {}).filter(([key]) => keys.has(key)),
+  ) as Record<string, T>;
+}
+
+function scopeLocalSyncStateToArchive(
+  localSyncState: LocalSyncState | null,
+  localArchive: LocalArchiveSnapshot,
+) {
+  if (!localSyncState) {
+    return null;
+  }
+
+  const caseIds = new Set(localArchive.cases.map((record) => record.id));
+  const hasCaseBaseline = localSyncState.synchronizedRecordIds.cases.some((id) => caseIds.has(id));
+
+  if (!hasCaseBaseline) {
+    return null;
+  }
+
+  const dossierIds = new Set(localArchive.dossiers.map((record) => record.id));
+  const bondIds = new Set(localArchive.bonds.map((record) => record.id));
+  const boardPinIds = new Set(localArchive.boardPins.map((record) => record.id));
+  const recordKeys = createRecordKeySet(localArchive);
+  const deletionKeys = new Set(
+    localArchive.deletionTombstones.map((tombstone) =>
+      getDeletionKey(deletionEntityTypeToSyncEntityType(tombstone.entityType), tombstone.entityId),
+    ),
+  );
+
+  return {
+    ...localSyncState,
+    synchronizedRecordIds: {
+      cases: localSyncState.synchronizedRecordIds.cases.filter((id) => caseIds.has(id)),
+      dossiers: localSyncState.synchronizedRecordIds.dossiers.filter((id) => dossierIds.has(id)),
+      bonds: localSyncState.synchronizedRecordIds.bonds.filter((id) => bondIds.has(id)),
+      boardPins: localSyncState.synchronizedRecordIds.boardPins.filter((id) => boardPinIds.has(id)),
+    },
+    synchronizedUpdatedAt: filterObjectByKeys(localSyncState.synchronizedUpdatedAt, new Set([
+      ...localArchive.cases.map((record) => record.id),
+      ...localArchive.dossiers.map((record) => record.id),
+      ...localArchive.bonds.map((record) => record.id),
+      ...localArchive.boardPins.map((record) => record.id),
+    ])),
+    synchronizedFingerprints: localSyncState.synchronizedFingerprints
+      ? filterObjectByKeys(localSyncState.synchronizedFingerprints, recordKeys)
+      : undefined,
+    deletionBaselines: filterObjectByKeys(localSyncState.deletionBaselines, deletionKeys),
+    cloudImagePaths: {
+      cases: Object.fromEntries(
+        Object.entries(localSyncState.cloudImagePaths?.cases ?? {}).filter(([id]) => caseIds.has(id)),
+      ),
+      dossiers: Object.fromEntries(
+        Object.entries(localSyncState.cloudImagePaths?.dossiers ?? {}).filter(([id]) => dossierIds.has(id)),
+      ),
+    },
+  };
+}
+
+function mergeLocalSyncState(
+  existingState: LocalSyncState | null,
+  nextState: LocalSyncState,
+  scopedArchive: LocalArchiveSnapshot,
+): LocalSyncState {
+  if (!existingState || existingState.investigatorId !== nextState.investigatorId) {
+    return nextState;
+  }
+
+  const caseIds = new Set(scopedArchive.cases.map((record) => record.id));
+  const dossierIds = new Set(scopedArchive.dossiers.map((record) => record.id));
+  const bondIds = new Set(scopedArchive.bonds.map((record) => record.id));
+  const boardPinIds = new Set(scopedArchive.boardPins.map((record) => record.id));
+  const scopedRecordKeys = createRecordKeySet(scopedArchive);
+
+  return {
+    ...nextState,
+    synchronizedRecordIds: {
+      cases: [
+        ...existingState.synchronizedRecordIds.cases.filter((id) => !caseIds.has(id)),
+        ...nextState.synchronizedRecordIds.cases,
+      ],
+      dossiers: [
+        ...existingState.synchronizedRecordIds.dossiers.filter((id) => !dossierIds.has(id)),
+        ...nextState.synchronizedRecordIds.dossiers,
+      ],
+      bonds: [
+        ...existingState.synchronizedRecordIds.bonds.filter((id) => !bondIds.has(id)),
+        ...nextState.synchronizedRecordIds.bonds,
+      ],
+      boardPins: [
+        ...existingState.synchronizedRecordIds.boardPins.filter((id) => !boardPinIds.has(id)),
+        ...nextState.synchronizedRecordIds.boardPins,
+      ],
+    },
+    synchronizedUpdatedAt: {
+      ...Object.fromEntries(
+        Object.entries(existingState.synchronizedUpdatedAt).filter(([id]) =>
+          !caseIds.has(id) && !dossierIds.has(id) && !bondIds.has(id) && !boardPinIds.has(id),
+        ),
+      ),
+      ...nextState.synchronizedUpdatedAt,
+    },
+    synchronizedFingerprints: {
+      ...Object.fromEntries(
+        Object.entries(existingState.synchronizedFingerprints ?? {}).filter(([key]) => !scopedRecordKeys.has(key)),
+      ),
+      ...(nextState.synchronizedFingerprints ?? {}),
+    },
+    deletionBaselines: {
+      ...(existingState.deletionBaselines ?? {}),
+      ...(nextState.deletionBaselines ?? {}),
+    },
+    cloudImagePaths: {
+      cases: {
+        ...Object.fromEntries(
+          Object.entries(existingState.cloudImagePaths?.cases ?? {}).filter(([id]) => !caseIds.has(id)),
+        ),
+        ...(nextState.cloudImagePaths?.cases ?? {}),
+      },
+      dossiers: {
+        ...Object.fromEntries(
+          Object.entries(existingState.cloudImagePaths?.dossiers ?? {}).filter(([id]) => !dossierIds.has(id)),
+        ),
+        ...(nextState.cloudImagePaths?.dossiers ?? {}),
+      },
+    },
+  };
 }
 
 function getBaselineState(
@@ -1662,6 +2170,159 @@ function createSectionDiagnostics(
   };
 }
 
+function createCrescentCityDeletionTrace(
+  fullLocalArchive: LocalArchiveSnapshot,
+  fullOnlineArchive: CloudArchiveSnapshot,
+  scopedLocalArchive: LocalArchiveSnapshot,
+  scopedOnlineArchive: CloudArchiveSnapshot,
+  deletionAuthority: Map<string, SharedDeletionAuthorityEntry>,
+  recordActions: SyncRecordAction[],
+  localSyncState: LocalSyncState | null,
+  userId: string,
+  canSynchronize: boolean,
+  selectedSynchronizationMode: SyncPlan['diagnostics']['reconciliation']['selectedSynchronizationMode'],
+  selectedAction: string,
+) {
+  const localCase =
+    fullLocalArchive.cases.find((record) => record.caseName.trim().toLowerCase() === 'crescent city') ?? null;
+  const cloudCase =
+    fullOnlineArchive.cases.find((record) => record.name.trim().toLowerCase() === 'crescent city') ?? null;
+  const caseId = localCase?.id ?? cloudCase?.id ?? null;
+  const ledgerRows = caseId
+    ? fullOnlineArchive.deletionLedger.filter(
+        (row) => row.case_id === caseId && row.entity_type === 'dossiers',
+      )
+    : [];
+  const scopedLedgerRows = caseId
+    ? scopedOnlineArchive.deletionLedger.filter(
+        (row) => row.case_id === caseId && row.entity_type === 'dossiers',
+      )
+    : [];
+  const tombstones = caseId
+    ? fullLocalArchive.deletionTombstones.filter(
+        (tombstone) => tombstone.caseId === caseId && tombstone.entityType === 'dossiers',
+      )
+    : [];
+  const candidateIds = [
+    ...new Set([
+      ...ledgerRows.map((row) => row.entity_id),
+      ...tombstones.map((tombstone) => tombstone.entityId),
+    ]),
+  ];
+  const candidateId =
+    candidateIds.find((id) => scopedLocalArchive.dossiers.some((record) => record.id === id)) ??
+    candidateIds[0] ??
+    null;
+  const ledgerRow = candidateId
+    ? ledgerRows.find((row) => row.entity_id === candidateId) ?? null
+    : null;
+  const scopedLedgerRow = candidateId
+    ? scopedLedgerRows.find((row) => row.entity_id === candidateId) ?? null
+    : null;
+  const tombstone = candidateId
+    ? tombstones.find((record) => record.entityId === candidateId) ?? null
+    : null;
+  const localDossierExists = Boolean(
+    candidateId && scopedLocalArchive.dossiers.some((record) => record.id === candidateId),
+  );
+  const liveCloudDossierExists = Boolean(
+    candidateId && fullOnlineArchive.dossiers.some((record) => record.id === candidateId),
+  );
+  const deletionKey = candidateId ? getDeletionKey('dossiers', candidateId) : null;
+  const plannerAction = candidateId
+    ? recordActions.find((action) => action.entityType === 'dossiers' && action.id === candidateId)?.action ?? null
+    : null;
+  const sharedAuthorityContains = Boolean(
+    candidateId && hasDeletionAuthority(deletionAuthority, 'dossiers', candidateId),
+  );
+  const matchingDeletedBaselineExists = Boolean(
+    deletionKey && localSyncState?.deletionBaselines?.[deletionKey],
+  );
+  const firstFalseStage = (() => {
+    if (!caseId) {
+      return 'Crescent City Case was not found locally or in LoreBound Online.';
+    }
+
+    if (!candidateId) {
+      return 'No deleted Dossier candidate was found from local tombstones or LoreBound Online ledger rows.';
+    }
+
+    if (!ledgerRow && !tombstone && !matchingDeletedBaselineExists) {
+      return 'No deletion authority source exists for the candidate Dossier.';
+    }
+
+    if (ledgerRow && !scopedLedgerRow) {
+      return 'The LoreBound Online ledger row exists but is filtered out of the active Case cloud snapshot.';
+    }
+
+    if ((ledgerRow || tombstone || matchingDeletedBaselineExists) && !sharedAuthorityContains) {
+      return 'Deletion authority source exists but shared deletion authority does not contain the Dossier.';
+    }
+
+    if (localDossierExists && !plannerAction) {
+      return 'The stale local Dossier exists but no planner action was created for it.';
+    }
+
+    if (localDossierExists && plannerAction !== 'delete-local') {
+      return `The stale local Dossier exists but planner action is ${plannerAction}.`;
+    }
+
+    if (localDossierExists && plannerAction === 'delete-local' && !canSynchronize) {
+      return 'The planner created delete-local but synchronization is not executable.';
+    }
+
+    if (ledgerRow && liveCloudDossierExists) {
+      return 'The ledger row exists but the live LoreBound Online Dossier row still exists.';
+    }
+
+    if (!localDossierExists && !liveCloudDossierExists && sharedAuthorityContains) {
+      return 'No failing stage detected for this origin.';
+    }
+
+    return 'Trace complete; run synchronization on this origin and refresh Operations Console.';
+  })();
+
+  return {
+    caseId,
+    deletedDossierId: candidateId,
+    deletedDossierCandidates: candidateIds,
+    deletingClientSourceClientId: ledgerRow?.source_client_id ?? tombstone?.sourceClientId ?? null,
+    localDeletedDossierExists: localDossierExists,
+    localTombstoneExists: Boolean(tombstone),
+    localTombstoneEntityType: tombstone?.entityType ?? null,
+    localTombstoneEntityId: tombstone?.entityId ?? null,
+    localTombstoneCaseId: tombstone?.caseId ?? null,
+    localTombstoneStatus: tombstone?.synchronizationStatus ?? null,
+    localTombstoneAttemptCount: 'Not tracked',
+    localTombstoneLastError: tombstone?.lastFailedStage ?? null,
+    localTombstoneDeletedAt: tombstone?.deletedAt ?? null,
+    localTombstoneSourceClientId: tombstone?.sourceClientId ?? null,
+    localTombstoneIncludedInPlan: Boolean(
+      tombstone && scopedLocalArchive.deletionTombstones.some((record) => record.id === tombstone.id),
+    ),
+    cloudLedgerRowExists: Boolean(ledgerRow),
+    cloudLedgerRowId: ledgerRow?.id ?? null,
+    cloudLedgerEntityType: ledgerRow?.entity_type ?? null,
+    cloudLedgerEntityId: ledgerRow?.entity_id ?? null,
+    cloudLedgerCaseId: ledgerRow?.case_id ?? null,
+    cloudLedgerUserIdMatches: ledgerRow ? ledgerRow.user_id === userId : null,
+    cloudLedgerDeletedAt: ledgerRow?.deleted_at ?? null,
+    cloudLedgerAcknowledgedAt: ledgerRow?.acknowledged_at ?? null,
+    cloudLedgerSourceClientId: ledgerRow?.source_client_id ?? null,
+    cloudLedgerDeletionVersion: ledgerRow?.deletion_version ?? null,
+    liveCloudDossierExists,
+    scopedCloudLedgerIncludesRow: Boolean(scopedLedgerRow),
+    sharedDeletionAuthorityContainsDossier: sharedAuthorityContains,
+    matchingDeletedBaselineExists,
+    plannerRecordAction: plannerAction,
+    deleteLocalActionExists: plannerAction === 'delete-local',
+    planCanSynchronize: canSynchronize,
+    selectedSynchronizationMode,
+    selectedAction,
+    firstFalseStage,
+  };
+}
+
 class LoreBoundSyncService implements SyncService {
   async getStatus(): Promise<SyncStatus> {
     const environment = environmentManager.getEnvironment();
@@ -1692,6 +2353,34 @@ class LoreBoundSyncService implements SyncService {
     };
   }
 
+  async discoverCloudCases(): Promise<LoreCase[]> {
+    const user = await authService.getCurrentUser();
+
+    if (!user) {
+      return [];
+    }
+
+    const [localArchive, onlineArchive, localSyncState] = await Promise.all([
+      readFullLocalArchive(),
+      cloudArchiveRepository.readArchive(),
+      readLocalSyncState(),
+    ]);
+    const deletionAuthority = createSharedDeletionAuthority(
+      localArchive.deletionTombstones,
+      onlineArchive.deletionLedger,
+      localSyncState,
+    );
+    const localCaseIds = new Set(localArchive.cases.map((record) => record.id));
+
+    return sortCasesByCloudUpdatedAt(
+      onlineArchive.cases
+        .filter((record) => record.user_id === user.id)
+        .filter((record) => !localCaseIds.has(record.id))
+        .filter((record) => !hasDeletionAuthority(deletionAuthority, 'cases', record.id))
+        .map(mapCloudCaseToLocal),
+    );
+  }
+
   async createPlan(): Promise<SyncPlanResult> {
     const plan = createEmptyPlan();
     const user = await authService.getCurrentUser();
@@ -1701,17 +2390,52 @@ class LoreBoundSyncService implements SyncService {
       return { ok: false, plan, message: 'Connect your Investigator Profile first.' };
     }
 
-    const localArchive = await readFullLocalArchive();
-    const localSyncState = await readLocalSyncState();
+    const fullLocalArchive = await readFullLocalArchive();
+    const activeCaseId = getPrimaryLocalCaseId(fullLocalArchive);
+    const localArchive = scopeLocalArchiveToCase(fullLocalArchive, activeCaseId);
+    const fullLocalSyncState = await readLocalSyncState();
+    const localSyncState = scopeLocalSyncStateToArchive(fullLocalSyncState, localArchive);
+    const localImageCount = countLocalImages(localArchive);
+    const localArchiveIsEmpty = isArchiveEmpty(localArchive);
+
+    plan.local = {
+      investigationName:
+        localArchive.cases.find((loreCase) => loreCase.id === localArchive.activeCaseId)?.caseName ??
+        localArchive.cases[0]?.caseName ??
+        null,
+      caseCount: localArchive.cases.length,
+      dossierCount: localArchive.dossiers.length,
+      bondCount: localArchive.bonds.length,
+      boardEntryCount: localArchive.boardPins.length,
+      localImageCount,
+      estimatedTransferBytes: estimateBytes(localArchive),
+    };
+    plan.isLocalArchiveEmpty = localArchiveIsEmpty;
+    plan.sections = {
+      cases: createLocalOnlyPlanSection(localArchive.cases.length),
+      dossiers: createLocalOnlyPlanSection(localArchive.dossiers.length),
+      bonds: createLocalOnlyPlanSection(localArchive.bonds.length),
+      boardEntries: createLocalOnlyPlanSection(localArchive.boardPins.length),
+    };
+    plan.lastSynchronizedAt = localSyncState?.lastSuccessfulSynchronizationAt ?? null;
     plan.diagnostics = {
       ...plan.diagnostics,
       localInvestigationsRead: localArchive.cases.length,
       localDossiersRead: localArchive.dossiers.length,
       localBondsRead: localArchive.bonds.length,
       localEvidencePinsRead: localArchive.boardPins.length,
+      archiveState: {
+        ...plan.diagnostics.archiveState,
+        activeInvestigationIdPresent: Boolean(localArchive.activeCaseId),
+        localCaseStableId: getPrimaryLocalCaseId(localArchive),
+        classification: localArchiveIsEmpty ? 'Empty' : 'Complete Local Archive',
+        disabledReason: 'LoreBound Online has not been reviewed yet.',
+        browserOrigin: typeof window !== 'undefined' ? window.location.origin : 'Unknown',
+        localImageReferences: localImageCount,
+      },
     };
     const onlineRead = await cloudArchiveRepository.readArchiveWithDiagnostics();
-    const onlineArchive: CloudArchiveSnapshot = onlineRead.archive;
+    const onlineArchive: CloudArchiveSnapshot = scopeCloudArchiveToCase(onlineRead.archive, activeCaseId);
 
     plan.diagnostics = {
       ...plan.diagnostics,
@@ -1720,32 +2444,75 @@ class LoreBoundSyncService implements SyncService {
 
     if (!onlineRead.isAvailable) {
       plan.blockingReasons.push('LoreBound Online could not be reviewed.');
+      plan.diagnostics = {
+        ...plan.diagnostics,
+        archiveState: {
+          ...plan.diagnostics.archiveState,
+          classification: localArchiveIsEmpty ? 'Empty' : 'Complete Local Archive',
+          actionEnabled: false,
+          disabledReason: 'LoreBound Online could not be reviewed.',
+          handlerPresent: true,
+          selectedAction: 'Update Investigation',
+          selectedActionReason: 'Local Archive changes exist, but LoreBound Online is unavailable.',
+        },
+        reconciliation: {
+          ...plan.diagnostics.reconciliation,
+          selectedSynchronizationMode: localArchiveIsEmpty ? 'none' : 'upload-only',
+          uploadActionsCount:
+            localArchive.cases.length +
+            localArchive.dossiers.length +
+            localArchive.bonds.length +
+            localArchive.boardPins.length,
+          outboundGateReason: 'LoreBound Online could not be reviewed.',
+        },
+      };
       return { ok: false, plan, message: 'LoreBound Online could not be reviewed.' };
     }
 
-    const localImageCount = countLocalImages(localArchive);
     const imageReadiness = await cloudImageProvider.checkReadiness(user.id);
     const imagePreparation =
       localImageCount > 0
         ? await prepareCloudImages(localArchive, user.id)
         : { candidates: [], preparedImages: [], failures: [] };
-    const dependencyReasons = validateDependencies(localArchive);
-    const isLocalArchiveEmpty = isArchiveEmpty(localArchive);
-    const isOnlineArchiveEmpty = isArchiveEmpty(onlineArchive);
-    const sameInvestigationIdLocalAndCloud = hasSamePrimaryInvestigation(localArchive, onlineArchive);
-    const localCaseStableId = getPrimaryLocalCaseId(localArchive);
-    const cloudCaseStableId = getPrimaryCloudCaseId(onlineArchive);
-    const caseNormalizedMatch = hasMatchingPrimaryCaseContent(localArchive, onlineArchive);
-    const emptyShellState = getEmptyLocalCaseShellState(localArchive, onlineArchive, localSyncState, user.id);
-    const cloudImageCount = countCloudImages(onlineArchive);
     const plannedImagePaths = getPlannedImagePaths(localArchive, user.id);
-    const cloudImagePaths = getCloudImagePaths(onlineArchive);
-    const localBaselineFingerprints = createLocalFingerprintSnapshot(localArchive, cloudImagePaths);
-    const cloudBaselineFingerprints = createCloudFingerprintSnapshot(onlineArchive);
-    const deletedBaselineKeys = getDeletedBaselineKeys(localSyncState);
-    const baselineState = getBaselineState(
+    const deletionAuthority = expandDeletionAuthorityWithCaseDependents(
+      createSharedDeletionAuthority(
+        localArchive.deletionTombstones,
+        onlineArchive.deletionLedger,
+        localSyncState,
+      ),
       localArchive,
       onlineArchive,
+    );
+    const liveLocalArchive = {
+      ...localArchive,
+      cases: filterRecordsByDeletionAuthority(localArchive.cases, 'cases', deletionAuthority),
+      dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
+      bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
+      boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+    };
+    const liveOnlineArchive = {
+      ...onlineArchive,
+      cases: filterRecordsByDeletionAuthority(onlineArchive.cases, 'cases', deletionAuthority),
+      dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
+      bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
+      boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+    };
+    const cloudImagePaths = getCloudImagePaths(liveOnlineArchive);
+    const localBaselineFingerprints = createLocalFingerprintSnapshot(liveLocalArchive, cloudImagePaths);
+    const cloudBaselineFingerprints = createCloudFingerprintSnapshot(liveOnlineArchive);
+    const dependencyReasons = validateDependencies(liveLocalArchive);
+    const isLocalArchiveEmpty = isArchiveEmpty(liveLocalArchive);
+    const isOnlineArchiveEmpty = isArchiveEmpty(liveOnlineArchive);
+    const sameInvestigationIdLocalAndCloud = hasSamePrimaryInvestigation(liveLocalArchive, liveOnlineArchive);
+    const localCaseStableId = getPrimaryLocalCaseId(liveLocalArchive);
+    const cloudCaseStableId = getPrimaryCloudCaseId(liveOnlineArchive);
+    const caseNormalizedMatch = hasMatchingPrimaryCaseContent(liveLocalArchive, liveOnlineArchive);
+    const emptyShellState = getEmptyLocalCaseShellState(liveLocalArchive, liveOnlineArchive, localSyncState, user.id);
+    const cloudImageCount = countCloudImages(liveOnlineArchive);
+    const baselineState = getBaselineState(
+      liveLocalArchive,
+      liveOnlineArchive,
       localSyncState,
       user.id,
       localBaselineFingerprints,
@@ -1814,8 +2581,8 @@ class LoreBoundSyncService implements SyncService {
     const comparedSections = {
       cases: compareById(
         'cases',
-        localArchive.cases,
-        onlineArchive.cases,
+        liveLocalArchive.cases,
+        liveOnlineArchive.cases,
         (record) => record.dateLastModified,
         (record) => record.updated_at,
         (record) =>
@@ -1828,14 +2595,13 @@ class LoreBoundSyncService implements SyncService {
           }),
         normalizeCaseContent,
         localSyncState?.synchronizedFingerprints,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
         reconciliationStats,
       ),
       dossiers: compareById(
         'dossiers',
-        localArchive.dossiers,
-        onlineArchive.dossiers,
+        liveLocalArchive.dossiers,
+        liveOnlineArchive.dossiers,
         (record) => record.dateModified,
         (record) => record.updated_at,
         (record) =>
@@ -1849,34 +2615,31 @@ class LoreBoundSyncService implements SyncService {
           }),
         normalizeDossierContent,
         localSyncState?.synchronizedFingerprints,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
         reconciliationStats,
       ),
       bonds: compareById(
         'bonds',
-        localArchive.bonds,
-        onlineArchive.bonds,
+        liveLocalArchive.bonds,
+        liveOnlineArchive.bonds,
         (record) => record.dateModified,
         (record) => record.updated_at,
         normalizeBondContent,
         normalizeBondContent,
         localSyncState?.synchronizedFingerprints,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
         reconciliationStats,
       ),
       boardEntries: compareById(
         'boardEntries',
-        localArchive.boardPins,
-        onlineArchive.boardEntries,
+        liveLocalArchive.boardPins,
+        liveOnlineArchive.boardEntries,
         (record) => record.datePinned,
         (record) => record.updated_at,
         normalizeBoardEntryContent,
         normalizeBoardEntryContent,
         localSyncState?.synchronizedFingerprints,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
         reconciliationStats,
       ),
     };
@@ -1884,7 +2647,7 @@ class LoreBoundSyncService implements SyncService {
       sameInvestigationIdLocalAndCloud && caseNormalizedMatch
         ? {
             ...comparedSections,
-            cases: createMatchingCaseSection(localArchive, onlineArchive),
+            cases: createMatchingCaseSection(liveLocalArchive, liveOnlineArchive),
           }
         : emptyShellState.qualifies
           ? {
@@ -1910,8 +2673,7 @@ class LoreBoundSyncService implements SyncService {
         normalizeCaseContent,
         localSyncState?.synchronizedFingerprints,
         baselineState.status,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
       ),
       ...createRecordActions(
         'dossiers',
@@ -1931,8 +2693,7 @@ class LoreBoundSyncService implements SyncService {
         normalizeDossierContent,
         localSyncState?.synchronizedFingerprints,
         baselineState.status,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
       ),
       ...createRecordActions(
         'bonds',
@@ -1944,8 +2705,7 @@ class LoreBoundSyncService implements SyncService {
         normalizeBondContent,
         localSyncState?.synchronizedFingerprints,
         baselineState.status,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
       ),
       ...createRecordActions(
         'boardEntries',
@@ -1957,10 +2717,10 @@ class LoreBoundSyncService implements SyncService {
         normalizeBoardEntryContent,
         localSyncState?.synchronizedFingerprints,
         baselineState.status,
-        localArchive.deletionTombstones,
-        deletedBaselineKeys,
+        deletionAuthority,
       ),
     ];
+    const contradictoryDeletionActions = findContradictoryDeletionActions(recordActions);
     const uploadActions = recordActions.filter(
       (action) =>
         action.action === 'upload-local-only' ||
@@ -1981,6 +2741,15 @@ class LoreBoundSyncService implements SyncService {
         action.action === 'deletion-conflict' ||
         action.action === 'tombstone-orphaned',
     );
+    if (contradictoryDeletionActions.length > 0) {
+      conflictActions.push({
+        entityType: 'bonds',
+        id: 'contradictory-deletion-plan',
+        action: 'requires-review',
+        baselineStatus: baselineState.status,
+        safeReason: 'Deletion plan contains contradictory live and deleted actions.',
+      });
+    }
     const selectedSynchronizationMode =
       conflictActions.length > 0
         ? 'review-required'
@@ -2023,6 +2792,28 @@ class LoreBoundSyncService implements SyncService {
         .filter((record) => getGeneratedBondRole(record) === 'inverse')
         .map((record) => record.id),
     );
+    const localTombstoneKeys = new Set(
+      localArchive.deletionTombstones.map((tombstone) =>
+        getDeletionKey(deletionEntityTypeToSyncEntityType(tombstone.entityType), tombstone.entityId),
+      ),
+    );
+    const cloudLedgerKeys = new Set(
+      onlineArchive.deletionLedger.map((row) => {
+        const tombstone = mapCloudDeletionLedgerToLocalTombstone(row);
+
+        return getDeletionKey(deletionEntityTypeToSyncEntityType(tombstone.entityType), tombstone.entityId);
+      }),
+    );
+    const liveLocalSuppressed =
+      localArchive.cases.length - liveLocalArchive.cases.length +
+      localArchive.dossiers.length - liveLocalArchive.dossiers.length +
+      localArchive.bonds.length - liveLocalArchive.bonds.length +
+      localArchive.boardPins.length - liveLocalArchive.boardPins.length;
+    const liveCloudSuppressed =
+      onlineArchive.cases.length - liveOnlineArchive.cases.length +
+      onlineArchive.dossiers.length - liveOnlineArchive.dossiers.length +
+      onlineArchive.bonds.length - liveOnlineArchive.bonds.length +
+      onlineArchive.boardEntries.length - liveOnlineArchive.boardEntries.length;
 
     recordThreadmarkSynchronizationDiagnostics({
       generatedBondsPendingUpload: generatedLocalOnlyCount + generatedLocalNewerCount,
@@ -2094,6 +2885,24 @@ class LoreBoundSyncService implements SyncService {
             localArchive.deletionTombstones.find((tombstone) => tombstone.synchronizationStatus === 'failed')?.lastFailedStage ??
             null,
           deletionBaselineCount: Object.keys(localSyncState?.deletionBaselines ?? {}).length,
+          cloudLedgerAvailable: onlineRead.queries.deletionLedger?.status === 'Success',
+          cloudLedgerRowCount: onlineArchive.deletionLedger.length,
+          ledgerReadFailureCount: onlineRead.queries.deletionLedger?.status === 'Failed' ? 1 : 0,
+          acknowledgedRowCount: onlineArchive.deletionLedger.filter((row) => row.acknowledged_at).length,
+          compactedRowCount: onlineArchive.deletionLedger.filter((row) => row.compacted_at).length,
+          sharedDeletionAuthorityCount: deletionAuthority.size,
+          localTombstoneOnlyCount: [...localTombstoneKeys].filter((key) => !cloudLedgerKeys.has(key)).length,
+          cloudLedgerOnlyCount: [...cloudLedgerKeys].filter((key) => !localTombstoneKeys.has(key)).length,
+          combinedAuthorityCount: [...localTombstoneKeys].filter((key) => cloudLedgerKeys.has(key)).length,
+          liveLocalRecordsSuppressed: liveLocalSuppressed,
+          liveCloudRecordsSuppressed: liveCloudSuppressed,
+          staleUploadsBlocked: recordActions.filter((action) => action.action === 'delete-local').length,
+          staleImportsBlocked: recordActions.filter((action) => action.action === 'delete-cloud').length,
+          repairRestorationsBlocked: recordActions.filter((action) => action.action === 'delete-cloud').length,
+          contradictoryDeletionRetrievalPlanCount: contradictoryDeletionActions.length,
+          liveDeletedBaselineCollisionCount: [...(localSyncState ? getDeletedBaselineKeys(localSyncState) : new Set<string>())].filter(
+            (key) => localSyncState?.synchronizedFingerprints?.[key],
+          ).length,
         },
       },
     };
@@ -2114,6 +2923,10 @@ class LoreBoundSyncService implements SyncService {
       Object.values(plan.sections).some(
         (section) => section.conflictRecords > 0 || section.itemsRequiringReview > 0,
       );
+    const hasReviewRequiredItems =
+      !isLocalArchiveEmpty &&
+      !isOnlineArchiveEmpty &&
+      Object.values(plan.sections).some((section) => section.itemsRequiringReview > 0);
     const hasCloudUpdates = Object.values(plan.sections).some(
       (section) => section.cloudUpdatesAvailable > 0,
     );
@@ -2124,12 +2937,27 @@ class LoreBoundSyncService implements SyncService {
       Object.values(plan.sections).some(
         (section) => section.onlineOnly > 0 || section.onlineNewer > 0,
       ) && !hasLocalChanges;
-    const hasConflicts = Object.values(plan.sections).some(
-      (section) => section.conflictRecords > 0 || section.itemsRequiringReview > 0,
-    );
+    const hasDeletionRetrievalActions = retrievalActions.some((action) => action.action === 'delete-local');
+    const hasOnlyDeletionRetrievalActions =
+      hasDeletionRetrievalActions &&
+      uploadActions.length === 0 &&
+      retrievalActions.every((action) => action.action === 'delete-local');
+    const hasConflicts = Object.values(plan.sections).some((section) => section.conflictRecords > 0);
     const hasDeletionUploadActions = uploadActions.some(
       (action) => action.action === 'delete-cloud' || action.action === 'remote-record-recreated',
     );
+    const hasDeletionFinalizationActions = recordActions.some((action) => {
+      if (action.action !== 'deletion-verified') {
+        return false;
+      }
+
+      return localArchive.deletionTombstones.some(
+        (tombstone) =>
+          tombstone.synchronizationStatus !== 'verified' &&
+          deletionEntityTypeToSyncEntityType(tombstone.entityType) === action.entityType &&
+          tombstone.entityId === action.id,
+      );
+    });
     const caseRecordIsSafeForRepair =
       plan.sections.cases.conflictRecords === 0 &&
       plan.sections.cases.itemsRequiringReview === 0 &&
@@ -2141,7 +2969,7 @@ class LoreBoundSyncService implements SyncService {
       !isLocalArchiveEmpty &&
       !isOnlineArchiveEmpty &&
       ((sameInvestigationIdLocalAndCloud && caseNormalizedMatch) || emptyShellState.qualifies) &&
-      hasMissingCloudDependents(localArchive, onlineArchive) &&
+      hasMissingCloudDependents(liveLocalArchive, liveOnlineArchive, deletionAuthority) &&
       caseRecordIsSafeForRepair &&
       !hasConflicts &&
       dependencyReasons.length === 0;
@@ -2162,11 +2990,15 @@ class LoreBoundSyncService implements SyncService {
         return 'Conflict' as const;
       }
 
+      if (hasReviewRequiredItems) {
+        return 'Review Required' as const;
+      }
+
       if (isPartialLocalArchive) {
         return 'Partial Local Archive' as const;
       }
 
-      if (hasLocalChanges) {
+      if (hasLocalChanges || hasDeletionUploadActions) {
         return 'Local Changes' as const;
       }
 
@@ -2193,9 +3025,16 @@ class LoreBoundSyncService implements SyncService {
         ? ['This browser’s synchronization baseline is outdated.']
         : []),
       ...(hasBlockingReview
-        ? ['Archive Reconciliation Required. Review conflicts before synchronization.']
+        ? [
+            hasConflicts
+              ? 'Archive Reconciliation Required. Review conflicts before synchronization.'
+              : 'Archive Review Required. Review records without a verified synchronization baseline before synchronization.',
+          ]
         : []),
-      ...(hasCloudUpdates && !isPartialLocalArchive && selectedSynchronizationMode !== 'bidirectional'
+      ...(hasCloudUpdates &&
+      !hasOnlyDeletionRetrievalActions &&
+      !isPartialLocalArchive &&
+      selectedSynchronizationMode !== 'bidirectional'
         ? ['LoreBound Online Updates Available. Review retrieval before updating this archive.']
         : []),
       ...(isPartialLocalArchive
@@ -2203,8 +3042,12 @@ class LoreBoundSyncService implements SyncService {
         : []),
     ];
     plan.canSynchronize =
-      uploadActions.length > 0 &&
-      (sameInvestigationIdLocalAndCloud || hasDeletionUploadActions) &&
+      (uploadActions.length > 0 || hasDeletionFinalizationActions || hasDeletionRetrievalActions) &&
+      (sameInvestigationIdLocalAndCloud ||
+        isOnlineArchiveEmpty ||
+        hasDeletionUploadActions ||
+        hasDeletionFinalizationActions ||
+        hasDeletionRetrievalActions) &&
       !baselineState.canRebuild &&
       !isPartialLocalArchive &&
       conflictActions.length === 0 &&
@@ -2213,7 +3056,8 @@ class LoreBoundSyncService implements SyncService {
     plan.canRetrieve =
       ((isLocalArchiveEmpty && !isOnlineArchiveEmpty) ||
         isPartialLocalArchive ||
-        hasSafeCloudOnlyChanges) &&
+        hasSafeCloudOnlyChanges ||
+        hasDeletionRetrievalActions) &&
       dependencyReasons.length === 0 &&
       !hasBlockingReview &&
       plan.online.isAvailable;
@@ -2277,16 +3121,32 @@ class LoreBoundSyncService implements SyncService {
           plan.blockingReasons[0] ??
           (baselineState.canRebuild
             ? 'Synchronization baseline rebuild waiting.'
-            : uploadActions.length > 0
+            : uploadActions.length > 0 || hasDeletionFinalizationActions
               ? 'Local changes waiting.'
               : 'Archive up to date.'),
         outboundGateReason:
           plan.canSynchronize
             ? 'Outbound synchronization available.'
             : plan.blockingReasons[0] ??
-              (uploadActions.length === 0
+              (uploadActions.length === 0 && !hasDeletionFinalizationActions
                 ? 'No outbound Local Archive changes detected.'
                 : 'Outbound synchronization is blocked by archive safety checks.'),
+        deletionDiagnostics: {
+          ...plan.diagnostics.reconciliation.deletionDiagnostics!,
+          crescentCityTrace: createCrescentCityDeletionTrace(
+            fullLocalArchive,
+            onlineRead.archive,
+            localArchive,
+            onlineArchive,
+            deletionAuthority,
+            recordActions,
+            localSyncState,
+            user.id,
+            plan.canSynchronize,
+            selectedSynchronizationMode,
+            selectedArchiveAction.label,
+          ),
+        },
       },
     };
 
@@ -2321,7 +3181,9 @@ class LoreBoundSyncService implements SyncService {
       };
     }
 
-    const localArchive = await readFullLocalArchive();
+    const fullLocalArchive = await readFullLocalArchive();
+    const activeCaseId = getPrimaryLocalCaseId(fullLocalArchive);
+    const localArchive = scopeLocalArchiveToCase(fullLocalArchive, activeCaseId);
     const uploadActionIds = {
       cases: new Set(
         planResult.plan.diagnostics.reconciliation.recordActions
@@ -2410,6 +3272,28 @@ class LoreBoundSyncService implements SyncService {
           .map((action) => action.id),
       ),
     };
+    const deletionFinalizationActionIds = {
+      cases: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'cases' && action.action === 'deletion-verified')
+          .map((action) => action.id),
+      ),
+      dossiers: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'dossiers' && action.action === 'deletion-verified')
+          .map((action) => action.id),
+      ),
+      bonds: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'bonds' && action.action === 'deletion-verified')
+          .map((action) => action.id),
+      ),
+      boardPins: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'boardEntries' && action.action === 'deletion-verified')
+          .map((action) => action.id),
+      ),
+    };
     const uploadArchive: LocalArchiveSnapshot = {
       cases: localArchive.cases.filter((record) => uploadActionIds.cases.has(record.id)),
       dossiers: localArchive.dossiers.filter((record) => uploadActionIds.dossiers.has(record.id)),
@@ -2433,12 +3317,37 @@ class LoreBoundSyncService implements SyncService {
 
       return deleteCloudActionIds.boardPins.has(tombstone.entityId);
     });
+    const deleteCloudTargetCount =
+      deleteCloudActionIds.cases.size +
+      deleteCloudActionIds.dossiers.size +
+      deleteCloudActionIds.bonds.size +
+      deleteCloudActionIds.boardPins.size;
+    const deletionFinalizationTombstones = localArchive.deletionTombstones.filter((tombstone) => {
+      if (tombstone.synchronizationStatus === 'verified') {
+        return false;
+      }
+
+      if (tombstone.entityType === 'cases') {
+        return deletionFinalizationActionIds.cases.has(tombstone.entityId);
+      }
+
+      if (tombstone.entityType === 'dossiers') {
+        return deletionFinalizationActionIds.dossiers.has(tombstone.entityId);
+      }
+
+      if (tombstone.entityType === 'bonds') {
+        return deletionFinalizationActionIds.bonds.has(tombstone.entityId);
+      }
+
+      return deletionFinalizationActionIds.boardPins.has(tombstone.entityId);
+    });
     const totalRecords =
       uploadArchive.cases.length +
       uploadArchive.dossiers.length +
       uploadArchive.bonds.length +
       uploadArchive.boardPins.length +
-      deleteCloudTombstones.length +
+      deleteCloudTargetCount +
+      deletionFinalizationTombstones.length +
       deleteLocalActionIds.cases.size +
       deleteLocalActionIds.dossiers.size +
       deleteLocalActionIds.bonds.size +
@@ -2497,14 +3406,109 @@ class LoreBoundSyncService implements SyncService {
       );
       const bondRows = uploadArchive.bonds.map((record) => mapBondToCloudRow(record, user.id));
       const boardEntryRows = uploadArchive.boardPins.map((record) => mapBoardPinToCloudRow(record, user.id));
+      const localSyncStateBeforeDelete = scopeLocalSyncStateToArchive(await readLocalSyncState(), localArchive);
+      let onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
+      let synchronizationDeletionAuthority = expandDeletionAuthorityWithCaseDependents(
+        createSharedDeletionAuthority(
+          localArchive.deletionTombstones,
+          onlineArchive.deletionLedger,
+          localSyncStateBeforeDelete,
+        ),
+        localArchive,
+        onlineArchive,
+      );
+      const deleteCloudAuthorityEntries = [...synchronizationDeletionAuthority.values()].filter((entry) =>
+        hasActionId(deleteCloudActionIds, entry),
+      );
+      const localClientId = await readOrCreateLocalClientId();
+      const deleteCloudLedgerRows = deleteCloudAuthorityEntries
+        .map((entry) =>
+          mapDeletionTombstoneToCloudLedgerRow(
+            entry.tombstone ?? {
+              id: entry.key,
+              caseId: entry.caseId,
+              entityType: entry.deletionEntityType,
+              entityId: entry.entityId,
+              deletedAt: entry.deletedAt,
+              sourceClientId: localClientId,
+              synchronizationStatus: 'verified',
+              deletionVersion: DELETION_SYNC_VERSION,
+            },
+            user.id,
+          ),
+        );
 
-      if (deleteCloudTombstones.length > 0) {
-        report('Synchronizing Investigation', `Deleting ${deleteCloudTombstones.length} archived records from LoreBound Online.`);
-        await cloudArchiveRepository.deleteBoardEntries([...deleteCloudActionIds.boardPins]);
-        await cloudArchiveRepository.deleteBonds([...deleteCloudActionIds.bonds]);
-        await cloudArchiveRepository.deleteDossiers([...deleteCloudActionIds.dossiers]);
-        await cloudArchiveRepository.deleteCases([...deleteCloudActionIds.cases]);
-        completedRecords += deleteCloudTombstones.length;
+      if (deleteCloudTargetCount > 0) {
+        try {
+          report('Synchronizing Investigation', `Writing ${deleteCloudLedgerRows.length} shared deletion records.`);
+
+          if (deleteCloudLedgerRows.length > 0) {
+            await cloudArchiveRepository.upsertDeletionLedger(deleteCloudLedgerRows);
+
+            const ledgerVerifications = await Promise.all(
+              deleteCloudLedgerRows.map((row) =>
+                cloudArchiveRepository.verifyDeletionLedgerEntry(row.entity_type, row.entity_id),
+              ),
+            );
+
+            if (ledgerVerifications.some((verified) => !verified)) {
+              await Promise.all(
+                deleteCloudTombstones.map((tombstone) =>
+                  markDeletionTombstoneFailed(tombstone, 'Cloud deletion ledger verification'),
+                ),
+              );
+              throw new Error('Deletion Sync Incomplete. LoreBound deleted the item locally, but shared deletion could not be fully verified. It will remain hidden locally and can be retried.');
+            }
+          }
+
+          report('Synchronizing Investigation', `Deleting ${deleteCloudTargetCount} archived records from LoreBound Online.`);
+          await cloudArchiveRepository.deleteBoardEntries([...deleteCloudActionIds.boardPins]);
+          await cloudArchiveRepository.deleteBonds([...deleteCloudActionIds.bonds]);
+          await cloudArchiveRepository.deleteDossiers([...deleteCloudActionIds.dossiers]);
+          await cloudArchiveRepository.deleteCases([...deleteCloudActionIds.cases]);
+
+          const [
+            casesAbsent,
+            dossiersAbsent,
+            bondsAbsent,
+            boardEntriesAbsent,
+          ] = await Promise.all([
+            cloudArchiveRepository.verifyCasesAbsent([...deleteCloudActionIds.cases]),
+            cloudArchiveRepository.verifyDossiersAbsent([...deleteCloudActionIds.dossiers]),
+            cloudArchiveRepository.verifyBondsAbsent([...deleteCloudActionIds.bonds]),
+            cloudArchiveRepository.verifyBoardEntriesAbsent([...deleteCloudActionIds.boardPins]),
+          ]);
+
+          if (!casesAbsent || !dossiersAbsent || !bondsAbsent || !boardEntriesAbsent) {
+            await Promise.all(
+              deleteCloudTombstones.map((tombstone) =>
+                markDeletionTombstoneFailed(tombstone, 'Cloud deletion verification'),
+              ),
+            );
+            throw new Error('Deletion Sync Incomplete. LoreBound deleted the item locally, but shared deletion could not be fully verified. It will remain hidden locally and can be retried.');
+          }
+
+          if (deleteCloudLedgerRows.length > 0) {
+            const acknowledgedAt = new Date().toISOString();
+
+            await cloudArchiveRepository.updateDeletionLedgerAcknowledgement(
+              deleteCloudLedgerRows.map((row) => ({
+                ...row,
+                acknowledged_at: acknowledgedAt,
+                updated_at: acknowledgedAt,
+              })),
+            );
+          }
+        } catch (error) {
+          await Promise.all(
+            deleteCloudTombstones.map((tombstone) =>
+              markDeletionTombstoneFailed(tombstone, 'Shared deletion synchronization'),
+            ),
+          );
+          throw error;
+        }
+
+        completedRecords += deleteCloudTargetCount;
       }
 
       report('Synchronizing Investigation', `Securing ${caseRows.length} Investigation records.`);
@@ -2524,7 +3528,16 @@ class LoreBoundSyncService implements SyncService {
       completedRecords += boardEntryRows.length;
       completeStage('Synchronizing Evidence Board');
       report('Verifying Investigation', 'Verifying secured Investigation records.');
-      const onlineArchive = await cloudArchiveRepository.readArchive();
+      onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
+      synchronizationDeletionAuthority = expandDeletionAuthorityWithCaseDependents(
+        createSharedDeletionAuthority(
+          localArchive.deletionTombstones,
+          onlineArchive.deletionLedger,
+          scopeLocalSyncStateToArchive(await readLocalSyncState(), localArchive),
+        ),
+        localArchive,
+        onlineArchive,
+      );
 
       const failedDeletion = deleteCloudTombstones.find((tombstone) => {
         if (tombstone.entityType === 'cases') {
@@ -2548,6 +3561,8 @@ class LoreBoundSyncService implements SyncService {
       }
 
       await markDeletionTombstonesVerified(deleteCloudTombstones);
+      await markDeletionTombstonesVerified(deletionFinalizationTombstones);
+      completedRecords += deletionFinalizationTombstones.length;
       this.verifyOnlineArchive(uploadArchive, onlineArchive, user.id);
       const uploadedGeneratedBondCounts = countGeneratedBondsByRole(uploadArchive.bonds);
       const uploadedGeneratedBondIds = new Set(
@@ -2582,6 +3597,7 @@ class LoreBoundSyncService implements SyncService {
         report('Retrieving Investigations', 'Retrieving safe LoreBound Online updates.');
         const retrievedCases = await restoreCaseImages(
           onlineArchive.cases
+            .filter((record) => !hasDeletionAuthority(synchronizationDeletionAuthority, 'cases', record.id))
             .filter((record) => retrievalActionIds.cases.has(record.id))
             .map(mapCloudCaseToLocal),
           onlineArchive.cases,
@@ -2590,6 +3606,7 @@ class LoreBoundSyncService implements SyncService {
         report('Retrieving Dossiers', 'Retrieving safe Dossier updates.');
         const retrievedDossiers = await restoreDossierImages(
           onlineArchive.dossiers
+            .filter((record) => !hasDeletionAuthority(synchronizationDeletionAuthority, 'dossiers', record.id))
             .filter((record) => retrievalActionIds.dossiers.has(record.id))
             .map(mapCloudDossierToLocal),
           onlineArchive.dossiers,
@@ -2597,6 +3614,7 @@ class LoreBoundSyncService implements SyncService {
         completeStage('Retrieving Dossiers');
         report('Retrieving Bonds', 'Retrieving safe Bond updates.');
         const retrievedBonds = onlineArchive.bonds
+          .filter((record) => !hasDeletionAuthority(synchronizationDeletionAuthority, 'bonds', record.id))
           .filter((record) => retrievalActionIds.bonds.has(record.id))
           .map(mapCloudBondToLocal);
         const retrievedGeneratedBondCounts = countGeneratedBondsByRole(retrievedBonds);
@@ -2610,6 +3628,7 @@ class LoreBoundSyncService implements SyncService {
         completeStage('Retrieving Bonds');
         report('Retrieving Evidence Pins', 'Retrieving safe Evidence Board updates.');
         const retrievedBoardPins = onlineArchive.boardEntries
+          .filter((record) => !hasDeletionAuthority(synchronizationDeletionAuthority, 'boardEntries', record.id))
           .filter((record) => retrievalActionIds.boardPins.has(record.id))
           .map(mapCloudBoardEntryToLocal);
         completeStage('Retrieving Evidence Pins');
@@ -2634,7 +3653,9 @@ class LoreBoundSyncService implements SyncService {
           deletionTombstones: localArchive.deletionTombstones,
           activeCaseId: localArchive.activeCaseId,
         };
-        await importFullLocalArchive(synchronizedArchive);
+        await importFullLocalArchive(
+          mergeScopedArchiveIntoFullArchive(fullLocalArchive, synchronizedArchive, activeCaseId),
+        );
         completedRecords +=
           retrievedCases.length +
           retrievedDossiers.length +
@@ -2653,7 +3674,10 @@ class LoreBoundSyncService implements SyncService {
       completeStage('Verifying Stored Images');
       report('Finalizing Investigation', 'Recording the local synchronization marker.');
       const cloudImagePaths = getCloudImagePaths(onlineArchive);
-      const verifiedDeletionTombstoneIds = new Set(deleteCloudTombstones.map((tombstone) => tombstone.id));
+      const verifiedDeletionTombstoneIds = new Set([
+        ...deleteCloudTombstones.map((tombstone) => tombstone.id),
+        ...deletionFinalizationTombstones.map((tombstone) => tombstone.id),
+      ]);
       const synchronizedDeletionTombstones = synchronizedArchive.deletionTombstones.map((tombstone) =>
         verifiedDeletionTombstoneIds.has(tombstone.id)
           ? {
@@ -2664,7 +3688,7 @@ class LoreBoundSyncService implements SyncService {
             }
           : tombstone,
       );
-      await recordLocalSyncState({
+      const nextSyncState: LocalSyncState = {
         investigatorId: user.id,
         lastSuccessfulSynchronizationAt: new Date().toISOString(),
         synchronizedRecordIds: createBaselineRecordIds(synchronizedArchive),
@@ -2673,10 +3697,12 @@ class LoreBoundSyncService implements SyncService {
         deletionBaselines: {
           ...createDeletionBaselineEntries(synchronizedDeletionTombstones),
           ...createRemoteDeletionBaselineEntries(deleteLocalActionIds),
+          ...createDeletionBaselineEntriesFromAuthority(synchronizationDeletionAuthority),
         },
         cloudImagePaths,
         synchronizationVersion: 1,
-      });
+      };
+      await recordLocalSyncState(mergeLocalSyncState(await readLocalSyncState(), nextSyncState, synchronizedArchive));
       completeStage('Finalizing Investigation');
 
       const result: SyncResult = {
@@ -2715,6 +3741,157 @@ class LoreBoundSyncService implements SyncService {
           0,
         ),
         transferSize: planResult.plan.local.estimatedTransferBytes,
+      };
+    }
+  }
+
+  async retrieveCase(caseId: string, onProgress?: (progress: SyncProgress) => void): Promise<SyncResult> {
+    const user = await authService.getCurrentUser();
+
+    if (!user) {
+      return {
+        ok: false,
+        message: 'Investigator Connect is required before retrieving this Investigation.',
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        completedStages: [],
+      };
+    }
+
+    let activeStage: SyncStage = 'Retrieving Investigations';
+    const completedStages: SyncStage[] = [];
+    const completeStage = (stage: SyncStage) => {
+      if (!completedStages.includes(stage)) {
+        completedStages.push(stage);
+      }
+    };
+    const report = (stage: SyncStage, detail: string) => {
+      activeStage = stage;
+      emit(onProgress, stage, detail);
+    };
+
+    try {
+      const fullLocalArchive = await readFullLocalArchive();
+      const onlineArchive = await cloudArchiveRepository.readArchive();
+      const localSyncState = await readLocalSyncState();
+      const deletionAuthority = createSharedDeletionAuthority(
+        fullLocalArchive.deletionTombstones,
+        onlineArchive.deletionLedger,
+        localSyncState,
+      );
+
+      if (hasDeletionAuthority(deletionAuthority, 'cases', caseId)) {
+        throw new Error('This Investigation has been deleted from LoreBound Online.');
+      }
+
+      const cloudCase = onlineArchive.cases.find((record) => record.id === caseId && record.user_id === user.id);
+
+      if (!cloudCase) {
+        throw new Error('LoreBound Online could not find this Investigation for the connected Investigator Profile.');
+      }
+
+      const caseOnlineArchive = scopeCloudArchiveToCase(onlineArchive, caseId);
+      const caseDeletionAuthority = expandDeletionAuthorityWithCaseDependents(
+        deletionAuthority,
+        fullLocalArchive,
+        onlineArchive,
+      );
+      const liveOnlineArchive = {
+        ...caseOnlineArchive,
+        cases: filterRecordsByDeletionAuthority(caseOnlineArchive.cases, 'cases', caseDeletionAuthority),
+        dossiers: filterRecordsByDeletionAuthority(caseOnlineArchive.dossiers, 'dossiers', caseDeletionAuthority),
+        bonds: filterRecordsByDeletionAuthority(caseOnlineArchive.bonds, 'bonds', caseDeletionAuthority),
+        boardEntries: filterRecordsByDeletionAuthority(caseOnlineArchive.boardEntries, 'boardEntries', caseDeletionAuthority),
+      };
+
+      report('Retrieving Investigations', 'Retrieving selected Investigation record.');
+      const casesWithoutImages = liveOnlineArchive.cases.map(mapCloudCaseToLocal);
+      completeStage('Retrieving Investigations');
+      report('Retrieving Dossiers', `${liveOnlineArchive.dossiers.length} Dossier records.`);
+      const dossiersWithoutImages = liveOnlineArchive.dossiers.map(mapCloudDossierToLocal);
+      completeStage('Retrieving Dossiers');
+      report('Retrieving Stored Images', 'Retrieving stored images from LoreBound Online.');
+      const [cases, dossiers] = await Promise.all([
+        restoreCaseImages(casesWithoutImages, liveOnlineArchive.cases),
+        restoreDossierImages(dossiersWithoutImages, liveOnlineArchive.dossiers),
+      ]);
+      completeStage('Retrieving Stored Images');
+      report('Retrieving Bonds', `${liveOnlineArchive.bonds.length} Bond records.`);
+      const bonds = liveOnlineArchive.bonds.map(mapCloudBondToLocal);
+      completeStage('Retrieving Bonds');
+      report('Retrieving Evidence Pins', `${liveOnlineArchive.boardEntries.length} Evidence Pin records.`);
+      const boardPins = liveOnlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
+      completeStage('Retrieving Evidence Pins');
+
+      const retrievedArchive: LocalArchiveSnapshot = {
+        cases,
+        dossiers,
+        bonds,
+        boardPins,
+        deletionTombstones: fullLocalArchive.deletionTombstones.filter(
+          (tombstone) =>
+            tombstone.caseId === caseId ||
+            (tombstone.entityType === 'cases' && tombstone.entityId === caseId),
+        ),
+        activeCaseId: caseId,
+      };
+      await importFullLocalArchive(
+        mergeScopedArchiveIntoFullArchive(fullLocalArchive, retrievedArchive, caseId),
+      );
+      report('Verifying Local Archive', 'Verifying retrieved Investigation records.');
+      const verifiedLocalArchive = scopeLocalArchiveToCase(await readFullLocalArchive(), caseId);
+
+      if (verifiedLocalArchive.cases.length !== retrievedArchive.cases.length) {
+        throw new Error('Retrieve Investigation could not be verified.');
+      }
+
+      validateDependencies(verifiedLocalArchive).forEach((reason) => {
+        throw new Error(reason);
+      });
+      completeStage('Verifying Local Archive');
+      report('Finalizing Investigation', 'Recording local synchronization marker.');
+      const cloudImagePaths = getCloudImagePaths(liveOnlineArchive);
+      const nextSyncState: LocalSyncState = {
+        investigatorId: user.id,
+        lastSuccessfulSynchronizationAt: new Date().toISOString(),
+        synchronizedRecordIds: createBaselineRecordIds(retrievedArchive),
+        synchronizedUpdatedAt: createBaselineUpdatedAt(retrievedArchive),
+        synchronizedFingerprints: createLocalFingerprintSnapshot(retrievedArchive, cloudImagePaths),
+        deletionBaselines: {
+          ...createDeletionBaselineEntries(retrievedArchive.deletionTombstones),
+          ...createDeletionBaselineEntriesFromAuthority(caseDeletionAuthority),
+        },
+        cloudImagePaths,
+        synchronizationVersion: 1,
+      };
+      await recordLocalSyncState(mergeLocalSyncState(await readLocalSyncState(), nextSyncState, retrievedArchive));
+      completeStage('Finalizing Investigation');
+      notifyLocalArchiveRestored();
+
+      const result: SyncResult = {
+        ok: true,
+        message: 'Investigation Retrieved',
+        counts: {
+          cases: retrievedArchive.cases.length,
+          dossiers: retrievedArchive.dossiers.length,
+          bonds: retrievedArchive.bonds.length,
+          boardEntries: retrievedArchive.boardPins.length,
+        },
+        completedStages,
+        completedAt: new Date().toISOString(),
+      };
+      notifySynchronizationCompleted(result);
+
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to retrieve this Investigation. Your Local Archive remains available.',
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        failedStage: activeStage,
+        completedStages,
       };
     }
   }
@@ -2767,15 +3944,41 @@ class LoreBoundSyncService implements SyncService {
 
       completeStage('Preparing Archive');
       report('Verifying Investigation', 'Verifying Local Archive against LoreBound Online.');
-      const localArchive = await readFullLocalArchive();
-      const onlineArchive = await cloudArchiveRepository.readArchive();
-      const cloudImagePaths = getCloudImagePaths(onlineArchive);
-      const localFingerprints = createLocalFingerprintSnapshot(localArchive, cloudImagePaths);
-      const cloudFingerprints = createCloudFingerprintSnapshot(onlineArchive);
-      const baselineState = getBaselineState(
+      const fullLocalArchive = await readFullLocalArchive();
+      const activeCaseId = getPrimaryLocalCaseId(fullLocalArchive);
+      const localArchive = scopeLocalArchiveToCase(fullLocalArchive, activeCaseId);
+      const onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
+      const localSyncState = scopeLocalSyncStateToArchive(await readLocalSyncState(), localArchive);
+      const deletionAuthority = expandDeletionAuthorityWithCaseDependents(
+        createSharedDeletionAuthority(
+          localArchive.deletionTombstones,
+          onlineArchive.deletionLedger,
+          localSyncState,
+        ),
         localArchive,
         onlineArchive,
-        await readLocalSyncState(),
+      );
+      const liveLocalArchive = {
+        ...localArchive,
+        cases: filterRecordsByDeletionAuthority(localArchive.cases, 'cases', deletionAuthority),
+        dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
+        bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
+        boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+      };
+      const liveOnlineArchive = {
+        ...onlineArchive,
+        cases: filterRecordsByDeletionAuthority(onlineArchive.cases, 'cases', deletionAuthority),
+        dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
+        bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
+        boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+      };
+      const cloudImagePaths = getCloudImagePaths(liveOnlineArchive);
+      const localFingerprints = createLocalFingerprintSnapshot(liveLocalArchive, cloudImagePaths);
+      const cloudFingerprints = createCloudFingerprintSnapshot(liveOnlineArchive);
+      const baselineState = getBaselineState(
+        liveLocalArchive,
+        liveOnlineArchive,
+        localSyncState,
         user.id,
         localFingerprints,
         cloudFingerprints,
@@ -2785,21 +3988,25 @@ class LoreBoundSyncService implements SyncService {
         throw new Error(baselineState.reason);
       }
 
-      validateDependencies(localArchive).forEach((reason) => {
+      validateDependencies(liveLocalArchive).forEach((reason) => {
         throw new Error(reason);
       });
       completeStage('Verifying Investigation');
       report('Finalizing Investigation', 'Recording the verified synchronization baseline.');
-      await recordLocalSyncState({
+      const nextSyncState: LocalSyncState = {
         investigatorId: user.id,
         lastSuccessfulSynchronizationAt: new Date().toISOString(),
-        synchronizedRecordIds: createBaselineRecordIds(localArchive),
-        synchronizedUpdatedAt: createBaselineUpdatedAt(localArchive),
+        synchronizedRecordIds: createBaselineRecordIds(liveLocalArchive),
+        synchronizedUpdatedAt: createBaselineUpdatedAt(liveLocalArchive),
         synchronizedFingerprints: localFingerprints,
-        deletionBaselines: createDeletionBaselineEntries(localArchive.deletionTombstones),
+        deletionBaselines: {
+          ...createDeletionBaselineEntries(liveLocalArchive.deletionTombstones),
+          ...createDeletionBaselineEntriesFromAuthority(deletionAuthority),
+        },
         cloudImagePaths,
         synchronizationVersion: 1,
-      });
+      };
+      await recordLocalSyncState(mergeLocalSyncState(await readLocalSyncState(), nextSyncState, liveLocalArchive));
       completeStage('Finalizing Investigation');
 
       const result: SyncResult = {
@@ -2884,36 +4091,62 @@ class LoreBoundSyncService implements SyncService {
     };
 
     try {
-      const localArchive = await readFullLocalArchive();
-      const onlineArchive = await cloudArchiveRepository.readArchive();
+      const fullLocalArchive = await readFullLocalArchive();
+      const activeCaseId = getPrimaryLocalCaseId(fullLocalArchive);
+      const localArchive = scopeLocalArchiveToCase(fullLocalArchive, activeCaseId);
+      const onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
+      const localSyncState = scopeLocalSyncStateToArchive(await readLocalSyncState(), localArchive);
+      const deletionAuthority = expandDeletionAuthorityWithCaseDependents(
+        createSharedDeletionAuthority(
+          localArchive.deletionTombstones,
+          onlineArchive.deletionLedger,
+          localSyncState,
+        ),
+        localArchive,
+        onlineArchive,
+      );
+      const liveLocalArchive = {
+        ...localArchive,
+        cases: filterRecordsByDeletionAuthority(localArchive.cases, 'cases', deletionAuthority),
+        dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
+        bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
+        boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+      };
+      const liveOnlineArchive = {
+        ...onlineArchive,
+        cases: filterRecordsByDeletionAuthority(onlineArchive.cases, 'cases', deletionAuthority),
+        dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
+        bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
+        boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+      };
 
       if (isRepair) {
         const localCaseId = getPrimaryLocalCaseId(localArchive);
-        const cloudCaseId = getPrimaryCloudCaseId(onlineArchive);
+        const cloudCaseId = getPrimaryCloudCaseId(liveOnlineArchive);
 
         if (!user || !cloudCaseId || (!isEmptyShellRepair && localCaseId !== cloudCaseId)) {
           throw new Error('Repair Local Archive could not verify matching Investigation ownership.');
         }
 
-        if (isEmptyShellRepair && onlineArchive.cases[0]?.user_id !== user.id) {
+        if (isEmptyShellRepair && liveOnlineArchive.cases[0]?.user_id !== user.id) {
           throw new Error('Repair Local Archive could not verify Investigation ownership.');
         }
       }
 
-      report('Retrieving Investigations', `${onlineArchive.cases.length} Investigation records.`);
-      const casesWithoutImages = onlineArchive.cases.map(mapCloudCaseToLocal);
+      report('Retrieving Investigations', `${liveOnlineArchive.cases.length} Investigation records.`);
+      const casesWithoutImages = liveOnlineArchive.cases.map(mapCloudCaseToLocal);
       completeStage('Retrieving Investigations');
-      report('Retrieving Dossiers', `${onlineArchive.dossiers.length} Dossier records.`);
-      const dossiersWithoutImages = onlineArchive.dossiers.map(mapCloudDossierToLocal);
+      report('Retrieving Dossiers', `${liveOnlineArchive.dossiers.length} Dossier records.`);
+      const dossiersWithoutImages = liveOnlineArchive.dossiers.map(mapCloudDossierToLocal);
       completeStage('Retrieving Dossiers');
       report('Retrieving Stored Images', 'Retrieving stored images from LoreBound Online.');
       const [cases, dossiers] = await Promise.all([
-        restoreCaseImages(casesWithoutImages, onlineArchive.cases),
-        restoreDossierImages(dossiersWithoutImages, onlineArchive.dossiers),
+        restoreCaseImages(casesWithoutImages, liveOnlineArchive.cases),
+        restoreDossierImages(dossiersWithoutImages, liveOnlineArchive.dossiers),
       ]);
       completeStage('Retrieving Stored Images');
-      report('Retrieving Bonds', `${onlineArchive.bonds.length} Bond records.`);
-      const bonds = onlineArchive.bonds.map(mapCloudBondToLocal);
+      report('Retrieving Bonds', `${liveOnlineArchive.bonds.length} Bond records.`);
+      const bonds = liveOnlineArchive.bonds.map(mapCloudBondToLocal);
       const retrievedGeneratedBondCounts = countGeneratedBondsByRole(bonds);
       recordThreadmarkSynchronizationDiagnostics({
         generatedBondsRetrieved: retrievedGeneratedBondCounts.total,
@@ -2923,12 +4156,12 @@ class LoreBoundSyncService implements SyncService {
         lastFailedStage: 'None',
       });
       completeStage('Retrieving Bonds');
-      report('Retrieving Evidence Pins', `${onlineArchive.boardEntries.length} Evidence Pin records.`);
-      const boardPins = onlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
+      report('Retrieving Evidence Pins', `${liveOnlineArchive.boardEntries.length} Evidence Pin records.`);
+      const boardPins = liveOnlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
       completeStage('Retrieving Evidence Pins');
       const repairedArchive =
         isRepair && !isEmptyShellRepair
-          ? mergePartialRepairArchive(localArchive, { cases, dossiers, bonds, boardPins })
+          ? mergePartialRepairArchive(liveLocalArchive, { cases, dossiers, bonds, boardPins })
           : {
               cases,
               dossiers,
@@ -2947,7 +4180,9 @@ class LoreBoundSyncService implements SyncService {
 
         await replaceEmptyCaseShellWithCloudArchive(shellCaseId, repairedArchive);
       } else {
-        await importFullLocalArchive(repairedArchive);
+        await importFullLocalArchive(
+          mergeScopedArchiveIntoFullArchive(fullLocalArchive, repairedArchive, activeCaseId),
+        );
       }
       report('Verifying Local Archive', isRepair ? 'Verifying repaired Local Archive records.' : 'Verifying retrieved records.');
       const verifiedLocalArchive = await readFullLocalArchive();
@@ -2968,19 +4203,19 @@ class LoreBoundSyncService implements SyncService {
       report('Finalizing Investigation', 'Recording local synchronization marker.');
       const cloudImagePaths = {
         cases: Object.fromEntries(
-          onlineArchive.cases
+          liveOnlineArchive.cases
             .filter((record) => record.cover_image_cloud_path)
             .map((record) => [record.id, record.cover_image_cloud_path as string]),
         ),
         dossiers: Object.fromEntries(
-          onlineArchive.dossiers
+          liveOnlineArchive.dossiers
             .filter((record) => record.cover_image_cloud_path)
             .map((record) => [record.id, record.cover_image_cloud_path as string]),
         ),
       };
 
       if (user) {
-        await recordLocalSyncState({
+        const nextSyncState: LocalSyncState = {
           investigatorId: user.id,
           lastSuccessfulSynchronizationAt: new Date().toISOString(),
           synchronizedRecordIds: {
@@ -3002,10 +4237,12 @@ class LoreBoundSyncService implements SyncService {
           deletionBaselines: {
             ...createDeletionBaselineEntries(repairedArchive.deletionTombstones),
             ...createRemoteDeletionBaselineEntries(retrieveDeleteLocalActionIds),
+            ...createDeletionBaselineEntriesFromAuthority(deletionAuthority),
           },
           cloudImagePaths,
           synchronizationVersion: 1,
-        });
+        };
+        await recordLocalSyncState(mergeLocalSyncState(await readLocalSyncState(), nextSyncState, repairedArchive));
       }
       completeStage('Finalizing Investigation');
       notifyLocalArchiveRestored();

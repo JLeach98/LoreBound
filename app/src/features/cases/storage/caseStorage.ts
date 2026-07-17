@@ -384,7 +384,7 @@ async function writeDeletionTombstones(tombstones: DeletionTombstone[]) {
   );
 }
 
-async function readOrCreateLocalClientId() {
+export async function readOrCreateLocalClientId() {
   const existingClientId = await runTransaction<string | undefined>(metaStoreName, 'readonly', (store) =>
     store.get(localClientIdKey),
   );
@@ -409,6 +409,18 @@ function getDeletionFingerprint(tombstone: Pick<DeletionTombstone, 'entityType' 
     deletedAt: tombstone.deletedAt,
     deletionVersion: tombstone.deletionVersion,
   });
+}
+
+async function hasDeletionAuthorityForRecord(entityType: DeletionEntityType, entityId: string) {
+  const [tombstones, syncState] = await Promise.all([
+    readDeletionTombstones(),
+    readLocalSyncState(),
+  ]);
+
+  return (
+    tombstones.some((tombstone) => tombstone.entityType === entityType && tombstone.entityId === entityId) ||
+    Boolean(syncState?.deletionBaselines?.[`${entityType}:${entityId}`])
+  );
 }
 
 async function deleteRecordWithTombstone<TRecord extends { id: string }>(
@@ -664,7 +676,10 @@ export async function updateCase(id: string, values: CaseFormValues) {
   return updatedCase;
 }
 
-export function deleteCase(id: string) {
+export async function deleteCase(id: string) {
+  await deleteDossiersByCaseId(id);
+  await deleteBondsByCaseId(id);
+  await deleteBoardPinsByCaseId(id);
   return deleteRecordWithTombstone<LoreCase>(
     caseStoreName,
     'cases',
@@ -987,6 +1002,11 @@ async function validateBond(caseId: string, values: BondFormValues, currentBondI
 
 export async function createBond(caseId: string, values: BondFormValues) {
   await validateBond(caseId, values);
+
+  if (values.id && await hasDeletionAuthorityForRecord('bonds', values.id)) {
+    throw new Error('This Bond was deleted from the synchronized Investigation and cannot be recreated automatically.');
+  }
+
   const now = new Date().toISOString();
   const bond: Bond = {
     id: values.id ?? createBondId(),

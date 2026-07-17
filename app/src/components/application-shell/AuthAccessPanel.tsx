@@ -87,10 +87,12 @@ function emptyPlan(): SyncPlan {
       localBondsRead: 0,
       localEvidencePinsRead: 0,
       cloudQueries: {
+        profiles: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
         cases: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
         dossiers: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
         bonds: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
         boardEntries: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
+        deletionLedger: { status: 'Failed', message: 'Not reviewed.', httpStatus: null },
       },
       storage: {
         bucketReachable: false,
@@ -201,6 +203,28 @@ function formatBytes(value: number) {
   }
 
   return `${Math.round(value / 1024 / 102.4) / 10} MB`;
+}
+
+function formatCloudQueryStatus(query?: SyncPlan['diagnostics']['cloudQueries']['cases']) {
+  if (!query) {
+    return 'Not reviewed.';
+  }
+
+  const details = [
+    `Started: ${query.queryStarted ? 'Yes' : 'No'}`,
+    `Completed: ${query.queryCompleted ? 'Yes' : 'No'}`,
+    typeof query.rowCount === 'number' ? `Rows: ${query.rowCount}` : null,
+    `Status: ${query.status}`,
+    query.code ? `Code: ${query.code}` : null,
+    query.postgrestCode ? `PostgREST: ${query.postgrestCode}` : null,
+    typeof query.httpStatus === 'number' ? `HTTP: ${query.httpStatus}` : null,
+    typeof query.rlsError === 'boolean' ? `RLS: ${query.rlsError ? 'Yes' : 'No'}` : null,
+    query.message ? `Message: ${query.message}` : null,
+    query.rawError ? `Supabase error: ${query.rawError}` : null,
+    query.thrownException ? `Thrown: ${query.thrownException}` : null,
+  ].filter(Boolean);
+
+  return details.join(' | ');
 }
 
 function formatSyncDateTime(value?: string | null) {
@@ -883,6 +907,19 @@ export function AuthAccessPanel() {
   function openLibraryAccess() {
     setAuthView(isSignedIn ? 'connected' : 'overview');
     setIsOpen(true);
+
+    if (isSignedIn) {
+      void Promise.all([
+        cloudReadinessService.check(),
+        syncService.createPlan(),
+      ]).then(([nextCloudReadiness, nextPlanResult]) => {
+        setCloudReadiness(nextCloudReadiness);
+        setSyncPlan(nextPlanResult.plan);
+      }).catch(() => {
+        setNotice('LoreBound Online could not be reviewed.');
+        setNoticeState('error');
+      });
+    }
   }
 
   function getProfileStateMessage() {
@@ -1675,6 +1712,30 @@ export function AuthAccessPanel() {
                         <dd>{syncPlan.online.isAvailable ? 'Yes' : 'No'}</dd>
                       </div>
                       <div>
+                        <dt>Profiles query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.profiles)}</dd>
+                      </div>
+                      <div>
+                        <dt>Cases query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.cases)}</dd>
+                      </div>
+                      <div>
+                        <dt>Dossiers query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.dossiers)}</dd>
+                      </div>
+                      <div>
+                        <dt>Bonds query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.bonds)}</dd>
+                      </div>
+                      <div>
+                        <dt>Board entries query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.boardEntries)}</dd>
+                      </div>
+                      <div>
+                        <dt>Deletion ledger query</dt>
+                        <dd>{formatCloudQueryStatus(syncPlan.diagnostics.cloudQueries.deletionLedger)}</dd>
+                      </div>
+                      <div>
                         <dt>Local archive classification</dt>
                         <dd>{syncPlan.diagnostics.archiveState.classification}</dd>
                       </div>
@@ -1729,6 +1790,20 @@ export function AuthAccessPanel() {
                       <div>
                         <dt>Review items</dt>
                         <dd>{reconciliationDiagnosticTotals.reviewItems}</dd>
+                      </div>
+                      <div>
+                        <dt>Review required records</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.recordActions
+                            .filter(
+                              (action) =>
+                                action.action === 'requires-review' ||
+                                action.action === 'deletion-conflict' ||
+                                action.action === 'tombstone-orphaned',
+                            )
+                            .map((action) => `${action.entityType}:${action.id} — ${action.safeReason}`)
+                            .join(' | ') || 'None'}
+                        </dd>
                       </div>
                       <div>
                         <dt>Local-only count</dt>

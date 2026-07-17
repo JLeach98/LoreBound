@@ -1270,6 +1270,161 @@ export function LoreBoundSettings({ onClose }: LoreBoundSettingsProps) {
                     </dl>
                   </details>
                   <details>
+                    <summary>Crescent City Dossier Deletion Trace</summary>
+                    <dl>
+                      <div>
+                        <dt>Case ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.caseId ?? 'Not found'}</dd>
+                      </div>
+                      <div>
+                        <dt>Deleted Dossier ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.deletedDossierId ?? 'Not found'}</dd>
+                      </div>
+                      <div>
+                        <dt>Dossier candidates</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.deletedDossierCandidates.length
+                            ? syncPlan.diagnostics.reconciliation.deletionDiagnostics.crescentCityTrace.deletedDossierCandidates.join(', ')
+                            : 'None'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Deleting client source ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.deletingClientSourceClientId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local deleted Dossier exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localDeletedDossierExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Local tombstone exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone entity type</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneEntityType ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone entity ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneEntityId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone Case ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneCaseId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone status</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneStatus ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone attempt count</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneAttemptCount ?? 'Not tracked'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone last error</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneLastError ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone deleted at</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneDeletedAt ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone source client ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneSourceClientId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Tombstone included in plan</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.localTombstoneIncludedInPlan ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger row exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerRowExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger row ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerRowId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger entity type</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerEntityType ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger entity ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerEntityId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger Case ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerCaseId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger user matches</dt>
+                        <dd>
+                          {syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerUserIdMatches === null
+                            ? 'Unknown'
+                            : syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerUserIdMatches
+                              ? 'Yes'
+                              : 'No'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Ledger deleted at</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerDeletedAt ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger acknowledged at</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerAcknowledgedAt ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger source client ID</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerSourceClientId ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Ledger deletion version</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.cloudLedgerDeletionVersion ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Live cloud Dossier exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.liveCloudDossierExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Scoped cloud snapshot includes ledger row</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.scopedCloudLedgerIncludesRow ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Shared deletion authority contains Dossier</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.sharedDeletionAuthorityContainsDossier ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Deleted baseline exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.matchingDeletedBaselineExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Planner record action</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.plannerRecordAction ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Delete-local action exists</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.deleteLocalActionExists ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Plan can synchronize</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.planCanSynchronize ? 'Yes' : 'No'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected synchronization mode</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.selectedSynchronizationMode ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Selected action</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.selectedAction ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>First false stage</dt>
+                        <dd>{syncPlan.diagnostics.reconciliation.deletionDiagnostics?.crescentCityTrace?.firstFalseStage ?? 'Trace unavailable'}</dd>
+                      </div>
+                    </dl>
+                  </details>
+                  <details>
                     <summary>Local Archive</summary>
                     <dl>
                       <div>

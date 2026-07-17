@@ -3,12 +3,21 @@ import { formatCaseDate } from '../utils/caseSorting';
 
 type CaseFileProps = {
   loreCase: LoreCase;
+  actionLabel?: string;
+  isCloudOnly?: boolean;
   onOpen: (id: string) => void;
   onEdit: (loreCase: LoreCase) => void;
   onDelete: (loreCase: LoreCase) => void;
 };
 
-export function CaseFile({ loreCase, onOpen, onEdit, onDelete }: CaseFileProps) {
+export function CaseFile({
+  loreCase,
+  actionLabel = 'Open Case',
+  isCloudOnly = false,
+  onOpen,
+  onEdit,
+  onDelete,
+}: CaseFileProps) {
   return (
     <article className="case-file-card">
       <div className="case-file-card__tab">{loreCase.universeType}</div>
@@ -28,19 +37,23 @@ export function CaseFile({ loreCase, onOpen, onEdit, onDelete }: CaseFileProps) 
           <h3>{loreCase.caseName}</h3>
           <p>{loreCase.universeType}</p>
           {loreCase.authorOrCreator ? <p>{loreCase.authorOrCreator}</p> : null}
-          <p>Last opened: {formatCaseDate(loreCase.dateLastOpened)}</p>
+          <p>{isCloudOnly ? 'Available in LoreBound Online' : `Last opened: ${formatCaseDate(loreCase.dateLastOpened)}`}</p>
         </div>
       </div>
       <div className="case-file-card__actions">
         <button type="button" onClick={() => onOpen(loreCase.id)}>
-          Open Case
+          {actionLabel}
         </button>
-        <button type="button" onClick={() => onEdit(loreCase)}>
-          Edit
-        </button>
-        <button type="button" className="case-file-card__delete" onClick={() => onDelete(loreCase)}>
-          Delete
-        </button>
+        {!isCloudOnly ? (
+          <>
+            <button type="button" onClick={() => onEdit(loreCase)}>
+              Edit
+            </button>
+            <button type="button" className="case-file-card__delete" onClick={() => onDelete(loreCase)}>
+              Delete
+            </button>
+          </>
+        ) : null}
       </div>
     </article>
   );

@@ -15,12 +15,14 @@ type CaseArchiveViewProps = {
 export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps) {
   const {
     cases,
+    cloudCases,
     isLoading,
     errorMessage,
     createNewCase,
     updateExistingCase,
     deleteExistingCase,
     openExistingCase,
+    retrieveCloudCase,
     clearError,
   } = useCases();
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,6 +35,10 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
   const filteredCases = useMemo(
     () => filterCasesByName(cases, searchQuery),
     [cases, searchQuery],
+  );
+  const filteredCloudCases = useMemo(
+    () => filterCasesByName(cloudCases, searchQuery),
+    [cloudCases, searchQuery],
   );
 
   function openCreateDialog() {
@@ -63,6 +69,17 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
     } catch (error) {
       console.error(error);
       setArchiveActionError('The Case could not be opened. Try again.');
+    }
+  }
+
+  async function handleRetrieveCase(id: string) {
+    try {
+      await retrieveCloudCase(id);
+      onCaseOpened?.();
+      onClose();
+    } catch (error) {
+      console.error(error);
+      setArchiveActionError('The Investigation could not be retrieved. Try again.');
     }
   }
 
@@ -131,7 +148,7 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
         <div className="case-archive__content">
           {isLoading ? <p className="case-archive__empty">Opening the archive...</p> : null}
 
-          {!isLoading && cases.length === 0 ? (
+          {!isLoading && cases.length === 0 && cloudCases.length === 0 ? (
             <div className="case-archive__empty">
               <h2>No Cases Yet</h2>
               <p>Create a Case to begin preserving an investigation.</p>
@@ -141,14 +158,14 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
             </div>
           ) : null}
 
-          {!isLoading && cases.length > 0 && filteredCases.length === 0 ? (
+          {!isLoading && cases.length + cloudCases.length > 0 && filteredCases.length + filteredCloudCases.length === 0 ? (
             <div className="case-archive__empty">
               <h2>No Matching Cases</h2>
               <p>No Case Names match "{searchQuery}".</p>
             </div>
           ) : null}
 
-          {filteredCases.length > 0 ? (
+          {filteredCases.length + filteredCloudCases.length > 0 ? (
             <div className="case-archive__grid">
               {filteredCases.map((loreCase) => (
                 <CaseFile
@@ -157,6 +174,17 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
                   onOpen={handleOpenCase}
                   onEdit={setCaseBeingEdited}
                   onDelete={setCaseBeingDeleted}
+                />
+              ))}
+              {filteredCloudCases.map((loreCase) => (
+                <CaseFile
+                  key={`cloud-${loreCase.id}`}
+                  loreCase={loreCase}
+                  actionLabel="Retrieve"
+                  isCloudOnly
+                  onOpen={handleRetrieveCase}
+                  onEdit={() => undefined}
+                  onDelete={() => undefined}
                 />
               ))}
             </div>

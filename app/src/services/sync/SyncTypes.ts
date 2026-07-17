@@ -18,13 +18,21 @@ export type CloudArchiveSnapshot = {
   dossiers: CloudDossierRow[];
   bonds: CloudBondRow[];
   boardEntries: CloudBoardEntryRow[];
+  deletionLedger: CloudDeletionLedgerRow[];
 };
 
 export type CloudQueryStatus = {
   status: 'Success' | 'Failed';
+  queryStarted?: boolean;
+  queryCompleted?: boolean;
+  rowCount?: number;
   code?: string;
   message?: string;
   httpStatus?: number | null;
+  postgrestCode?: string;
+  rlsError?: boolean;
+  rawError?: string;
+  thrownException?: string;
 };
 
 export type SyncDiagnostics = {
@@ -37,10 +45,12 @@ export type SyncDiagnostics = {
   localBondsRead: number;
   localEvidencePinsRead: number;
   cloudQueries: {
+    profiles?: CloudQueryStatus;
     cases: CloudQueryStatus;
     dossiers: CloudQueryStatus;
     bonds: CloudQueryStatus;
     boardEntries: CloudQueryStatus;
+    deletionLedger?: CloudQueryStatus;
   };
   storage: {
     bucketReachable: boolean;
@@ -109,6 +119,63 @@ export type SyncDiagnostics = {
       lastFailedEntityId: string | null;
       lastFailedDeletionStage: string | null;
       deletionBaselineCount: number;
+      cloudLedgerAvailable?: boolean;
+      cloudLedgerRowCount?: number;
+      ledgerUpsertAttempted?: number;
+      ledgerUpsertSucceeded?: number;
+      ledgerVerificationSucceeded?: number;
+      ledgerReadFailureCount?: number;
+      acknowledgedRowCount?: number;
+      compactedRowCount?: number;
+      sharedDeletionAuthorityCount?: number;
+      localTombstoneOnlyCount?: number;
+      cloudLedgerOnlyCount?: number;
+      combinedAuthorityCount?: number;
+      liveLocalRecordsSuppressed?: number;
+      liveCloudRecordsSuppressed?: number;
+      staleUploadsBlocked?: number;
+      staleImportsBlocked?: number;
+      repairRestorationsBlocked?: number;
+      contradictoryDeletionRetrievalPlanCount?: number;
+      cloudDeleteVerificationFailureCount?: number;
+      liveDeletedBaselineCollisionCount?: number;
+      crescentCityTrace?: {
+        caseId: string | null;
+        deletedDossierId: string | null;
+        deletedDossierCandidates: string[];
+        deletingClientSourceClientId: string | null;
+        localDeletedDossierExists: boolean;
+        localTombstoneExists: boolean;
+        localTombstoneEntityType: string | null;
+        localTombstoneEntityId: string | null;
+        localTombstoneCaseId: string | null;
+        localTombstoneStatus: string | null;
+        localTombstoneAttemptCount: string;
+        localTombstoneLastError: string | null;
+        localTombstoneDeletedAt: string | null;
+        localTombstoneSourceClientId: string | null;
+        localTombstoneIncludedInPlan: boolean;
+        cloudLedgerRowExists: boolean;
+        cloudLedgerRowId: string | null;
+        cloudLedgerEntityType: string | null;
+        cloudLedgerEntityId: string | null;
+        cloudLedgerCaseId: string | null;
+        cloudLedgerUserIdMatches: boolean | null;
+        cloudLedgerDeletedAt: string | null;
+        cloudLedgerAcknowledgedAt: string | null;
+        cloudLedgerSourceClientId: string | null;
+        cloudLedgerDeletionVersion: number | null;
+        liveCloudDossierExists: boolean;
+        scopedCloudLedgerIncludesRow: boolean;
+        sharedDeletionAuthorityContainsDossier: boolean;
+        matchingDeletedBaselineExists: boolean;
+        plannerRecordAction: string | null;
+        deleteLocalActionExists: boolean;
+        planCanSynchronize: boolean;
+        selectedSynchronizationMode: string;
+        selectedAction: string;
+        firstFalseStage: string;
+      };
     };
   };
   archiveState: {
@@ -120,6 +187,7 @@ export type SyncDiagnostics = {
       | 'Matching'
       | 'Local Changes'
       | 'Cloud Updates Available'
+      | 'Review Required'
       | 'Conflict'
       | 'Corrupt or Invalid';
     activeInvestigationIdPresent: boolean;
@@ -409,6 +477,16 @@ export function getSyncPlanArchiveAction(plan: SyncPlan): SyncPlanArchiveAction 
     };
   }
 
+  if (hasUploadActions && !hasRetrievalActions) {
+    return {
+      kind: 'sync' as const,
+      label: 'Update Investigation',
+      reason: 'This Local Archive has changes ready for LoreBound Online.',
+      canRun: plan.canSynchronize,
+      loadingLabel: 'Updating Investigation',
+    };
+  }
+
   if (hasLocalChanges && !hasCloudChanges) {
     return {
       kind: 'sync' as const,
@@ -505,6 +583,23 @@ export type CloudBoardEntryRow = {
   scale: number;
   z_index: number;
   date_pinned: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CloudDeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'board_entries';
+
+export type CloudDeletionLedgerRow = {
+  id: string;
+  user_id: string;
+  case_id: string | null;
+  entity_type: CloudDeletionEntityType;
+  entity_id: string;
+  deleted_at: string;
+  source_client_id: string;
+  deletion_version: number;
+  acknowledged_at: string | null;
+  compacted_at: string | null;
   created_at: string;
   updated_at: string;
 };

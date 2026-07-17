@@ -20,8 +20,11 @@ import type {
   CloudBoardEntryRow,
   CloudBondRow,
   CloudCaseRow,
+  CloudDeletionEntityType,
+  CloudDeletionLedgerRow,
   CloudDossierRow,
 } from './SyncTypes';
+import type { DeletionEntityType, DeletionTombstone } from '../../features/cases/storage/caseStorage';
 
 const metadataFields = [
   'alias',
@@ -39,6 +42,18 @@ const metadataFields = [
 
 function optional(value?: string | null) {
   return value ?? null;
+}
+
+export function localDeletionEntityToCloud(entityType: DeletionEntityType): CloudDeletionEntityType {
+  return entityType === 'boardEntries' ? 'board_entries' : entityType;
+}
+
+export function cloudDeletionEntityToLocal(entityType: CloudDeletionEntityType): DeletionEntityType {
+  return entityType === 'board_entries' ? 'boardEntries' : entityType;
+}
+
+export function createDeletionLedgerId(entityType: DeletionEntityType, entityId: string) {
+  return `deletion-ledger:${entityType}:${entityId}`;
 }
 
 function removeEmptyValues(values: Record<string, unknown>) {
@@ -318,5 +333,39 @@ export function mapCloudBoardEntryToLocal(row: CloudBoardEntryRow): BoardPin {
       y: row.position_y,
     },
     datePinned: row.date_pinned,
+  };
+}
+
+export function mapDeletionTombstoneToCloudLedgerRow(
+  tombstone: DeletionTombstone,
+  userId: string,
+): CloudDeletionLedgerRow {
+  return {
+    id: createDeletionLedgerId(tombstone.entityType, tombstone.entityId),
+    user_id: userId,
+    case_id: tombstone.caseId,
+    entity_type: localDeletionEntityToCloud(tombstone.entityType),
+    entity_id: tombstone.entityId,
+    deleted_at: tombstone.deletedAt,
+    source_client_id: tombstone.sourceClientId,
+    deletion_version: tombstone.deletionVersion,
+    acknowledged_at: tombstone.verifiedAt ?? null,
+    compacted_at: null,
+    created_at: tombstone.deletedAt,
+    updated_at: tombstone.verifiedAt ?? tombstone.deletedAt,
+  };
+}
+
+export function mapCloudDeletionLedgerToLocalTombstone(row: CloudDeletionLedgerRow): DeletionTombstone {
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    entityType: cloudDeletionEntityToLocal(row.entity_type),
+    entityId: row.entity_id,
+    deletedAt: row.deleted_at,
+    sourceClientId: row.source_client_id,
+    synchronizationStatus: row.acknowledged_at ? 'verified' : 'pending',
+    deletionVersion: row.deletion_version === 1 ? 1 : 1,
+    verifiedAt: row.acknowledged_at ?? undefined,
   };
 }

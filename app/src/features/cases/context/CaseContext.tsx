@@ -21,11 +21,13 @@ import {
   updateCase,
 } from '../storage/caseStorage';
 import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
+import { syncService } from '../../../services/sync/SyncService';
 import type { CaseFormValues, LoreCase } from '../types/caseTypes';
 import { sortCasesByRecentActivity } from '../utils/caseSorting';
 
 type CaseContextValue = {
   cases: LoreCase[];
+  cloudCases: LoreCase[];
   activeCase: LoreCase | null;
   isLoading: boolean;
   errorMessage: string | null;
@@ -34,6 +36,7 @@ type CaseContextValue = {
   updateExistingCase: (id: string, values: CaseFormValues) => Promise<LoreCase>;
   deleteExistingCase: (id: string) => Promise<void>;
   openExistingCase: (id: string) => Promise<LoreCase>;
+  retrieveCloudCase: (id: string) => Promise<LoreCase>;
   clearCurrentCase: () => Promise<void>;
   clearError: () => void;
 };
@@ -47,15 +50,20 @@ function friendlyError(error: unknown, fallback: string) {
 
 export function CaseProvider({ children }: { children: ReactNode }) {
   const [cases, setCases] = useState<LoreCase[]>([]);
+  const [cloudCases, setCloudCases] = useState<LoreCase[]>([]);
   const [activeCase, setActiveCase] = useState<LoreCase | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const refreshCases = useCallback(async () => {
     try {
-      const [storedCases, activeCaseId] = await Promise.all([
+      const [storedCases, activeCaseId, discoveredCloudCases] = await Promise.all([
         readAllCases(),
         readActiveCaseId(),
+        syncService.discoverCloudCases().catch((error) => {
+          console.warn('LoreBound Online Case discovery could not be reviewed.', error);
+          return [] as LoreCase[];
+        }),
       ]);
       const sortedCases = sortCasesByRecentActivity(storedCases);
       const storedActiveCase = activeCaseId
@@ -70,6 +78,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
       }
 
       setCases(sortedCases);
+      setCloudCases(discoveredCloudCases);
       setActiveCase(storedActiveCase);
       setErrorMessage(null);
     } catch (error) {
@@ -159,6 +168,31 @@ export function CaseProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const retrieveCloudCase = useCallback(async (id: string) => {
+    try {
+      const result = await syncService.retrieveCase(id);
+
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+
+      const openedCase = await openCase(id);
+      const storedCases = await readAllCases();
+      const sortedCases = sortCasesByRecentActivity(storedCases);
+      const storedCase = sortedCases.find((loreCase) => loreCase.id === id) ?? openedCase;
+
+      setCases(sortedCases);
+      setCloudCases((currentCases) => currentCases.filter((loreCase) => loreCase.id !== id));
+      setActiveCase(storedCase);
+      setErrorMessage(null);
+      return storedCase;
+    } catch (error) {
+      const message = friendlyError(error, 'The Investigation could not be retrieved from LoreBound Online.');
+      setErrorMessage(message);
+      throw new Error(message);
+    }
+  }, []);
+
   const clearCurrentCase = useCallback(async () => {
     try {
       await clearActiveCase();
@@ -197,6 +231,7 @@ export function CaseProvider({ children }: { children: ReactNode }) {
   const contextValue = useMemo(
     () => ({
       cases,
+      cloudCases,
       activeCase,
       isLoading,
       errorMessage,
@@ -205,18 +240,21 @@ export function CaseProvider({ children }: { children: ReactNode }) {
       updateExistingCase,
       deleteExistingCase,
       openExistingCase,
+      retrieveCloudCase,
       clearCurrentCase,
       clearError: () => setErrorMessage(null),
     }),
     [
       activeCase,
       cases,
+      cloudCases,
       clearCurrentCase,
       createNewCase,
       deleteExistingCase,
       errorMessage,
       isLoading,
       openExistingCase,
+      retrieveCloudCase,
       refreshCases,
       updateExistingCase,
     ],

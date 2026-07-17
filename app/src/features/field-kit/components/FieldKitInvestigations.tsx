@@ -14,11 +14,13 @@ type FieldKitInvestigationsProps = {
 export function FieldKitInvestigations({ onClose, onOpened }: FieldKitInvestigationsProps) {
   const {
     cases,
+    cloudCases,
     activeCase,
     createNewCase,
     updateExistingCase,
     deleteExistingCase,
     openExistingCase,
+    retrieveCloudCase,
   } = useCases();
   const [editingCase, setEditingCase] = useState<LoreCase | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -95,7 +97,29 @@ export function FieldKitInvestigations({ onClose, onOpened }: FieldKitInvestigat
             </div>
           </article>
         ))}
-        {cases.length === 0 ? (
+        {cloudCases.map((loreCase) => (
+          <article key={`cloud-${loreCase.id}`} className="field-kit-record">
+            <FieldKitThumbnail image={loreCase.coverImage} name={loreCase.caseName} />
+            <div>
+              <h3>{loreCase.caseName}</h3>
+              <p>{getCaseSecondaryLine(loreCase) || 'Investigation'}</p>
+              <small>Available in LoreBound Online</small>
+            </div>
+            <div className="field-kit-record__actions">
+              <Button
+                type="button"
+                variant="brass"
+                onClick={async () => {
+                  await retrieveCloudCase(loreCase.id);
+                  onOpened();
+                }}
+              >
+                Retrieve
+              </Button>
+            </div>
+          </article>
+        ))}
+        {cases.length === 0 && cloudCases.length === 0 ? (
           <div className="field-kit-empty">
             <h3>Archive Empty</h3>
             <p>Create an Investigation to begin collecting evidence.</p>

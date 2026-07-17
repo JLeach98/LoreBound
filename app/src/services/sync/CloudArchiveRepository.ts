@@ -4,11 +4,13 @@ import type {
   CloudBoardEntryRow,
   CloudBondRow,
   CloudCaseRow,
+  CloudDeletionEntityType,
+  CloudDeletionLedgerRow,
   CloudDossierRow,
   CloudQueryStatus,
 } from './SyncTypes';
 
-type TableName = 'cases' | 'dossiers' | 'bonds' | 'board_entries';
+type TableName = 'profiles' | 'cases' | 'dossiers' | 'bonds' | 'board_entries' | 'deletion_ledger';
 
 function requireSupabase() {
   if (!supabase) {
@@ -63,28 +65,87 @@ function getCloudErrorMessage(error: unknown) {
   return 'The query failed.';
 }
 
-async function readTableWithStatus<T>(tableName: TableName) {
-  const client = requireSupabase();
-  const { data, error, status } = await client.from(tableName).select('*');
-
+function serializeCloudError(error: unknown) {
   if (!error) {
-    return {
-      rows: (data ?? []) as T[],
-      query: {
-        status: 'Success',
-      } satisfies CloudQueryStatus,
-    };
+    return null;
   }
 
+  try {
+    return sanitizeCloudMessage(JSON.stringify(error, Object.getOwnPropertyNames(error)));
+  } catch {
+    return sanitizeCloudMessage(String(error));
+  }
+}
+
+function isRlsError(error: unknown) {
+  const message = getCloudErrorMessage(error).toLowerCase();
+
+  return (
+    message.includes('row-level security') ||
+    message.includes('rls') ||
+    message.includes('permission denied') ||
+    message.includes('insufficient privilege')
+  );
+}
+
+function createThrownQueryStatus(error: unknown): CloudQueryStatus {
+  const thrownException = error instanceof Error ? error.message : String(error);
+
   return {
-    rows: [] as T[],
-    query: {
-      status: 'Failed',
-      code: getCloudErrorCode(error),
-      message: getCloudErrorMessage(error),
-      httpStatus: status ?? getCloudErrorStatus(error),
-    } satisfies CloudQueryStatus,
+    status: 'Failed',
+    queryStarted: true,
+    queryCompleted: false,
+    rowCount: 0,
+    code: getCloudErrorCode(error),
+    message: sanitizeCloudMessage(thrownException),
+    httpStatus: getCloudErrorStatus(error),
+    postgrestCode: getCloudErrorCode(error),
+    rlsError: isRlsError(error),
+    rawError: serializeCloudError(error) ?? sanitizeCloudMessage(thrownException),
+    thrownException: sanitizeCloudMessage(thrownException),
   };
+}
+
+async function readTableWithStatus<T>(tableName: TableName) {
+  try {
+    const client = requireSupabase();
+    const { data, error, status } = await client.from(tableName).select('*');
+
+    if (!error) {
+      const rows = (data ?? []) as T[];
+
+      return {
+        rows,
+        query: {
+          status: 'Success',
+          queryStarted: true,
+          queryCompleted: true,
+          rowCount: rows.length,
+        } satisfies CloudQueryStatus,
+      };
+    }
+
+    return {
+      rows: [] as T[],
+      query: {
+        status: 'Failed',
+        queryStarted: true,
+        queryCompleted: true,
+        rowCount: 0,
+        code: getCloudErrorCode(error),
+        message: getCloudErrorMessage(error),
+        httpStatus: status ?? getCloudErrorStatus(error),
+        postgrestCode: getCloudErrorCode(error),
+        rlsError: isRlsError(error),
+        rawError: serializeCloudError(error) ?? undefined,
+      } satisfies CloudQueryStatus,
+    };
+  } catch (error) {
+    return {
+      rows: [] as T[],
+      query: createThrownQueryStatus(error),
+    };
+  }
 }
 
 async function upsertRows<T extends { id: string }>(tableName: TableName, rows: T[]) {
@@ -121,13 +182,48 @@ async function deleteRows(tableName: TableName, ids: string[]) {
   }
 }
 
+async function verifyRowsAbsent(tableName: TableName, ids: string[]) {
+  if (ids.length === 0) {
+    return true;
+  }
+
+  const client = requireSupabase();
+  const { data, error, status } = await client.from(tableName).select('id').in('id', ids);
+
+  if (error) {
+    throw new Error(
+      `${tableName} absence verification failed: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+    );
+  }
+
+  return (data ?? []).length === 0;
+}
+
+async function updateRows<T extends { id: string }>(tableName: TableName, rows: T[]) {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const client = requireSupabase();
+  const { error, status } = await client.from(tableName).upsert(rows, { onConflict: 'id' });
+
+  if (error) {
+    const failedId = rows[0]?.id ?? 'unknown';
+
+    throw new Error(
+      `${tableName} update failed for ${failedId}: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+    );
+  }
+}
+
 class CloudArchiveRepository {
   async readArchive(): Promise<CloudArchiveSnapshot> {
-    const [cases, dossiers, bonds, boardEntries] = await Promise.all([
+    const [cases, dossiers, bonds, boardEntries, deletionLedger] = await Promise.all([
       readTable<CloudCaseRow>('cases'),
       readTable<CloudDossierRow>('dossiers'),
       readTable<CloudBondRow>('bonds'),
       readTable<CloudBoardEntryRow>('board_entries'),
+      readTable<CloudDeletionLedgerRow>('deletion_ledger'),
     ]);
 
     return {
@@ -135,15 +231,18 @@ class CloudArchiveRepository {
       dossiers,
       bonds,
       boardEntries,
+      deletionLedger,
     };
   }
 
   async readArchiveWithDiagnostics() {
-    const [cases, dossiers, bonds, boardEntries] = await Promise.all([
+    const [profiles, cases, dossiers, bonds, boardEntries, deletionLedger] = await Promise.all([
+      readTableWithStatus<Record<string, unknown>>('profiles'),
       readTableWithStatus<CloudCaseRow>('cases'),
       readTableWithStatus<CloudDossierRow>('dossiers'),
       readTableWithStatus<CloudBondRow>('bonds'),
       readTableWithStatus<CloudBoardEntryRow>('board_entries'),
+      readTableWithStatus<CloudDeletionLedgerRow>('deletion_ledger'),
     ]);
 
     return {
@@ -152,19 +251,62 @@ class CloudArchiveRepository {
         dossiers: dossiers.rows,
         bonds: bonds.rows,
         boardEntries: boardEntries.rows,
+        deletionLedger: deletionLedger.rows,
       },
       queries: {
+        profiles: profiles.query,
         cases: cases.query,
         dossiers: dossiers.query,
         bonds: bonds.query,
         boardEntries: boardEntries.query,
+        deletionLedger: deletionLedger.query,
       },
       isAvailable:
+        profiles.query.status === 'Success' &&
         cases.query.status === 'Success' &&
         dossiers.query.status === 'Success' &&
         bonds.query.status === 'Success' &&
-        boardEntries.query.status === 'Success',
+        boardEntries.query.status === 'Success' &&
+        deletionLedger.query.status === 'Success',
     };
+  }
+
+  async readDeletionLedger() {
+    return readTable<CloudDeletionLedgerRow>('deletion_ledger');
+  }
+
+  async upsertDeletionLedger(rows: CloudDeletionLedgerRow[]) {
+    await upsertRows('deletion_ledger', rows);
+  }
+
+  async updateDeletionLedgerAcknowledgement(rows: CloudDeletionLedgerRow[]) {
+    await updateRows('deletion_ledger', rows);
+  }
+
+  async deleteDeletionLedgerEntries(ids: string[]) {
+    await deleteRows('deletion_ledger', ids);
+  }
+
+  async readDeletionLedgerEntry(entityType: CloudDeletionEntityType, entityId: string) {
+    const client = requireSupabase();
+    const { data, error, status } = await client
+      .from('deletion_ledger')
+      .select('*')
+      .eq('entity_type', entityType)
+      .eq('entity_id', entityId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(
+        `deletion_ledger read failed for ${entityType}:${entityId}: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+      );
+    }
+
+    return data as CloudDeletionLedgerRow | null;
+  }
+
+  async verifyDeletionLedgerEntry(entityType: CloudDeletionEntityType, entityId: string) {
+    return Boolean(await this.readDeletionLedgerEntry(entityType, entityId));
   }
 
   async upsertCases(rows: CloudCaseRow[]) {
@@ -197,6 +339,22 @@ class CloudArchiveRepository {
 
   async deleteBoardEntries(ids: string[]) {
     await deleteRows('board_entries', ids);
+  }
+
+  async verifyCasesAbsent(ids: string[]) {
+    return verifyRowsAbsent('cases', ids);
+  }
+
+  async verifyDossiersAbsent(ids: string[]) {
+    return verifyRowsAbsent('dossiers', ids);
+  }
+
+  async verifyBondsAbsent(ids: string[]) {
+    return verifyRowsAbsent('bonds', ids);
+  }
+
+  async verifyBoardEntriesAbsent(ids: string[]) {
+    return verifyRowsAbsent('board_entries', ids);
   }
 }
 
