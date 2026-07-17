@@ -128,10 +128,6 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
         (total, section) => total + section.conflictRecords,
         0,
       );
-      const localChangeCount = Object.values(planResult.plan.sections).reduce(
-        (total, section) => total + section.newRecords + section.updatedRecords,
-        0,
-      );
       const cloudUpdateCount = Object.values(planResult.plan.sections).reduce(
         (total, section) => total + section.cloudUpdatesAvailable,
         0,
@@ -140,7 +136,7 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
       if (
         reviewCount > 0 ||
         conflictCount > 0 ||
-        cloudUpdateCount > 0 ||
+        (cloudUpdateCount > 0 && !planResult.plan.canSynchronize) ||
         planResult.plan.diagnostics.archiveState.classification === 'Partial Local Archive'
       ) {
         setAutomaticSyncState('review-required');
@@ -167,7 +163,28 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
         return result;
       }
 
-      if (localChangeCount === 0) {
+      if (!planResult.plan.canSynchronize) {
+        setAutomaticSyncState('changes-waiting');
+        const hasActionableRecordActions = planResult.plan.diagnostics.reconciliation.recordActions.some(
+          (action) =>
+            action.action === 'upload-local-only' ||
+            action.action === 'upload-local-newer' ||
+            action.action === 'delete-cloud' ||
+            action.action === 'remote-record-recreated' ||
+            action.action === 'deletion-verified' ||
+            action.action === 'retrieve-cloud-only' ||
+            action.action === 'retrieve-cloud-newer' ||
+            action.action === 'delete-local',
+        );
+
+        if (hasActionableRecordActions) {
+          return emptyResult(
+            planResult.plan.blockingReasons[0] ??
+            planResult.plan.diagnostics.archiveState.disabledReason ??
+            'Synchronization is not available for this archive.',
+          );
+        }
+
         setAutomaticSyncState('up-to-date');
         return {
           ok: true,
@@ -177,15 +194,6 @@ export function AutomaticSyncProvider({ children }: { children: ReactNode }) {
           itemsRequiringReview: 0,
           completedAt: new Date().toISOString(),
         };
-      }
-
-      if (!planResult.plan.canSynchronize) {
-        setAutomaticSyncState('changes-waiting');
-        return emptyResult(
-          planResult.plan.blockingReasons[0] ??
-          planResult.plan.diagnostics.archiveState.disabledReason ??
-          'Synchronization is not available for this archive.',
-        );
       }
 
       const result = await syncService.synchronize();
