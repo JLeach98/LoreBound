@@ -12,12 +12,11 @@ import { useDossiers } from '../context/DossierContext';
 import type { Bond, BondFormValues } from '../types/bondTypes';
 import type { BoardPin } from '../types/boardTypes';
 import type { LoreCase } from '../types/caseTypes';
-import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
+import type { Dossier, DossierType } from '../types/dossierTypes';
 import { getBondDisplayLabel } from '../utils/bondLabels';
 import { BondFormDialog } from './BondFormDialog';
 import { DeleteBondDialog } from './DeleteBondDialog';
 import { DeleteDossierDialog } from './DeleteDossierDialog';
-import { DossierFormDialog } from './DossierFormDialog';
 import { DossierSheet } from './DossierSheet';
 import { EvidenceTray } from './EvidenceTray';
 
@@ -89,7 +88,7 @@ export function BoardEvidenceLayer({
   activeCase,
   onReturnToOffice,
 }: BoardEvidenceLayerProps) {
-  const { dossiers, updateExistingDossier, deleteExistingDossier } = useDossiers();
+  const { dossiers, deleteExistingDossier } = useDossiers();
   const {
     bonds,
     bondsForDossier,
@@ -109,7 +108,6 @@ export function BoardEvidenceLayer({
     isDossierPinned,
   } = useBoard();
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
-  const [editingDossier, setEditingDossier] = useState<Dossier | null>(null);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
   const [isTrayOpen, setIsTrayOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<DossierType>('Character');
@@ -210,16 +208,6 @@ export function BoardEvidenceLayer({
 
   function getDossierById(dossierId: string) {
     return dossiers.find((candidate) => candidate.id === dossierId) ?? null;
-  }
-
-  async function handleUpdateDossier(values: DossierFormValues) {
-    if (!editingDossier) {
-      return;
-    }
-
-    const updatedDossier = await updateExistingDossier(editingDossier.id, values);
-    setEditingDossier(null);
-    setSelectedDossier(updatedDossier);
   }
 
   async function handleDeleteDossier() {
@@ -816,20 +804,10 @@ export function BoardEvidenceLayer({
         <DossierSheet
           dossier={selectedDossier}
           onClose={closeDossier}
-          onEdit={setEditingDossier}
           onDelete={setDeletingDossier}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveDossierFromBoard}
           onOpenDossier={setSelectedDossier}
-        />
-      ) : null}
-
-      {editingDossier ? (
-        <DossierFormDialog
-          dossierType={editingDossier.dossierType}
-          initialDossier={editingDossier}
-          onCancel={() => setEditingDossier(null)}
-          onSubmit={handleUpdateDossier}
         />
       ) : null}
 

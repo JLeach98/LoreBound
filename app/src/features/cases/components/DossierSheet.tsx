@@ -41,20 +41,24 @@ import {
   duplicateSection,
   ensureDossierSections,
   getSectionCapabilities,
+  mergeDossierSectionsWithFormValues,
   normalizeSectionOrder,
   readCustomSectionTemplates,
   saveCustomSectionTemplate,
   type SectionTemplate,
 } from '../utils/dossierSections';
 import { BondFormDialog } from './BondFormDialog';
+import { CoverImageInput } from './CoverImageInput';
 import { DeleteBondDialog } from './DeleteBondDialog';
 import { DossierFormDialog } from './DossierFormDialog';
 
 type DossierSheetProps = {
   dossier: Dossier;
   onClose: () => void;
-  onEdit: (dossier: Dossier) => void;
   onDelete: (dossier: Dossier) => void;
+  onCreated?: (dossier: Dossier) => void;
+  initialEditMode?: boolean;
+  isNewDraft?: boolean;
   isPinned?: boolean;
   onRemoveFromBoard?: (dossier: Dossier) => void;
   onOpenDossier?: (dossier: Dossier) => void;
@@ -138,6 +142,13 @@ function getInitials(name: string) {
   return initials || 'LB';
 }
 
+function createDetailDraft(dossier: Dossier) {
+  return dossierToFormValues({
+    ...dossier,
+    sections: ensureDossierSections(dossier),
+  });
+}
+
 function getBondEvidenceCount(bond: Bond) {
   return bond.evidence
     ? Object.values(bond.evidence).filter((value) => value?.trim()).length
@@ -147,8 +158,10 @@ function getBondEvidenceCount(bond: Bond) {
 export function DossierSheet({
   dossier,
   onClose,
-  onEdit,
   onDelete,
+  onCreated,
+  initialEditMode = false,
+  isNewDraft = false,
   isPinned = false,
   onRemoveFromBoard,
   onOpenDossier,
@@ -165,6 +178,7 @@ export function DossierSheet({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
   const [workingDossier, setWorkingDossier] = useState(dossier);
+  const [isDraftNewDossier, setIsDraftNewDossier] = useState(isNewDraft);
   const [isCreatingBond, setIsCreatingBond] = useState(false);
   const [editingBond, setEditingBond] = useState<Bond | null>(null);
   const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
@@ -194,6 +208,9 @@ export function DossierSheet({
   const [renameValue, setRenameValue] = useState('');
   const [removingSection, setRemovingSection] = useState<DossierSection | null>(null);
   const [sectionNotice, setSectionNotice] = useState<string | undefined>();
+  const [detailDraft, setDetailDraft] = useState<DossierFormValues>(() => createDetailDraft(dossier));
+  const [detailImageError, setDetailImageError] = useState<string | undefined>();
+  const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const visibleSections = isEditingSections ? draftSections : sections;
   const sectionKindOptions: Array<{ value: DossierSectionKind; label: string }> = [
@@ -303,7 +320,19 @@ export function DossierSheet({
 
   useEffect(() => {
     setWorkingDossier(dossier);
-  }, [dossier]);
+    setIsDraftNewDossier(isNewDraft);
+    setDetailDraft(createDetailDraft(dossier));
+    setDetailImageError(undefined);
+    setDetailSaveError(undefined);
+  }, [dossier, isNewDraft]);
+
+  useEffect(() => {
+    if (initialEditMode) {
+      enterSectionEditMode();
+    }
+    // The initial edit request should only apply when a new sheet opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -418,13 +447,23 @@ export function DossierSheet({
     }
   }
 
-  async function saveSectionChanges(nextSections: DossierSection[]) {
+  async function saveSectionChanges(nextSections: DossierSection[], nextDetails = detailDraft) {
     const normalizedSections = normalizeSectionOrder(nextSections);
-    const updatedDossier = await updateExistingDossier(workingDossier.id, {
-      ...dossierToFormValues(workingDossier),
+    const values: DossierFormValues = {
+      ...nextDetails,
+      dossierType: workingDossier.dossierType,
+      name: nextDetails.name.trim(),
       sections: normalizedSections,
-    });
+    };
+
+    const updatedDossier = isDraftNewDossier
+      ? await createNewDossier(values)
+      : await updateExistingDossier(workingDossier.id, values);
+
     setWorkingDossier(updatedDossier);
+    setIsDraftNewDossier(false);
+    setDetailDraft(createDetailDraft(updatedDossier));
+    onCreated?.(updatedDossier);
     const reconciliationResult = await executeThreadmarkBondReconciliation(
       {
         sourceDossier: updatedDossier,
@@ -451,19 +490,58 @@ export function DossierSheet({
 
   function enterSectionEditMode() {
     setDraftSections(sections);
+    setDetailDraft(createDetailDraft(workingDossier));
+    setDetailImageError(undefined);
+    setDetailSaveError(undefined);
     setIsEditingSections(true);
     setSectionNotice('Editing Dossier');
   }
 
   async function saveSectionDraft() {
+    const trimmedName = detailDraft.name.trim();
+
+    if (!trimmedName) {
+      setDetailSaveError('Add a Name before saving this Dossier.');
+      return;
+    }
+
+    if (detailImageError) {
+      setDetailSaveError('LoreBound could not prepare the selected image.');
+      return;
+    }
+
     try {
-      await saveSectionChanges(draftSections);
+      setDetailSaveError(undefined);
+      const mergedSections = isDraftNewDossier
+        ? normalizeSectionOrder(draftSections)
+        : mergeDossierSectionsWithFormValues(
+            workingDossier,
+            {
+              ...detailDraft,
+              name: trimmedName,
+              sections: draftSections,
+            },
+          );
+
+      await saveSectionChanges(mergedSections, {
+        ...detailDraft,
+        name: trimmedName,
+      });
       setIsEditingSections(false);
       setIsAddSectionOpen(false);
       setRenamingSectionId(null);
       setRemovingSection(null);
       setSectionNotice('Investigation Updated');
-    } catch {
+    } catch (error) {
+      if (isDraftNewDossier) {
+        setDetailSaveError(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : 'LoreBound could not save this Dossier to the Local Archive.',
+        );
+        return;
+      }
+
       setIsEditingSections(false);
       setIsAddSectionOpen(false);
       setRenamingSectionId(null);
@@ -475,7 +553,15 @@ export function DossierSheet({
   }
 
   function cancelSectionDraft() {
+    if (isDraftNewDossier) {
+      onClose();
+      return;
+    }
+
     setDraftSections([]);
+    setDetailDraft(createDetailDraft(workingDossier));
+    setDetailImageError(undefined);
+    setDetailSaveError(undefined);
     setIsEditingSections(false);
     setIsAddSectionOpen(false);
     setRenamingSectionId(null);
@@ -492,6 +578,178 @@ export function DossierSheet({
       draftSections.map((section) =>
         section.id === sectionId ? { ...section, body } : section,
       ),
+    );
+  }
+
+  function updateDetailDraft(values: Partial<DossierFormValues>) {
+    setDetailDraft((currentDraft) => ({ ...currentDraft, ...values }));
+  }
+
+  function renderDetailFields() {
+    return (
+      <section className="dossier-reveal__section dossier-details-editor" aria-labelledby="dossier-details-editor-title">
+        <h3 id="dossier-details-editor-title">Dossier Details</h3>
+        <div className="case-form__field">
+          <label htmlFor={`dossier-details-name-${workingDossier.id}`}>Name</label>
+          <input
+            id={`dossier-details-name-${workingDossier.id}`}
+            value={detailDraft.name}
+            onChange={(event) => updateDetailDraft({ name: event.target.value })}
+            required
+          />
+        </div>
+
+        <CoverImageInput
+          value={detailDraft.coverImage}
+          errorMessage={detailImageError}
+          onChange={(coverImage) => updateDetailDraft({ coverImage })}
+          onError={setDetailImageError}
+        />
+
+        {workingDossier.dossierType === 'Character' ? (
+          <div className="case-form__grid">
+            <label className="case-form__field">
+              Alias
+              <input
+                value={detailDraft.alias ?? ''}
+                onChange={(event) => updateDetailDraft({ alias: event.target.value })}
+              />
+            </label>
+            <label className="case-form__field">
+              Status
+              <select
+                value={detailDraft.characterStatus ?? 'Unknown'}
+                onChange={(event) =>
+                  updateDetailDraft({ characterStatus: event.target.value as DossierFormValues['characterStatus'] })
+                }
+              >
+                <option value="Alive">Alive</option>
+                <option value="Deceased">Deceased</option>
+                <option value="Unknown">Unknown</option>
+              </select>
+            </label>
+            <label className="case-form__field">
+              Affiliation
+              <input
+                value={detailDraft.affiliation ?? ''}
+                onChange={(event) => updateDetailDraft({ affiliation: event.target.value })}
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {workingDossier.dossierType === 'Location' ? (
+          <div className="case-form__grid">
+            <label className="case-form__field">
+              Region
+              <input
+                value={detailDraft.region ?? ''}
+                onChange={(event) => updateDetailDraft({ region: event.target.value })}
+              />
+            </label>
+            <label className="case-form__field">
+              World
+              <input
+                value={detailDraft.world ?? ''}
+                onChange={(event) => updateDetailDraft({ world: event.target.value })}
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {workingDossier.dossierType === 'Event' ? (
+          <div className="case-form__grid">
+            <label className="case-form__field">
+              Date
+              <input
+                value={detailDraft.eventDate ?? ''}
+                onChange={(event) => updateDetailDraft({ eventDate: event.target.value })}
+              />
+            </label>
+            <label className="case-form__field">
+              Era
+              <input
+                value={detailDraft.era ?? ''}
+                onChange={(event) => updateDetailDraft({ era: event.target.value })}
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {workingDossier.dossierType === 'Organization' ? (
+          <div className="case-form__grid">
+            <label className="case-form__field">
+              Leader
+              <input
+                value={detailDraft.leader ?? ''}
+                onChange={(event) => updateDetailDraft({ leader: event.target.value })}
+              />
+            </label>
+            <label className="case-form__field">
+              Type
+              <input
+                value={detailDraft.organizationType ?? ''}
+                onChange={(event) => updateDetailDraft({ organizationType: event.target.value })}
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {workingDossier.dossierType === 'Theory' ? (
+          <div className="case-form__grid">
+            <label className="case-form__field">
+              Confidence
+              <select
+                value={detailDraft.theoryConfidence ?? 'Medium'}
+                onChange={(event) =>
+                  updateDetailDraft({ theoryConfidence: event.target.value as DossierFormValues['theoryConfidence'] })
+                }
+              >
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+              </select>
+            </label>
+            <label className="case-form__field">
+              Status
+              <select
+                value={detailDraft.theoryStatus ?? 'Open'}
+                onChange={(event) =>
+                  updateDetailDraft({ theoryStatus: event.target.value as DossierFormValues['theoryStatus'] })
+                }
+              >
+                <option value="Open">Open</option>
+                <option value="Confirmed">Confirmed</option>
+                <option value="Disproven">Disproven</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
+
+        <label className="case-form__field">
+          Summary
+          <textarea
+            rows={3}
+            value={detailDraft.summary ?? ''}
+            onChange={(event) => updateDetailDraft({ summary: event.target.value })}
+          />
+        </label>
+
+        <label className="case-form__field">
+          Investigation Notes
+          <textarea
+            rows={4}
+            value={detailDraft.notes ?? ''}
+            onChange={(event) => updateDetailDraft({ notes: event.target.value })}
+          />
+        </label>
+
+        {detailSaveError ? (
+          <p className="case-form__error" role="alert">
+            {detailSaveError}
+          </p>
+        ) : null}
+      </section>
     );
   }
 
@@ -732,6 +990,8 @@ export function DossierSheet({
               </Button>
             ) : null}
           </div>
+
+          {isEditingSections ? renderDetailFields() : null}
 
           {visibleSections.map((section, index) => {
             const capabilities = getSectionCapabilities(section);
@@ -1077,9 +1337,6 @@ export function DossierSheet({
               <>
                 <Button type="button" variant="ghost" onClick={cancelSectionDraft}>
                   Cancel
-                </Button>
-                <Button type="button" variant="plaque" onClick={() => onEdit(workingDossier)}>
-                  Edit Details
                 </Button>
                 <Button type="button" variant="brass" onClick={saveSectionDraft}>
                   Save Changes

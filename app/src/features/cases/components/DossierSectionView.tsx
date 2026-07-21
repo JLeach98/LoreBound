@@ -3,10 +3,10 @@ import { Button } from '../../../components/ui/Button';
 import { useBonds } from '../context/BondContext';
 import { useBoard } from '../context/BoardContext';
 import { useDossiers } from '../context/DossierContext';
-import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
+import type { Dossier, DossierType } from '../types/dossierTypes';
 import { dossierTypeLabels } from '../types/dossierTypes';
+import { createDefaultDossierSections } from '../utils/dossierSections';
 import { DeleteDossierDialog } from './DeleteDossierDialog';
-import { DossierFormDialog } from './DossierFormDialog';
 import { DossierSheet } from './DossierSheet';
 
 type DossierSectionViewProps = {
@@ -35,16 +35,14 @@ export function DossierSectionView({
     dossiers,
     isLoading,
     errorMessage,
-    createNewDossier,
-    updateExistingDossier,
     deleteExistingDossier,
     clearError,
   } = useDossiers();
   const { bondsForDossier, refreshBonds } = useBonds();
   const [searchQuery, setSearchQuery] = useState('');
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
-  const [editingDossier, setEditingDossier] = useState<Dossier | null>(null);
+  const [isSelectedDossierNewDraft, setIsSelectedDossierNewDraft] = useState(false);
+  const [shouldOpenSelectedDossierInEditMode, setShouldOpenSelectedDossierInEditMode] = useState(false);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
   const [pinningDossierId, setPinningDossierId] = useState<string | null>(null);
   const lastOpenedControlRef = useRef<HTMLButtonElement | null>(null);
@@ -64,21 +62,6 @@ export function DossierSectionView({
       dossier.name.toLocaleLowerCase().includes(normalizedQuery),
     );
   }, [searchQuery, sectionDossiers]);
-
-  async function handleCreateDossier(values: DossierFormValues) {
-    await createNewDossier(values);
-    setIsCreateDialogOpen(false);
-  }
-
-  async function handleUpdateDossier(values: DossierFormValues) {
-    if (!editingDossier) {
-      return;
-    }
-
-    const updatedDossier = await updateExistingDossier(editingDossier.id, values);
-    setEditingDossier(null);
-    setSelectedDossier(updatedDossier);
-  }
 
   async function handleDeleteDossier() {
     if (!deletingDossier) {
@@ -143,11 +126,51 @@ export function DossierSectionView({
   function openDossier(dossier: Dossier, opener: HTMLButtonElement) {
     lastOpenedControlRef.current = opener;
     setSelectedDossier(dossier);
+    setIsSelectedDossierNewDraft(false);
+    setShouldOpenSelectedDossierInEditMode(false);
   }
 
   function closeDossier() {
     setSelectedDossier(null);
+    setIsSelectedDossierNewDraft(false);
+    setShouldOpenSelectedDossierInEditMode(false);
     window.setTimeout(() => lastOpenedControlRef.current?.focus(), 0);
+  }
+
+  function createDraftDossier(type: DossierType): Dossier {
+    const now = new Date().toISOString();
+    const draftValues = {
+      dossierType: type,
+      name: '',
+    };
+
+    return {
+      id: `draft-${type.toLocaleLowerCase()}`,
+      caseId: '',
+      dossierType: type,
+      name: '',
+      dateCreated: now,
+      dateModified: now,
+      sections: createDefaultDossierSections(draftValues),
+    };
+  }
+
+  function openCreateDossier() {
+    setSelectedDossier(createDraftDossier(dossierType));
+    setIsSelectedDossierNewDraft(true);
+    setShouldOpenSelectedDossierInEditMode(true);
+  }
+
+  function openDossierForEdit(dossier: Dossier) {
+    setSelectedDossier(dossier);
+    setIsSelectedDossierNewDraft(false);
+    setShouldOpenSelectedDossierInEditMode(true);
+  }
+
+  function handleDossierCreated(dossier: Dossier) {
+    setSelectedDossier(dossier);
+    setIsSelectedDossierNewDraft(false);
+    setShouldOpenSelectedDossierInEditMode(false);
   }
 
   return (
@@ -164,7 +187,7 @@ export function DossierSectionView({
             type="button"
             variant="brass"
             disabled={!hasActiveCase}
-            onClick={() => setIsCreateDialogOpen(true)}
+            onClick={openCreateDossier}
           >
             Create {dossierType}
           </Button>
@@ -206,7 +229,7 @@ export function DossierSectionView({
                 <Button
                   type="button"
                   variant="brass"
-                  onClick={() => setIsCreateDialogOpen(true)}
+                  onClick={openCreateDossier}
                 >
                   Create {dossierType} Dossier
                 </Button>
@@ -269,7 +292,7 @@ export function DossierSectionView({
                           Add
                         </button>
                       )}
-                      <button type="button" onClick={() => setEditingDossier(dossier)}>
+                      <button type="button" onClick={() => openDossierForEdit(dossier)}>
                         Edit
                       </button>
                     </div>
@@ -287,32 +310,18 @@ export function DossierSectionView({
         </div>
       </section>
 
-      {isCreateDialogOpen ? (
-        <DossierFormDialog
-          dossierType={dossierType}
-          onCancel={() => setIsCreateDialogOpen(false)}
-          onSubmit={handleCreateDossier}
-        />
-      ) : null}
-
       {selectedDossier ? (
         <DossierSheet
+          key={`${selectedDossier.id}-${isSelectedDossierNewDraft ? 'draft' : 'saved'}-${shouldOpenSelectedDossierInEditMode ? 'edit' : 'view'}`}
           dossier={selectedDossier}
           onClose={closeDossier}
-          onEdit={setEditingDossier}
           onDelete={setDeletingDossier}
+          onCreated={handleDossierCreated}
+          initialEditMode={shouldOpenSelectedDossierInEditMode}
+          isNewDraft={isSelectedDossierNewDraft}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveFromBoard}
           onOpenDossier={setSelectedDossier}
-        />
-      ) : null}
-
-      {editingDossier ? (
-        <DossierFormDialog
-          dossierType={editingDossier.dossierType}
-          initialDossier={editingDossier}
-          onCancel={() => setEditingDossier(null)}
-          onSubmit={handleUpdateDossier}
         />
       ) : null}
 

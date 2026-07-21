@@ -1,10 +1,8 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
 import { LoreBoundSettings } from '../../../components/application-shell/LoreBoundSettings';
 import { Button } from '../../../components/ui/Button';
-import { DossierFormDialog } from '../../cases/components/DossierFormDialog';
 import { useCases } from '../../cases/context/CaseContext';
-import { useDossiers } from '../../cases/context/DossierContext';
-import type { Dossier, DossierFormValues, DossierType } from '../../cases/types/dossierTypes';
+import type { Dossier, DossierType } from '../../cases/types/dossierTypes';
 import { FieldKitBoard } from './FieldKitBoard';
 import { FieldKitDossiers, recordFieldKitRuntimeFailure } from './FieldKitDossiers';
 import { FieldKitHeader } from './FieldKitHeader';
@@ -102,20 +100,12 @@ class FieldKitRouteBoundary extends Component<FieldKitRouteBoundaryProps, FieldK
 
 export function FieldKitShell() {
   const { activeCase } = useCases();
-  const { createNewDossier } = useDossiers();
   const [activeDestination, setActiveDestination] = useState<FieldKitDestination>('home');
   const [isInvestigationDrawerOpen, setIsInvestigationDrawerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [quickAddType, setQuickAddType] = useState<DossierType | null>(null);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [boardDossier, setBoardDossier] = useState<Dossier | null>(null);
-
-  async function handleQuickAddSubmit(values: DossierFormValues) {
-    await createNewDossier(values);
-    setQuickAddType(null);
-    setIsQuickAddOpen(false);
-    setActiveDestination('dossiers');
-  }
 
   return (
     <main className="field-kit" aria-label="LoreBound Field Kit">
@@ -147,6 +137,8 @@ export function FieldKitShell() {
             }}
           >
             <FieldKitDossiers
+              initialCreateType={quickAddType}
+              onInitialCreateConsumed={() => setQuickAddType(null)}
               onReturnToFieldKit={() => {
                 setBoardDossier(null);
                 setActiveDestination('home');
@@ -171,6 +163,8 @@ export function FieldKitShell() {
               <FieldKitDossiers
                 initialType={boardDossier.dossierType}
                 initialDossierId={boardDossier.id}
+                initialCreateType={quickAddType}
+                onInitialCreateConsumed={() => setQuickAddType(null)}
                 onReturnToFieldKit={() => {
                   setBoardDossier(null);
                   setActiveDestination('home');
@@ -216,15 +210,9 @@ export function FieldKitShell() {
           onChoose={(type) => {
             setQuickAddType(type);
             setIsQuickAddOpen(false);
+            setBoardDossier(null);
+            setActiveDestination('dossiers');
           }}
-        />
-      ) : null}
-
-      {quickAddType ? (
-        <DossierFormDialog
-          dossierType={quickAddType}
-          onCancel={() => setQuickAddType(null)}
-          onSubmit={handleQuickAddSubmit}
         />
       ) : null}
 

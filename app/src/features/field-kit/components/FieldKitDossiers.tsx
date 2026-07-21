@@ -7,7 +7,7 @@ import {
   ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
-import { DossierFormDialog } from '../../cases/components/DossierFormDialog';
+import { DossierSheet } from '../../cases/components/DossierSheet';
 import { useBonds } from '../../cases/context/BondContext';
 import { useBoard } from '../../cases/context/BoardContext';
 import { useCases } from '../../cases/context/CaseContext';
@@ -20,7 +20,6 @@ import {
 import type { Bond, BondFormValues } from '../../cases/types/bondTypes';
 import type {
   Dossier,
-  DossierFormValues,
   DossierSection,
   DossierSectionKind,
   DossierType,
@@ -30,6 +29,7 @@ import { requestAutomaticSynchronization } from '../../../services/sync/Automati
 import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import {
   builtInSectionTemplates,
+  createDefaultDossierSections,
   createSectionFromTemplate,
   dossierToFormValues,
   duplicateSection,
@@ -56,6 +56,8 @@ import { FieldKitThumbnail } from './FieldKitThumbnail';
 type FieldKitDossiersProps = {
   initialType?: DossierType;
   initialDossierId?: string;
+  initialCreateType?: DossierType | null;
+  onInitialCreateConsumed?: () => void;
   onReturnToFieldKit?: () => void;
 };
 
@@ -297,10 +299,12 @@ function FieldKitDossierRow({ dossier, onOpen, getBondCount }: FieldKitDossierRo
 export function FieldKitDossiers({
   initialType = 'Character',
   initialDossierId,
+  initialCreateType,
+  onInitialCreateConsumed,
   onReturnToFieldKit,
 }: FieldKitDossiersProps) {
   const { activeCase } = useCases();
-  const { dossiers, createNewDossier, updateExistingDossier, deleteExistingDossier, refreshDossiers } = useDossiers();
+  const { dossiers, updateExistingDossier, deleteExistingDossier, refreshDossiers } = useDossiers();
   const {
     bonds,
     createNewBond,
@@ -384,6 +388,18 @@ export function FieldKitDossiers({
   }, [safeDossiers, initialDossierId]);
 
   useEffect(() => {
+    if (!initialCreateType) {
+      return;
+    }
+
+    setActiveType(initialCreateType);
+    setSelectedDossier(null);
+    setIsEditingDossier(false);
+    setEditorState({ mode: 'create', dossierType: initialCreateType });
+    onInitialCreateConsumed?.();
+  }, [initialCreateType, onInitialCreateConsumed]);
+
+  useEffect(() => {
     if (!selectedDossier) {
       return;
     }
@@ -457,22 +473,27 @@ export function FieldKitDossiers({
     await refreshDossiers();
   }
 
-  async function handleCreate(values: DossierFormValues) {
-    const createdDossier = await createNewDossier(values);
-    setEditorState(null);
-    setIsEditingDossier(false);
-    setSelectedDossier(createdDossier);
+  function createDraftDossier(type: DossierType): Dossier {
+    const now = new Date().toISOString();
+    const draftValues = {
+      dossierType: type,
+      name: '',
+    };
+
+    return {
+      id: `field-kit-draft-${type.toLocaleLowerCase()}`,
+      caseId: '',
+      dossierType: type,
+      name: '',
+      dateCreated: now,
+      dateModified: now,
+      sections: createDefaultDossierSections(draftValues),
+    };
   }
 
-  async function handleUpdate(values: DossierFormValues) {
-    if (!editorState || editorState.mode !== 'edit') {
-      return;
-    }
-
-    const updatedDossier = await updateExistingDossier(editorState.dossier.id, values);
-    setEditorState(null);
-    setIsEditingDossier(true);
-    setSelectedDossier(updatedDossier);
+  function handleCanonicalDossierSaved(dossier: Dossier) {
+    setSelectedDossier(dossier);
+    setIsEditingDossier(false);
   }
 
   async function handleDeleteDossier() {
@@ -615,11 +636,16 @@ export function FieldKitDossiers({
           onDeleteBond={setDeletingBond}
         >
           {editorState?.mode === 'edit' ? (
-            <DossierFormDialog
-              dossierType={editorState.dossier.dossierType}
-              initialDossier={editorState.dossier}
-              onCancel={() => setEditorState(null)}
-              onSubmit={handleUpdate}
+            <DossierSheet
+              dossier={editorState.dossier}
+              onClose={() => setEditorState(null)}
+              onDelete={setDeletingDossier}
+              initialEditMode
+              isPinned={isDossierPinned(editorState.dossier.id)}
+              onRemoveFromBoard={async (dossier) => {
+                await removeDossierFromBoard(dossier.id);
+              }}
+              onOpenDossier={setSelectedDossier}
             />
           ) : null}
           {bondEditor ? (
@@ -749,10 +775,15 @@ export function FieldKitDossiers({
       </div>
 
       {editorState?.mode === 'create' ? (
-        <DossierFormDialog
-          dossierType={editorState.dossierType}
-          onCancel={() => setEditorState(null)}
-          onSubmit={handleCreate}
+        <DossierSheet
+          dossier={createDraftDossier(editorState.dossierType)}
+          onClose={() => setEditorState(null)}
+          onDelete={setDeletingDossier}
+          onCreated={handleCanonicalDossierSaved}
+          initialEditMode
+          isNewDraft
+          isPinned={false}
+          onOpenDossier={setSelectedDossier}
         />
       ) : null}
     </section>
