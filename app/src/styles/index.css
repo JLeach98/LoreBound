@@ -4372,11 +4372,11 @@ textarea {
 
 .investigator-home__scene {
   display: grid;
-  grid-template-columns: minmax(10rem, 0.78fr) minmax(20rem, 26rem) minmax(10rem, 0.78fr);
+  grid-template-columns: minmax(8rem, 1fr) minmax(23.5rem, 31rem) minmax(8rem, 1fr);
   align-items: center;
-  gap: clamp(1rem, 3vw, 2rem);
+  gap: clamp(0.9rem, 2.6vw, 1.8rem);
   width: min(100%, 78rem);
-  min-height: calc(100vh - clamp(1.6rem, 5vw, 3.4rem));
+  min-height: calc(100dvh - clamp(1.6rem, 5vw, 3.4rem));
   margin: 0 auto;
   padding: clamp(0.8rem, 3vw, 2rem);
 }
@@ -4396,8 +4396,8 @@ textarea {
 
 .investigator-home__door-frame {
   justify-self: center;
-  width: min(100%, 25.5rem);
-  padding: clamp(0.65rem, 1.6vw, 0.95rem);
+  width: min(100%, clamp(24rem, 34vw, 31rem), calc(68dvh - 2.72rem));
+  padding: clamp(0.58rem, 1.35vw, 0.86rem);
   border: 1px solid rgb(184 138 61 / 0.36);
   border-radius: var(--radius-2xl);
   background:
@@ -4412,8 +4412,8 @@ textarea {
 .investigator-home__door {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(12.5rem, 0.95fr) minmax(18rem, 1.05fr);
-  min-height: clamp(34rem, 78vh, 43rem);
+  grid-template-rows: 46% 54%;
+  aspect-ratio: 0.66;
   border: 1px solid rgb(246 240 230 / 0.1);
   border-radius: calc(var(--radius-xl) - 0.12rem);
   background:
@@ -4428,7 +4428,7 @@ textarea {
 .investigator-home__door-window {
   display: grid;
   place-items: center;
-  margin: clamp(1rem, 3vw, 1.55rem) clamp(1.2rem, 3vw, 1.8rem) 0.65rem;
+  margin: clamp(0.9rem, 2.4vw, 1.35rem) clamp(1rem, 2.7vw, 1.55rem) 0.55rem;
   border: 1px solid rgb(184 138 61 / 0.45);
   border-radius: var(--radius-lg);
   background:
@@ -4479,7 +4479,7 @@ textarea {
 .investigator-home__door-rail {
   display: grid;
   align-self: stretch;
-  margin: 0.65rem clamp(1.1rem, 3vw, 1.6rem) clamp(1rem, 3vw, 1.45rem);
+  margin: 0.55rem clamp(1rem, 2.5vw, 1.45rem) clamp(0.9rem, 2.6vw, 1.28rem);
   border: 1px solid rgb(184 138 61 / 0.22);
   border-radius: var(--radius-lg);
   background:
@@ -4493,8 +4493,8 @@ textarea {
 
 .investigator-home__handle {
   position: absolute;
-  right: clamp(1.25rem, 4vw, 1.9rem);
-  top: 53%;
+  right: clamp(1.08rem, 3.1vw, 1.65rem);
+  top: 50.5%;
   width: 0.8rem;
   height: 3.1rem;
   border: 1px solid rgb(246 240 230 / 0.24);
@@ -4509,7 +4509,7 @@ textarea {
 
 .investigator-home__content {
   align-self: center;
-  width: min(100%, 17.5rem);
+  width: min(100%, 18.5rem);
   margin: auto;
   border: 1px solid rgb(246 240 230 / 0.13);
   border-radius: var(--radius-lg);
@@ -4624,8 +4624,10 @@ textarea {
 .investigator-home__side-window {
   position: relative;
   justify-self: stretch;
-  height: min(48vh, 24rem);
-  min-height: 16rem;
+  width: min(100%, 14rem);
+  height: min(calc(100dvh - 6rem), clamp(34rem, 68vw, 46rem));
+  max-height: calc(100dvh - 4rem);
+  justify-self: center;
   border: 1px solid rgb(184 138 61 / 0.2);
   border-radius: var(--radius-xl);
   background:
@@ -4745,12 +4747,12 @@ textarea {
   }
 
   .investigator-home__door-frame {
-    width: min(100%, 23rem);
+    width: min(100%, 24rem, calc(68dvh - 2.04rem));
+    padding: clamp(0.52rem, 1.8vw, 0.72rem);
   }
 
   .investigator-home__door {
-    min-height: min(41rem, calc(100dvh - 2.5rem));
-    grid-template-rows: minmax(10rem, 0.78fr) minmax(17.5rem, 1.22fr);
+    grid-template-rows: 44% 56%;
   }
 
   .investigator-home__content {
@@ -4760,7 +4762,11 @@ textarea {
 
 @media (max-width: 520px) {
   .investigator-home {
-    padding: 0.75rem;
+    padding:
+      max(0.62rem, env(safe-area-inset-top))
+      max(0.62rem, env(safe-area-inset-right))
+      max(0.62rem, env(safe-area-inset-bottom))
+      max(0.62rem, env(safe-area-inset-left));
   }
 
   .investigator-home__scene {
@@ -4769,13 +4775,12 @@ textarea {
   }
 
   .investigator-home__door-frame {
-    width: min(100%, 20.5rem);
-    padding: 0.52rem;
+    width: min(100%, 21.25rem, calc(68dvh - 1.53rem));
+    padding: 0.46rem;
   }
 
   .investigator-home__door {
-    min-height: min(38rem, calc(100dvh - 2rem));
-    grid-template-rows: minmax(9rem, 0.66fr) minmax(18rem, 1.34fr);
+    grid-template-rows: 40% 60%;
   }
 
   .investigator-home__door-window {
@@ -4783,7 +4788,7 @@ textarea {
   }
 
   .investigator-home__door-rail {
-    margin: 0.42rem 0.82rem 0.82rem;
+    margin: 0.42rem 0.72rem 0.72rem;
   }
 
   .investigator-home__content {
