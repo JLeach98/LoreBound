@@ -12,6 +12,7 @@ type CaseArchiveViewProps = {
   onCaseOpened?: () => void;
   closeLabel?: string;
   openCreatedCase?: boolean;
+  startWithCreateDialog?: boolean;
 };
 
 export function CaseArchiveView({
@@ -19,6 +20,7 @@ export function CaseArchiveView({
   onCaseOpened,
   closeLabel = 'Return to Study',
   openCreatedCase = false,
+  startWithCreateDialog = false,
 }: CaseArchiveViewProps) {
   const {
     cases,
@@ -33,7 +35,7 @@ export function CaseArchiveView({
     clearError,
   } = useCases();
   const [searchQuery, setSearchQuery] = useState('');
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(startWithCreateDialog);
   const [caseBeingEdited, setCaseBeingEdited] = useState<LoreCase | null>(null);
   const [caseBeingDeleted, setCaseBeingDeleted] = useState<LoreCase | null>(null);
   const [archiveActionError, setArchiveActionError] = useState<string | null>(null);
