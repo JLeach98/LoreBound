@@ -10,9 +10,16 @@ import { DeleteCaseDialog } from './DeleteCaseDialog';
 type CaseArchiveViewProps = {
   onClose: () => void;
   onCaseOpened?: () => void;
+  closeLabel?: string;
+  openCreatedCase?: boolean;
 };
 
-export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps) {
+export function CaseArchiveView({
+  onClose,
+  onCaseOpened,
+  closeLabel = 'Return to Study',
+  openCreatedCase = false,
+}: CaseArchiveViewProps) {
   const {
     cases,
     cloudCases,
@@ -47,8 +54,14 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
   }
 
   async function handleCreateCase(values: CaseFormValues) {
-    await createNewCase(values);
+    const createdCase = await createNewCase(values);
     setIsCreateDialogOpen(false);
+
+    if (openCreatedCase) {
+      await handleOpenCase(createdCase.id);
+      return;
+    }
+
     createButtonRef.current?.focus();
   }
 
@@ -111,7 +124,7 @@ export function CaseArchiveView({ onClose, onCaseOpened }: CaseArchiveViewProps)
               Create New Case
             </Button>
             <Button type="button" variant="plaque" onClick={onClose}>
-              Return to Study
+              {closeLabel}
             </Button>
           </div>
         </header>
