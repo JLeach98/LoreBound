@@ -128,7 +128,7 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
 
                 {hasContinueTarget ? (
                   <div className="investigator-home__case-note" aria-live="polite">
-                    <span>Continue Investigation</span>
+                    <span>Current Investigation</span>
                     <strong>{continueCase?.caseName}</strong>
                     <p>{continueContext}</p>
                   </div>

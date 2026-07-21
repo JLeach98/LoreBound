@@ -4420,8 +4420,8 @@ textarea {
     linear-gradient(90deg, rgb(0 0 0 / 0.18), transparent 18%, transparent 82%, rgb(0 0 0 / 0.25)),
     linear-gradient(180deg, #5f3b27, #372015 52%, #24140f);
   box-shadow:
-    inset 0 0 0 0.45rem rgb(34 20 14 / 0.62),
-    inset 0 0 0 0.62rem rgb(184 138 61 / 0.13);
+    inset 0 0 0 0.34rem rgb(34 20 14 / 0.58),
+    inset 0 0 0 0.47rem rgb(184 138 61 / 0.12);
   transform-origin: left center;
 }
 
@@ -4479,22 +4479,22 @@ textarea {
 .investigator-home__door-rail {
   display: grid;
   align-self: stretch;
-  margin: 0.55rem clamp(1rem, 2.5vw, 1.45rem) clamp(0.9rem, 2.6vw, 1.28rem);
-  border: 1px solid rgb(184 138 61 / 0.22);
+  margin: 0.45rem clamp(0.78rem, 2.1vw, 1.12rem) clamp(0.72rem, 2.1vw, 1rem);
+  border: 1px solid rgb(184 138 61 / 0.2);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(90deg, rgb(0 0 0 / 0.28), transparent 18%, transparent 82%, rgb(0 0 0 / 0.28)),
-    linear-gradient(180deg, rgb(246 240 230 / 0.08), rgb(0 0 0 / 0.2)),
-    rgb(41 24 17 / 0.78);
+    linear-gradient(90deg, rgb(0 0 0 / 0.18), transparent 14%, transparent 86%, rgb(0 0 0 / 0.18)),
+    linear-gradient(180deg, rgb(246 240 230 / 0.06), rgb(0 0 0 / 0.18)),
+    rgb(41 24 17 / 0.66);
   box-shadow:
-    inset 0 0 0 0.45rem rgb(0 0 0 / 0.12),
-    inset 0 0 24px rgb(0 0 0 / 0.32);
+    inset 0 0 0 0.28rem rgb(0 0 0 / 0.1),
+    inset 0 0 18px rgb(0 0 0 / 0.28);
 }
 
 .investigator-home__handle {
   position: absolute;
   right: clamp(1.08rem, 3.1vw, 1.65rem);
-  top: 50.5%;
+  top: 59%;
   width: 0.8rem;
   height: 3.1rem;
   border: 1px solid rgb(246 240 230 / 0.24);
@@ -4509,17 +4509,19 @@ textarea {
 
 .investigator-home__content {
   align-self: center;
-  width: min(100%, 18.5rem);
+  width: min(100%, 19.25rem);
   margin: auto;
-  border: 1px solid rgb(246 240 230 / 0.13);
-  border-radius: var(--radius-lg);
+  border: 1px solid rgb(184 138 61 / 0.2);
+  border-radius: var(--radius-md);
   background:
-    linear-gradient(180deg, rgb(23 21 20 / 0.7), rgb(12 10 9 / 0.84)),
-    rgb(23 21 20 / 0.76);
-  padding: clamp(0.82rem, 2vw, 1rem);
+    linear-gradient(180deg, rgb(246 240 230 / 0.045), rgb(0 0 0 / 0.14)),
+    linear-gradient(90deg, rgb(0 0 0 / 0.18), transparent 18%, transparent 82%, rgb(0 0 0 / 0.18)),
+    rgb(16 15 15 / 0.76);
+  padding: clamp(0.72rem, 1.65vw, 0.88rem);
   box-shadow:
-    0 16px 32px rgb(0 0 0 / 0.28),
-    inset 0 1px 0 rgb(246 240 230 / 0.08);
+    inset 0 1px 0 rgb(246 240 230 / 0.08),
+    inset 0 -1px 0 rgb(0 0 0 / 0.28),
+    inset 0 0 18px rgb(0 0 0 / 0.38);
   backdrop-filter: blur(12px);
 }
 
@@ -4532,19 +4534,19 @@ textarea {
 }
 
 .investigator-home__lede {
-  margin: 0.35rem 0 0;
+  margin: 0.28rem 0 0;
   color: rgb(246 240 230 / 0.78);
   font-size: 0.9rem;
 }
 
 .investigator-home__case-note {
   display: grid;
-  gap: 0.16rem;
-  margin-top: 0.75rem;
+  gap: 0.12rem;
+  margin-top: 0.62rem;
   border-left: 2px solid var(--color-deep-crimson);
   border-radius: var(--radius-md);
-  background: rgb(246 240 230 / 0.07);
-  padding: 0.62rem 0.68rem;
+  background: rgb(246 240 230 / 0.055);
+  padding: 0.52rem 0.62rem;
 }
 
 .investigator-home__case-note span {
@@ -4577,15 +4579,15 @@ textarea {
 
 .investigator-home__actions {
   display: grid;
-  gap: 0.5rem;
-  margin-top: 0.72rem;
+  gap: 0.43rem;
+  margin-top: 0.62rem;
 }
 
 .investigator-home__actions .auth-button {
   min-height: 2.55rem;
   justify-content: center;
   border-radius: var(--radius-md);
-  padding: 0.62rem 0.78rem;
+  padding: 0.58rem 0.74rem;
   text-decoration: none;
 }
 
@@ -4611,7 +4613,7 @@ textarea {
 }
 
 .investigator-home__sign-out {
-  margin-top: 0.68rem;
+  margin-top: 0.52rem;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -4631,6 +4633,9 @@ textarea {
   border: 1px solid rgb(184 138 61 / 0.2);
   border-radius: var(--radius-xl);
   background:
+    radial-gradient(circle at 72% 28%, rgb(184 138 61 / 0.16), transparent 5rem),
+    linear-gradient(180deg, transparent 0 16%, rgb(184 138 61 / 0.08) 16% 17%, transparent 17% 31%, rgb(184 138 61 / 0.07) 31% 32%, transparent 32%),
+    linear-gradient(90deg, transparent 0 22%, rgb(246 240 230 / 0.045) 22% 34%, transparent 34% 61%, rgb(246 240 230 / 0.035) 61% 76%, transparent 76%),
     linear-gradient(135deg, rgb(246 240 230 / 0.12), rgb(16 18 20 / 0.82) 38%, rgb(246 240 230 / 0.04)),
     rgb(9 10 11 / 0.78);
   box-shadow:
@@ -4638,6 +4643,14 @@ textarea {
     0 26px 52px rgb(0 0 0 / 0.28);
   overflow: hidden;
   opacity: 0.82;
+}
+
+.investigator-home__side-window--left {
+  transform: perspective(900px) rotateY(2deg);
+}
+
+.investigator-home__side-window--right {
+  transform: perspective(900px) rotateY(-2deg);
 }
 
 .investigator-home__side-window::before,
@@ -4748,7 +4761,7 @@ textarea {
 
   .investigator-home__door-frame {
     width: min(100%, 24rem, calc(68dvh - 2.04rem));
-    padding: clamp(0.52rem, 1.8vw, 0.72rem);
+    padding: clamp(0.48rem, 1.55vw, 0.66rem);
   }
 
   .investigator-home__door {
@@ -4776,7 +4789,7 @@ textarea {
 
   .investigator-home__door-frame {
     width: min(100%, 21.25rem, calc(68dvh - 1.53rem));
-    padding: 0.46rem;
+    padding: 0.4rem;
   }
 
   .investigator-home__door {
@@ -4784,15 +4797,20 @@ textarea {
   }
 
   .investigator-home__door-window {
-    margin: 0.82rem 0.9rem 0.42rem;
+    margin: 0.72rem 0.78rem 0.38rem;
   }
 
   .investigator-home__door-rail {
-    margin: 0.42rem 0.72rem 0.72rem;
+    margin: 0.38rem 0.62rem 0.62rem;
   }
 
   .investigator-home__content {
-    padding: 0.78rem;
+    padding: 0.68rem;
+  }
+
+  .investigator-home__nameplate {
+    width: min(84%, 14.5rem);
+    padding: 0.68rem;
   }
 
   .investigator-home__content h1 {
