@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { AuthAccessPanel } from '../components/application-shell/AuthAccessPanel';
 import { InvestigatorHome } from '../components/application-shell/InvestigatorHome';
 import { InvestigatorProfileOnboardingScreen } from '../components/application-shell/InvestigatorProfileOnboardingScreen';
 import { LoreBoundAccessScreen } from '../components/application-shell/LoreBoundAccessScreen';
 import { BondProvider } from '../features/cases/context/BondContext';
 import { BoardProvider } from '../features/cases/context/BoardContext';
-import { CaseProvider } from '../features/cases/context/CaseContext';
+import { CaseProvider, useCases } from '../features/cases/context/CaseContext';
 import { DossierProvider } from '../features/cases/context/DossierContext';
 import { FieldKitShell } from '../features/field-kit/components/FieldKitShell';
 import { authService, type AuthStatus } from '../services/auth/AuthService';
@@ -51,19 +52,43 @@ function BrandedResolutionState() {
   );
 }
 
-function AuthenticatedApplication() {
+function AuthenticatedWorkspace() {
   const [destination, setDestination] = useState<AuthenticatedDestination>('home');
+  const { activeCase } = useCases();
 
+  function returnHome() {
+    setDestination('home');
+  }
+
+  return (
+    <>
+      <AuthAccessPanel showTrigger={false} />
+      {destination === 'investigation' && activeCase ? (
+        <button
+          type="button"
+          className="app-home-control"
+          onClick={returnHome}
+          aria-label="Home"
+        >
+          ← Home
+        </button>
+      ) : null}
+      {destination === 'home' ? (
+        <InvestigatorHome onEnterInvestigation={() => setDestination('investigation')} />
+      ) : (
+        <LoreBoundExperience />
+      )}
+    </>
+  );
+}
+
+function AuthenticatedApplication() {
   return (
     <CaseProvider>
       <DossierProvider>
         <BoardProvider>
           <BondProvider>
-            {destination === 'home' ? (
-              <InvestigatorHome onEnterInvestigation={() => setDestination('investigation')} />
-            ) : (
-              <LoreBoundExperience />
-            )}
+            <AuthenticatedWorkspace />
           </BondProvider>
         </BoardProvider>
       </DossierProvider>

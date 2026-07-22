@@ -1,10 +1,8 @@
 import { Button } from '../../../components/ui/Button';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { createStableId } from '../../../lib/stableId';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   executeThreadmarkBondReconciliation,
   isThreadmarkGeneratedBond,
-  ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
 import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import { useBonds } from '../context/BondContext';
@@ -30,19 +28,14 @@ import type {
 } from '../types/dossierTypes';
 import { dossierTypeLabels, dossierTypes } from '../types/dossierTypes';
 import {
-  caseFileBlockOptions,
-  changeCaseFileBlockType,
-  createCaseFileBlockSection,
-  ensureEditableNotebookSections,
-  getCaseFileBlockLabel,
+  blocksToDocumentDraft,
+  documentDraftToBlocks,
   getCaseFileBlockType,
-  getCaseFileSections,
   getVisibleCaseFileSections,
   hasRenderableCaseFileContent,
   isStructuredCaseFileBlock,
-  prepareNotebookSections,
   syncDossierValuesFromNotebookSections,
-  type CaseFileBlockType,
+  type CaseFileDocumentDraft,
 } from '../utils/dossierBlocks';
 import {
   getBondLabelFromPerspective,
@@ -55,6 +48,7 @@ import {
   normalizeSectionOrder,
 } from '../utils/dossierSections';
 import { BondFormDialog } from './BondFormDialog';
+import { CaseFileDocumentEditor } from './CaseFileDocumentEditor';
 import { CoverImageInput } from './CoverImageInput';
 import { DeleteBondDialog } from './DeleteBondDialog';
 import { DossierFormDialog } from './DossierFormDialog';
@@ -184,8 +178,6 @@ export function DossierSheet({
   } = useBonds();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
-  const pendingBlockFocusIdRef = useRef<string | null>(null);
-  const didFocusInitialBlockRef = useRef(false);
   const [workingDossier, setWorkingDossier] = useState(dossier);
   const [isDraftNewDossier, setIsDraftNewDossier] = useState(isNewDraft);
   const [isCreatingBond, setIsCreatingBond] = useState(false);
@@ -204,20 +196,17 @@ export function DossierSheet({
   const [isQuickCreateDossierOpen, setIsQuickCreateDossierOpen] = useState(false);
   const [quickError, setQuickError] = useState<string | undefined>();
   const [isEditingSections, setIsEditingSections] = useState(false);
-  const [draftSections, setDraftSections] = useState<DossierSection[]>([]);
+  const [caseFileDraft, setCaseFileDraft] = useState<CaseFileDocumentDraft>(() =>
+    blocksToDocumentDraft(ensureDossierSections(dossier)),
+  );
   const [sectionNotice, setSectionNotice] = useState<string | undefined>();
   const [detailDraft, setDetailDraft] = useState<DossierFormValues>(() => createDetailDraft(dossier));
   const [detailImageError, setDetailImageError] = useState<string | undefined>();
   const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
-  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
-  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
-  const [isInsertMenuOpen, setIsInsertMenuOpen] = useState(false);
-  const [slashCommandBlockId, setSlashCommandBlockId] = useState<string | null>(null);
-  const [slashCommandHighlight, setSlashCommandHighlight] = useState(0);
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const caseFileSections = useMemo(
-    () => (isEditingSections ? getCaseFileSections(draftSections) : getVisibleCaseFileSections(sections)),
-    [draftSections, isEditingSections, sections],
+    () => getVisibleCaseFileSections(sections),
+    [sections],
   );
   const keyFacts = useMemo(
     () => keyFactsForDossier(workingDossier).filter((field) => field.value),
@@ -308,42 +297,8 @@ export function DossierSheet({
   }, []);
 
   useEffect(() => {
-    if (!isEditingSections) {
-      didFocusInitialBlockRef.current = false;
-      return;
-    }
-
-    const pendingFocusId = pendingBlockFocusIdRef.current;
-    const initialFocusId =
-      pendingFocusId ??
-      (!didFocusInitialBlockRef.current
-        ? caseFileSections.find((section) => getCaseFileBlockType(section) === 'paragraph' && !section.body?.trim())?.id
-        : null);
-    const blockIdToFocus = initialFocusId ?? null;
-
-    if (!blockIdToFocus) {
-      return;
-    }
-
-    window.setTimeout(() => {
-      const field = documentRef.current?.querySelector<HTMLElement>(
-        `[data-case-file-block-id="${blockIdToFocus}"]`,
-      );
-
-      field?.focus();
-      pendingBlockFocusIdRef.current = null;
-      didFocusInitialBlockRef.current = true;
-    }, 0);
-  }, [caseFileSections, isEditingSections]);
-
-  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        if (isInsertMenuOpen) {
-          setIsInsertMenuOpen(false);
-          return;
-        }
-
         onClose();
         return;
       }
@@ -376,7 +331,7 @@ export function DossierSheet({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isInsertMenuOpen, onClose]);
+  }, [onClose]);
 
   async function handleCreateBond(values: BondFormValues) {
     await createNewBond(values);
@@ -487,12 +442,10 @@ export function DossierSheet({
   }
 
   function enterSectionEditMode() {
-    setDraftSections(ensureEditableNotebookSections(workingDossier));
+    setCaseFileDraft(blocksToDocumentDraft(ensureDossierSections(workingDossier)));
     setDetailDraft(createDetailDraft(workingDossier));
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
-    pendingBlockFocusIdRef.current = null;
-    didFocusInitialBlockRef.current = false;
     setIsEditingSections(true);
     setSectionNotice('Editing Dossier');
   }
@@ -512,21 +465,21 @@ export function DossierSheet({
 
     try {
       setDetailSaveError(undefined);
-      const mergedSections = isDraftNewDossier
-        ? prepareNotebookSections(draftSections)
-        : prepareNotebookSections(
-            mergeDossierSectionsWithFormValues(
-              workingDossier,
-              syncDossierValuesFromNotebookSections(
-                {
-                  ...detailDraft,
-                  name: trimmedName,
-                  sections: draftSections,
-                },
-                draftSections,
-              ),
-            ),
-          );
+      const parsedDraftSections = documentDraftToBlocks(
+        caseFileDraft,
+        ensureDossierSections(workingDossier),
+      );
+      const mergedSections = mergeDossierSectionsWithFormValues(
+        { ...workingDossier, sections: parsedDraftSections },
+        syncDossierValuesFromNotebookSections(
+          {
+            ...detailDraft,
+            name: trimmedName,
+            sections: parsedDraftSections,
+          },
+          parsedDraftSections,
+        ),
+      );
 
       await saveSectionChanges(mergedSections, {
         ...detailDraft,
@@ -557,280 +510,12 @@ export function DossierSheet({
       return;
     }
 
-    pendingBlockFocusIdRef.current = null;
-    didFocusInitialBlockRef.current = false;
-    setDraftSections([]);
+    setCaseFileDraft(blocksToDocumentDraft(ensureDossierSections(workingDossier)));
     setDetailDraft(createDetailDraft(workingDossier));
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
     setIsEditingSections(false);
     setSectionNotice(undefined);
-  }
-
-  function updateDraftSections(nextSections: DossierSection[]) {
-    setDraftSections(prepareNotebookSections(nextSections));
-  }
-
-  function focusNotebookBlock(sectionId: string) {
-    window.setTimeout(() => {
-      documentRef.current
-        ?.querySelector<HTMLElement>(`[data-case-file-block-id="${sectionId}"]`)
-        ?.focus();
-    }, 0);
-  }
-
-  function updateSectionBody(sectionId: string, body: string) {
-    updateDraftSections(
-      draftSections.map((section) =>
-        section.id === sectionId ? { ...section, body } : section,
-      ),
-    );
-  }
-
-  function updateNotebookBlock(sectionId: string, values: Partial<DossierSection>) {
-    updateDraftSections(
-      draftSections.map((section) =>
-        section.id === sectionId ? { ...section, ...values } : section,
-      ),
-    );
-  }
-
-  function addNotebookBlock(type: CaseFileBlockType = 'paragraph', afterSectionId?: string) {
-    const insertionIndex = afterSectionId
-      ? draftSections.findIndex((section) => section.id === afterSectionId) + 1
-      : draftSections.length;
-    const safeIndex = insertionIndex > 0 ? insertionIndex : draftSections.length;
-    const nextSections = [...draftSections];
-    const newSection = createCaseFileBlockSection(type, safeIndex);
-
-    nextSections.splice(safeIndex, 0, newSection);
-    pendingBlockFocusIdRef.current = newSection.id;
-    updateDraftSections(nextSections);
-    setActiveBlockId(newSection.id);
-    setIsInsertMenuOpen(false);
-    focusNotebookBlock(newSection.id);
-    setSectionNotice(`${getCaseFileBlockLabel(type)} added`);
-  }
-
-  function changeNotebookBlock(section: DossierSection, type: CaseFileBlockType) {
-    updateDraftSections(
-      draftSections.map((candidate) =>
-        candidate.id === section.id ? changeCaseFileBlockType(candidate, type) : candidate,
-      ),
-    );
-    setSlashCommandBlockId(null);
-    setSectionNotice(`Changed to ${getCaseFileBlockLabel(type)}`);
-  }
-
-  function selectSlashCommand(section: DossierSection, type: CaseFileBlockType) {
-    updateDraftSections(
-      draftSections.map((candidate) =>
-        candidate.id === section.id
-          ? changeCaseFileBlockType({ ...candidate, body: '' }, type)
-          : candidate,
-      ),
-    );
-    setSlashCommandBlockId(null);
-    setSlashCommandHighlight(0);
-    setActiveBlockId(section.id);
-    focusNotebookBlock(section.id);
-    setSectionNotice(`Changed to ${getCaseFileBlockLabel(type)}`);
-  }
-
-  function duplicateNotebookBlock(section: DossierSection) {
-    const index = draftSections.findIndex((candidate) => candidate.id === section.id);
-    const nextSections = [...draftSections];
-    const duplicate = {
-      ...section,
-      id: createStableId(section.templateId),
-      title: section.title,
-      isCollapsed: false,
-    };
-
-    nextSections.splice(index + 1, 0, duplicate);
-    updateDraftSections(nextSections);
-    setSectionNotice(`${getCaseFileBlockLabel(getCaseFileBlockType(section) ?? 'paragraph')} duplicated`);
-  }
-
-  function deleteNotebookBlock(section: DossierSection) {
-    const contentSections = getCaseFileSections(draftSections);
-    const currentIndex = contentSections.findIndex((candidate) => candidate.id === section.id);
-    const fallbackSection = contentSections[currentIndex - 1] ?? contentSections[currentIndex + 1] ?? null;
-    const nextSections = draftSections.filter((candidate) => candidate.id !== section.id);
-
-    if (fallbackSection) {
-      pendingBlockFocusIdRef.current = fallbackSection.id;
-      setActiveBlockId(fallbackSection.id);
-      focusNotebookBlock(fallbackSection.id);
-    }
-
-    updateDraftSections(nextSections);
-    setSectionNotice('Block removed from draft');
-  }
-
-  function moveNotebookBlock(sectionId: string, direction: -1 | 1) {
-    const currentIndex = draftSections.findIndex((section) => section.id === sectionId);
-    let nextIndex = currentIndex + direction;
-
-    while (
-      nextIndex >= 0 &&
-      nextIndex < draftSections.length &&
-      !getCaseFileBlockType(draftSections[nextIndex])
-    ) {
-      nextIndex += direction;
-    }
-
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= draftSections.length) {
-      return;
-    }
-
-    const nextSections = [...draftSections];
-    const [section] = nextSections.splice(currentIndex, 1);
-    nextSections.splice(nextIndex, 0, section);
-    updateDraftSections(nextSections);
-    setSectionNotice('Block order updated');
-  }
-
-  function reorderNotebookBlock(sourceSectionId: string, targetSectionId: string) {
-    if (sourceSectionId === targetSectionId) {
-      return;
-    }
-
-    const sourceIndex = draftSections.findIndex((section) => section.id === sourceSectionId);
-    const targetIndex = draftSections.findIndex((section) => section.id === targetSectionId);
-
-    if (sourceIndex < 0 || targetIndex < 0) {
-      return;
-    }
-
-    const nextSections = [...draftSections];
-    const [section] = nextSections.splice(sourceIndex, 1);
-    nextSections.splice(targetIndex, 0, section);
-    updateDraftSections(nextSections);
-    setDraggedSectionId(null);
-    setSectionNotice('Block order updated');
-  }
-
-  function handleNotebookInput(section: DossierSection, value: string) {
-    const blockType = getCaseFileBlockType(section);
-
-    if (blockType === 'paragraph' && !section.body?.trim() && value === '/') {
-      setSlashCommandBlockId(section.id);
-      setSlashCommandHighlight(0);
-      updateSectionBody(section.id, value);
-      return;
-    }
-
-    if (slashCommandBlockId === section.id && value !== '/') {
-      setSlashCommandBlockId(null);
-      setSlashCommandHighlight(0);
-    }
-
-    if (!section.body?.trim()) {
-      if (value.startsWith('## ')) {
-        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(3) }, 'section-heading'));
-        return;
-      }
-
-      if (value.startsWith('- ')) {
-        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(2) }, 'bulleted-list'));
-        return;
-      }
-
-      if (value.startsWith('1. ')) {
-        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(3) }, 'numbered-list'));
-        return;
-      }
-
-      if (value.startsWith('> ')) {
-        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(2) }, 'quote'));
-        return;
-      }
-
-      if (value.trim() === '---') {
-        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: '' }, 'divider'));
-        return;
-      }
-    }
-
-    updateSectionBody(section.id, value);
-  }
-
-  function handleNotebookKeyDown(
-    event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
-    section: DossierSection,
-  ) {
-    const blockType = getCaseFileBlockType(section) ?? 'paragraph';
-    const target = event.currentTarget;
-
-    if (slashCommandBlockId === section.id) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        setSlashCommandHighlight((currentIndex) =>
-          event.key === 'ArrowDown'
-            ? (currentIndex + 1) % caseFileBlockOptions.length
-            : (currentIndex - 1 + caseFileBlockOptions.length) % caseFileBlockOptions.length,
-        );
-        return;
-      }
-
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        setSlashCommandBlockId(null);
-        setSlashCommandHighlight(0);
-        updateSectionBody(section.id, '');
-        return;
-      }
-
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        selectSlashCommand(section, caseFileBlockOptions[slashCommandHighlight].type);
-        return;
-      }
-    }
-
-    if (event.key === 'Enter' && !event.shiftKey) {
-      if (blockType === 'bulleted-list' || blockType === 'numbered-list') {
-        const selectionStart = target.selectionStart ?? 0;
-        const selectionEnd = target.selectionEnd ?? selectionStart;
-        const value = target.value;
-        const lineStart = value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1;
-        const lineEnd = value.indexOf('\n', selectionEnd);
-        const currentLine = value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd);
-
-        if (!currentLine.trim()) {
-          event.preventDefault();
-          const nextBody = `${value.slice(0, lineStart)}${value.slice(lineEnd === -1 ? value.length : lineEnd + 1)}`.trimEnd();
-
-          updateSectionBody(section.id, nextBody);
-          addNotebookBlock('paragraph', section.id);
-        }
-
-        return;
-      }
-
-      if (blockType === 'quote' && !section.body?.trim()) {
-        event.preventDefault();
-        addNotebookBlock('paragraph', section.id);
-        return;
-      }
-
-      event.preventDefault();
-      addNotebookBlock('paragraph', section.id);
-      return;
-    }
-
-    if (
-      event.key === 'Backspace' &&
-      !section.body?.trim() &&
-      target.selectionStart === 0 &&
-      target.selectionEnd === 0 &&
-      caseFileSections.length > 1
-    ) {
-      event.preventDefault();
-      deleteNotebookBlock(section);
-    }
   }
 
   function updateDetailDraft(values: Partial<DossierFormValues>) {
@@ -1034,164 +719,6 @@ export function DossierSheet({
     );
   }
 
-  function renderCaseFileBlockEditor(section: DossierSection, index: number) {
-    const blockType = getCaseFileBlockType(section) ?? 'paragraph';
-    const blockLabel = getCaseFileBlockLabel(blockType);
-    const isDragged = draggedSectionId === section.id;
-    const contentLabel = `${blockLabel} content`;
-    const isStructuredBlock = isStructuredCaseFileBlock(section);
-    const isActive = activeBlockId === section.id;
-
-    return (
-      <article
-        key={section.id}
-        className={[
-          'case-file-editor-block',
-          `case-file-editor-block--${blockType}`,
-          isDragged ? 'case-file-editor-block--dragging' : '',
-          isActive ? 'case-file-editor-block--active' : '',
-        ].filter(Boolean).join(' ')}
-        data-case-file-block-id={blockType === 'divider' ? section.id : undefined}
-        tabIndex={blockType === 'divider' ? 0 : undefined}
-        onDragEnd={() => setDraggedSectionId(null)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
-
-          if (draggedSectionId) {
-            reorderNotebookBlock(draggedSectionId, section.id);
-          }
-        }}
-        onFocusCapture={() => setActiveBlockId(section.id)}
-        onMouseDown={() => setActiveBlockId(section.id)}
-      >
-        <div className="case-file-editor-block__rail">
-          <button
-            type="button"
-            className="case-file-editor-block__drag"
-            aria-label={`Drag ${blockLabel}`}
-            title="Drag to reorder"
-            draggable
-            onDragStart={() => setDraggedSectionId(section.id)}
-          >
-            Move
-          </button>
-        </div>
-
-        <div className="case-file-editor-block__content">
-          {!isStructuredBlock ? (
-            <label className="case-file-editor-block__field case-file-editor-block__field--title">
-              <span>Section Heading</span>
-              <input
-                data-case-file-block-id={`${section.id}-title`}
-                value={section.title}
-                onChange={(event) => updateNotebookBlock(section.id, { title: event.target.value })}
-              />
-            </label>
-          ) : null}
-
-          {blockType === 'divider' ? (
-            <hr className="case-file-block case-file-block--divider" />
-          ) : blockType === 'section-heading' ? (
-            <label className="case-file-editor-block__field">
-              <span>{contentLabel}</span>
-              <input
-                data-case-file-block-id={section.id}
-                value={section.body ?? ''}
-                placeholder="Section heading"
-                onChange={(event) => updateSectionBody(section.id, event.target.value)}
-                onKeyDown={(event) => handleNotebookKeyDown(event, section)}
-              />
-            </label>
-          ) : (
-            <label className="case-file-editor-block__field">
-              <span>{contentLabel}</span>
-              <ThreadmarkAuthoringTextarea
-                rows={blockType === 'quote' ? 3 : 4}
-                value={section.body ?? ''}
-                dossier={workingDossier}
-                sectionId={section.id}
-                dossiers={dossiers}
-                placeholder="Begin documenting..."
-                blockId={section.id}
-                className="case-file-editor-block__textarea"
-                onKeyDown={(event) => handleNotebookKeyDown(event, section)}
-                onChange={(value) => handleNotebookInput(section, value)}
-              />
-            </label>
-          )}
-          {slashCommandBlockId === section.id ? (
-            <div
-              className="case-file-slash-menu"
-              role="listbox"
-              aria-label="Case File block commands"
-            >
-              {caseFileBlockOptions.map((option, optionIndex) => (
-                <button
-                  key={option.type}
-                  type="button"
-                  role="option"
-                  aria-selected={slashCommandHighlight === optionIndex}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectSlashCommand(section, option.type)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <details
-          className="dossier-section-actions case-file-editor-block__actions"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              event.stopPropagation();
-              event.currentTarget.removeAttribute('open');
-            }
-          }}
-        >
-          <summary aria-label={`More actions for ${blockLabel}`}>
-            More Actions
-          </summary>
-          <div>
-            <span>Change Block Type</span>
-            {caseFileBlockOptions.map((option) => (
-              <button
-                key={option.type}
-                type="button"
-                onClick={() => changeNotebookBlock(section, option.type)}
-                disabled={option.type === blockType}
-              >
-                {option.label}
-              </button>
-            ))}
-            <button type="button" onClick={() => addNotebookBlock('paragraph', section.id)}>
-              Add Paragraph Below
-            </button>
-            <button type="button" onClick={() => duplicateNotebookBlock(section)}>
-              Duplicate
-            </button>
-            <button type="button" onClick={() => moveNotebookBlock(section.id, -1)} disabled={index === 0}>
-              Move Up
-            </button>
-            <button
-              type="button"
-              onClick={() => moveNotebookBlock(section.id, 1)}
-              disabled={index === caseFileSections.length - 1}
-            >
-              Move Down
-            </button>
-            <button type="button" className="danger-button" onClick={() => deleteNotebookBlock(section)}>
-              Delete
-            </button>
-          </div>
-        </details>
-      </article>
-    );
-  }
-
   return (
     <div className="dossier-reveal-backdrop" role="presentation">
       <section
@@ -1270,22 +797,6 @@ export function DossierSheet({
               <span>Case File Canvas</span>
               {sectionNotice ? <p role="status">{sectionNotice}</p> : null}
             </div>
-            {isEditingSections ? (
-              <details
-                className="case-file-insert-menu"
-                open={isInsertMenuOpen}
-                onToggle={(event) => setIsInsertMenuOpen(event.currentTarget.open)}
-              >
-                <summary aria-label="Add Case File block">Add Block</summary>
-                <div>
-                  {caseFileBlockOptions.map((option) => (
-                    <button key={option.type} type="button" onClick={() => addNotebookBlock(option.type)}>
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </details>
-            ) : null}
           </div>
 
           <section className="case-file-canvas" aria-labelledby="case-file-canvas-title">
@@ -1294,31 +805,7 @@ export function DossierSheet({
             </div>
 
             {isEditingSections ? (
-              <div
-                className="case-file-editor"
-                aria-label="Case File authoring canvas"
-                onClick={(event) => {
-                  if (event.currentTarget !== event.target) {
-                    return;
-                  }
-
-                  const finalEmptyParagraph = [...caseFileSections]
-                    .reverse()
-                    .find((section) => getCaseFileBlockType(section) === 'paragraph' && !section.body?.trim());
-                  const firstBlock = finalEmptyParagraph ?? caseFileSections[caseFileSections.length - 1];
-
-                  if (firstBlock) {
-                    pendingBlockFocusIdRef.current = firstBlock.id;
-                    setActiveBlockId(firstBlock.id);
-                    focusNotebookBlock(firstBlock.id);
-                    return;
-                  }
-
-                  addNotebookBlock('paragraph');
-                }}
-              >
-                {caseFileSections.map((section, index) => renderCaseFileBlockEditor(section, index))}
-              </div>
+              <CaseFileDocumentEditor draft={caseFileDraft} onChange={setCaseFileDraft} />
             ) : caseFileSections.length > 0 ? (
               <div className="case-file-reader">
                 {caseFileSections.map((section) => renderCaseFileBlockView(section))}

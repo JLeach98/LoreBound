@@ -16,7 +16,7 @@ function prefersReducedMotion() {
 }
 
 export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps) {
-  const { profile } = useInvestigatorProfile();
+  const { profile, profilePhotoUrl } = useInvestigatorProfile();
   const { cases, cloudCases, activeCase, isLoading, openExistingCase } = useCases();
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [archiveMode, setArchiveMode] = useState<ArchiveMode>('select');
@@ -102,6 +102,12 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
     await authService.signOut();
   }
 
+  function openInvestigatorProfile() {
+    window.dispatchEvent(
+      new CustomEvent('lorebound:open-library-access', { detail: { view: 'profile' } }),
+    );
+  }
+
   return (
     <main className={`entry-screen investigator-home ${isEnteringStudy ? 'investigator-home--entering' : ''}`}>
       <section className="investigator-home__scene" aria-labelledby="investigator-home-title">
@@ -114,11 +120,31 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
         <div className="investigator-home__door-frame">
           <div className="investigator-home__door">
             <div className="investigator-home__door-window">
-              <div className="investigator-home__nameplate">
-                <span>{title}</span>
-                <strong>{displayName}</strong>
-                {badgeNumber ? <small>Badge {badgeNumber}</small> : null}
-              </div>
+              <button
+                type="button"
+                className="investigator-home__nameplate"
+                onClick={openInvestigatorProfile}
+                disabled={isEnteringStudy}
+                aria-label="Open Investigator Profile"
+              >
+                <span className="investigator-home__nameplate-photo" aria-hidden="true">
+                  {profilePhotoUrl ? (
+                    <img src={profilePhotoUrl} alt="" />
+                  ) : (
+                    displayName
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((part) => part[0]?.toUpperCase() ?? '')
+                      .join('') || 'LB'
+                  )}
+                </span>
+                <span className="investigator-home__nameplate-text">
+                  <strong>{displayName}</strong>
+                  <em>{title}</em>
+                  {badgeNumber ? <small>{badgeNumber}</small> : null}
+                </span>
+              </button>
             </div>
             <div className="investigator-home__door-rail">
               <div className="investigator-home__content">

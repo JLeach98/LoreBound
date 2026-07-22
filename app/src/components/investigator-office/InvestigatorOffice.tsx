@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrandMark } from './BrandMark';
-import { CompactNavigation } from './CompactNavigation';
 import { OfficeControls } from './OfficeControls';
 import { OfficeCanvas } from './scene/OfficeCanvas';
 import { SceneOverlay } from './SceneOverlay';
@@ -11,8 +10,6 @@ import { CaseSettingsView } from '../../features/cases/components/CaseSettingsVi
 import { InvestigationSectionView } from '../../features/cases/components/InvestigationSectionView';
 import { useCases } from '../../features/cases/context/CaseContext';
 import type { InvestigationSection } from '../../features/cases/types/investigationSections';
-import { AuthAccessPanel } from '../application-shell/AuthAccessPanel';
-import { LibraryStatusBadge } from '../application-shell/LibraryStatusBadge';
 import { LoreBoundSettings } from '../application-shell/LoreBoundSettings';
 import { useOperationsConsole } from '../../services/preferences/OperationsConsoleContext';
 
@@ -62,18 +59,7 @@ export function InvestigatorOffice() {
   return (
     <div className={`office-shell office-shell--${workspaceMode}`}>
       <OfficeCanvas mode={workspaceMode} />
-      {workspaceMode === 'office' ? (
-        <CompactNavigation
-          activeSection={activeSection}
-          hasActiveCase={Boolean(activeCase)}
-          onOpenCaseArchive={openCaseArchive}
-          onSelectSection={setActiveSection}
-          onFocusBoard={enterInvestigationMode}
-        />
-      ) : null}
       <BrandMark />
-      <LibraryStatusBadge />
-      {workspaceMode === 'office' ? <AuthAccessPanel /> : null}
       {workspaceMode === 'office' ? (
         <OfficeControls
           settingsButtonRef={settingsButtonRef}

@@ -15,10 +15,15 @@ import {
   cloudReadinessService,
   type CloudReadinessStatus,
 } from '../../services/cloud/CloudReadinessService';
+import { boardRepository } from '../../repositories/BoardRepository';
+import { bondRepository } from '../../repositories/BondRepository';
+import { caseRepository } from '../../repositories/CaseRepository';
+import { dossierRepository } from '../../repositories/DossierRepository';
 import { useInvestigatorProfile } from '../../services/profile/InvestigatorProfileContext';
 import { useAutomaticSync } from '../../services/sync/AutomaticSyncContext';
 import { syncService } from '../../services/sync/SyncService';
 import { getSyncPlanArchiveAction, type SyncPlan, type SyncProgress, type SyncResult } from '../../services/sync/SyncTypes';
+import { createInvestigatorNumber } from './investigatorNumber';
 
 type AuthView =
   | 'overview'
@@ -36,6 +41,46 @@ type AuthView =
   | 'complete'
   | 'sync-error';
 type AuthNoticeState = 'idle' | 'confirmation-required' | 'connected' | 'signed-out' | 'error';
+
+type InvestigatorStatistics = {
+  cases: number;
+  dossiers: number;
+  theories: number;
+  bonds: number;
+  evidencePins: number;
+};
+
+const emptyInvestigatorStatistics: InvestigatorStatistics = {
+  cases: 0,
+  dossiers: 0,
+  theories: 0,
+  bonds: 0,
+  evidencePins: 0,
+};
+
+async function readInvestigatorStatistics(): Promise<InvestigatorStatistics> {
+  const cases = await caseRepository.readAll();
+  const caseRecordGroups = await Promise.all(
+    cases.map(async (loreCase) => {
+      const [dossiers, bonds, boardPins] = await Promise.all([
+        dossierRepository.readByCaseId(loreCase.id),
+        bondRepository.readByCaseId(loreCase.id),
+        boardRepository.readPinsByCaseId(loreCase.id),
+      ]);
+
+      return { dossiers, bonds, boardPins };
+    }),
+  );
+  const dossiers = caseRecordGroups.flatMap((group) => group.dossiers);
+
+  return {
+    cases: cases.length,
+    dossiers: dossiers.length,
+    theories: dossiers.filter((dossier) => dossier.dossierType === 'Theory').length,
+    bonds: caseRecordGroups.reduce((total, group) => total + group.bonds.length, 0),
+    evidencePins: caseRecordGroups.reduce((total, group) => total + group.boardPins.length, 0),
+  };
+}
 
 function emptyPlan(): SyncPlan {
   return {
@@ -395,7 +440,11 @@ function getArchiveStatusLabel(totals: ReturnType<typeof getSummaryTotals>) {
   return 'Archive Up To Date';
 }
 
-export function AuthAccessPanel() {
+type AuthAccessPanelProps = {
+  showTrigger?: boolean;
+};
+
+export function AuthAccessPanel({ showTrigger = true }: AuthAccessPanelProps) {
   const {
     profile,
     profilePhotoUrl,
@@ -407,7 +456,6 @@ export function AuthAccessPanel() {
   } = useInvestigatorProfile();
   const {
     isAutomaticSyncEnabled,
-    lastAutomaticSyncAt,
     setAutomaticSyncEnabled,
     synchronizeNow,
   } = useAutomaticSync();
@@ -432,6 +480,9 @@ export function AuthAccessPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [connectivity, setConnectivity] = useState(navigator.onLine ? 'online' : 'offline');
+  const [investigatorStatistics, setInvestigatorStatistics] = useState<InvestigatorStatistics>(
+    emptyInvestigatorStatistics,
+  );
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -439,6 +490,14 @@ export function AuthAccessPanel() {
   const isSignedIn = authStatus?.state === 'signed-in';
   const isConfirmationRequired = authStatus?.state === 'confirmation-required';
   const identityLabel = profile?.username ?? authStatus?.user?.displayName ?? 'Investigator Profile';
+  const displayName = profile?.displayName || profile?.username || 'Investigator';
+  const profileInitials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'LB';
+  const investigatorNumber = createInvestigatorNumber(authStatus?.user?.id);
   const localRecordTotal = getLocalRecordTotal(syncPlan);
   const onlineRecordTotal = getOnlineRecordTotal(syncPlan);
   const summaryTotals = getSummaryTotals(syncPlan);
@@ -449,11 +508,6 @@ export function AuthAccessPanel() {
   const archiveStatusLabel = isPartialLocalArchive
     ? 'Local Archive Incomplete'
     : getArchiveStatusLabel(summaryTotals);
-  const pendingLocalChanges =
-    summaryTotals.localOnly +
-    summaryTotals.localNewer +
-    summaryTotals.conflicts +
-    summaryTotals.itemsRequiringReview;
   const syncActionLabel = archiveAction.kind === 'sync' ? archiveAction.label : 'Synchronize Investigation';
   const isRetrievalAction = archiveAction.kind === 'retrieve' || archiveAction.kind === 'repair-local-archive';
   const isBaselineAction = archiveAction.kind === 'rebuild-baseline';
@@ -662,6 +716,39 @@ export function AuthAccessPanel() {
       setAuthView('profile-onboarding');
     }
   }, [isSignedIn, needsOnboarding]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function refreshInvestigatorStatistics() {
+      if (!isSignedIn || !isOpen) {
+        return;
+      }
+
+      try {
+        const nextStatistics = await readInvestigatorStatistics();
+
+        if (isMounted) {
+          setInvestigatorStatistics(nextStatistics);
+        }
+      } catch {
+        if (isMounted) {
+          setInvestigatorStatistics(emptyInvestigatorStatistics);
+        }
+      }
+    }
+
+    void refreshInvestigatorStatistics();
+
+    window.addEventListener('lorebound:local-archive-restored', refreshInvestigatorStatistics);
+    window.addEventListener('lorebound:synchronization-completed', refreshInvestigatorStatistics);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('lorebound:local-archive-restored', refreshInvestigatorStatistics);
+      window.removeEventListener('lorebound:synchronization-completed', refreshInvestigatorStatistics);
+    };
+  }, [authView, isOpen, isSignedIn]);
 
   function closeDialog() {
     setIsOpen(false);
@@ -895,12 +982,6 @@ export function AuthAccessPanel() {
         : isConfirmationRequired
           ? 'Confirmation Required'
         : 'Local Archive';
-  const readinessLabel =
-    connectivity === 'offline'
-      ? 'Offline Mode'
-      : isSignedIn
-        ? (cloudReadiness?.label ?? 'Reviewing LoreBound Online access...')
-        : 'Connect to review LoreBound Online';
   const formTitle = authView === 'sign-up' ? 'Create Investigator Profile' : 'Investigator Connect';
   const formValidation = authView === 'sign-up' ? signUpValidation : signInValidation;
 
@@ -998,16 +1079,18 @@ export function AuthAccessPanel() {
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="account-status-control"
-        onClick={openLibraryAccess}
-        aria-haspopup="dialog"
-      >
-        <span>{controlLabel}</span>
-        <strong>{isSignedIn ? identityLabel : 'Investigator Profile'}</strong>
-      </button>
+      {showTrigger ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="account-status-control"
+          onClick={openLibraryAccess}
+          aria-haspopup="dialog"
+        >
+          <span>{controlLabel}</span>
+          <strong>{isSignedIn ? identityLabel : 'Investigator Profile'}</strong>
+        </button>
+      ) : null}
 
       {isOpen ? (
         <div className="auth-dialog-backdrop" role="presentation">
@@ -1021,8 +1104,10 @@ export function AuthAccessPanel() {
           >
             <header className="auth-dialog__header">
               <div>
-                <p>Archive Credential</p>
-                <h2 id="auth-dialog-title">Library Access</h2>
+                <p>{isSignedIn && authView === 'connected' ? 'LoreBound Investigation Bureau' : 'Archive Credential'}</p>
+                <h2 id="auth-dialog-title">
+                  {isSignedIn && authView === 'connected' ? 'INVESTIGATOR PROFILE' : 'Library Access'}
+                </h2>
               </div>
               <button
                 ref={closeButtonRef}
@@ -1037,20 +1122,28 @@ export function AuthAccessPanel() {
 
             {isSignedIn && authView === 'connected' ? (
               <div className="auth-dialog__signed-in auth-dialog__personnel-file">
-                <div className="profile-credential">
-                  <div className="profile-credential__photo" aria-hidden="true">
-                    {profilePhotoUrl ? (
-                      <img src={profilePhotoUrl} alt="" />
-                    ) : (
-                      <span>{identityLabel.slice(0, 2).toUpperCase()}</span>
-                    )}
+                <section className="profile-file-section profile-file-section--identity" aria-labelledby="profile-identity-title">
+                  <div className="profile-identity-card">
+                    <div className="profile-credential__photo">
+                      {profilePhotoUrl ? (
+                        <img src={profilePhotoUrl} alt={`${displayName} profile photo`} />
+                      ) : (
+                        <span>{profileInitials}</span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="profile-file-section__eyebrow">Personnel File</p>
+                      <h3 id="profile-identity-title">{displayName}</h3>
+                      {profile?.username ? (
+                        <p className="profile-identity-card__username">{profile.username}</p>
+                      ) : null}
+                      {profile?.title ? (
+                        <p className="profile-identity-card__title">{profile.title}</p>
+                      ) : null}
+                      {profile?.bio ? <p className="profile-file-bio">{profile.bio}</p> : null}
+                    </div>
                   </div>
-                  <div>
-                    <span>{profile?.username ?? 'Investigator Profile'}</span>
-                    <h3>{profile?.displayName || profile?.username || 'Investigator'}</h3>
-                    <p>{profile?.title ?? 'Investigator'}</p>
-                  </div>
-                </div>
+                </section>
 
                 {profileStateMessage ? (
                   <p
@@ -1067,138 +1160,134 @@ export function AuthAccessPanel() {
                   </p>
                 ) : null}
 
-                <dl className="profile-file-list">
+                <section className="profile-file-section profile-file-section--credential" aria-labelledby="profile-credential-title">
                   <div>
-                    <dt>Badge</dt>
-                    <dd>{profile?.badgeNumber ?? 'Preparing badge'}</dd>
+                    <p className="profile-file-section__eyebrow">Official LBIB Credential</p>
+                    <h3 id="profile-credential-title">LoreBound Investigation Bureau</h3>
+                    <dl className="profile-credential-number">
+                      <div>
+                        <dt>INVESTIGATOR NUMBER</dt>
+                        <dd>{investigatorNumber}</dd>
+                      </div>
+                    </dl>
                   </div>
-                  <div>
-                    <dt>LoreBound Online</dt>
-                    <dd>{readinessLabel}</dd>
-                  </div>
-                  <div>
-                    <dt>Email</dt>
-                    <dd>{authStatus.user?.email ?? 'Not available'}</dd>
-                  </div>
-                  <div>
-                    <dt>Member Since</dt>
-                    <dd>{formatMemberSince(profile?.createdAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>Last Sync</dt>
-                    <dd>{formatSyncDateTime(lastAutomaticSyncAt ?? syncPlan.lastSynchronizedAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>Automatic Sync</dt>
-                    <dd>{isAutomaticSyncEnabled ? 'On' : 'Off'}</dd>
-                  </div>
-                  <div>
-                    <dt>Archive Status</dt>
-                    <dd>{connectivity === 'offline' ? 'Offline' : archiveStatusLabel}</dd>
-                  </div>
-                  <div>
-                    <dt>Local Archive</dt>
-                    <dd>Active</dd>
-                  </div>
-                  <div>
-                    <dt>Pending Changes</dt>
-                    <dd>
-                      {pendingLocalChanges > 0
-                        ? `${pendingLocalChanges} awaiting review`
-                        : 'No pending changes detected'}
-                    </dd>
-                  </div>
-                </dl>
+                  <img
+                    className="profile-file-badge"
+                    src="/branding/lbib-investigator-badge.png"
+                    alt="LoreBound Investigation Bureau badge"
+                  />
+                </section>
 
-                {profile?.bio ? <p className="profile-file-bio">{profile.bio}</p> : null}
+                <section className="profile-file-section" aria-labelledby="profile-summary-title">
+                  <p className="profile-file-section__eyebrow">INVESTIGATION SUMMARY</p>
+                  <h3 id="profile-summary-title">Current Local Archive</h3>
+                  <dl className="profile-stat-grid">
+                    <div>
+                      <dt>Cases</dt>
+                      <dd>{investigatorStatistics.cases}</dd>
+                    </div>
+                    <div>
+                      <dt>Dossiers</dt>
+                      <dd>{investigatorStatistics.dossiers}</dd>
+                    </div>
+                    <div>
+                      <dt>Theories</dt>
+                      <dd>{investigatorStatistics.theories}</dd>
+                    </div>
+                    <div>
+                      <dt>Bonds</dt>
+                      <dd>{investigatorStatistics.bonds}</dd>
+                    </div>
+                    <div>
+                      <dt>Evidence Pins</dt>
+                      <dd>{investigatorStatistics.evidencePins}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section className="profile-file-section" aria-labelledby="profile-member-title">
+                  <p className="profile-file-section__eyebrow">MEMBER INFORMATION</p>
+                  <h3 id="profile-member-title">Bureau Record</h3>
+                  <dl className="profile-file-list">
+                    {profile?.createdAt ? (
+                      <div>
+                        <dt>Joined LoreBound</dt>
+                        <dd>{formatMemberSince(profile.createdAt)}</dd>
+                      </div>
+                    ) : null}
+                    <div>
+                      <dt>Current Connection Status</dt>
+                      <dd>{isSignedIn ? 'Connected to LoreBound Online' : 'Investigator Offline'}</dd>
+                    </div>
+                    {profile?.title ? (
+                      <div>
+                        <dt>Investigator Title</dt>
+                        <dd>{profile.title}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </section>
+
                 {profileError ? <p className="auth-dialog__inline-validation">{profileError}</p> : null}
                 {cloudReadiness?.detail ? <small>{cloudReadiness.detail}</small> : null}
 
-                <label className="profile-sync-toggle">
-                  <input
-                    type="checkbox"
-                    checked={isAutomaticSyncEnabled}
-                    onChange={(event) => setAutomaticSyncEnabled(event.target.checked)}
-                  />
-                  <span>Automatic Synchronization</span>
-                </label>
-
-                <div className="auth-dialog__actions">
-                  <button
-                    type="button"
-                    className="auth-button auth-button--secondary"
-                    onClick={() => goToView(profile ? 'connected' : 'profile-onboarding')}
-                    disabled={
-                      isWorking ||
-                      isProfileLoading ||
-                      profileState === 'migration-unavailable' ||
-                      profileState === 'permission-denied' ||
-                      profileState === 'unexpected-failure'
-                    }
-                  >
-                    Open Investigator Profile
-                  </button>
-                  <button
-                    type="button"
-                    className="auth-button auth-button--primary"
-                    onClick={
-                      isRetrievalAction
-                        ? () => goToView('confirm-retrieve')
-                        : isBaselineAction
-                          ? () => goToView('confirm-baseline')
-                        : handleSynchronizeNow
-                    }
-                    disabled={
-                      isWorking ||
-                      isProfileLoading ||
-                      ((isRetrievalAction || isBaselineAction) && !archiveAction.canRun)
-                    }
-                  >
-                    {isRetrievalAction || isBaselineAction ? archiveAction.label : 'Synchronize Now'}
-                  </button>
-                  <button
-                    type="button"
-                    className="auth-button auth-button--secondary"
-                    onClick={refreshSynchronizationReview}
-                    disabled={isWorking}
-                  >
-                    Review Synchronization
-                  </button>
-                  <button
-                    type="button"
-                    className="auth-button auth-button--secondary"
-                    onClick={() => goToView('edit-profile')}
-                    disabled={isWorking || isProfileLoading || !profile}
-                  >
-                    Edit Profile
-                  </button>
-                  {syncPlan.canRetrieve ? (
+                <section className="profile-file-section profile-file-section--actions" aria-labelledby="profile-actions-title">
+                  <p className="profile-file-section__eyebrow">INVESTIGATOR ACTIONS</p>
+                  <h3 id="profile-actions-title">Profile Controls</h3>
+                  <label className="profile-sync-toggle">
+                    <input
+                      type="checkbox"
+                      checked={isAutomaticSyncEnabled}
+                      onChange={(event) => setAutomaticSyncEnabled(event.target.checked)}
+                    />
+                    <span>Automatic Synchronization</span>
+                    <strong>{isAutomaticSyncEnabled ? 'Enabled' : 'Disabled'}</strong>
+                  </label>
+                  <div className="auth-dialog__actions">
                     <button
                       type="button"
                       className="auth-button auth-button--secondary"
-                      onClick={() => goToView('confirm-retrieve')}
+                      onClick={() => goToView('edit-profile')}
+                      disabled={isWorking || isProfileLoading || !profile}
+                    >
+                      Edit Profile
+                    </button>
+                    <button
+                      type="button"
+                      className="auth-button auth-button--primary"
+                      onClick={
+                        isRetrievalAction
+                          ? () => goToView('confirm-retrieve')
+                          : isBaselineAction
+                            ? () => goToView('confirm-baseline')
+                            : handleSynchronizeNow
+                      }
+                      disabled={
+                        isWorking ||
+                        isProfileLoading ||
+                        ((isRetrievalAction || isBaselineAction) && !archiveAction.canRun)
+                      }
+                    >
+                      {isRetrievalAction || isBaselineAction ? archiveAction.label : 'Synchronize Now'}
+                    </button>
+                    <button
+                      type="button"
+                      className="auth-button auth-button--quiet"
+                      onClick={handleInvestigatorOffline}
                       disabled={isWorking}
                     >
-                      {retrieveActionLabel}
+                      Investigator Offline
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="auth-button auth-button--quiet"
-                    onClick={handleInvestigatorOffline}
-                    disabled={isWorking}
-                  >
-                    Investigator Offline
-                  </button>
-                  <button
-                    type="button"
-                    className="auth-button auth-button--quiet"
-                    onClick={closeDialog}
-                    disabled={isWorking}
-                  >
-                    Close
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      className="auth-button auth-button--quiet"
+                      onClick={closeDialog}
+                      disabled={isWorking}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </section>
               </div>
             ) : null}
 
