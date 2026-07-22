@@ -26,26 +26,33 @@ import type {
   Dossier,
   DossierFormValues,
   DossierSection,
-  DossierSectionKind,
   DossierType,
 } from '../types/dossierTypes';
 import { dossierTypeLabels, dossierTypes } from '../types/dossierTypes';
+import {
+  caseFileBlockOptions,
+  changeCaseFileBlockType,
+  createCaseFileBlockSection,
+  ensureEditableNotebookSections,
+  getCaseFileBlockLabel,
+  getCaseFileBlockType,
+  getCaseFileSections,
+  getVisibleCaseFileSections,
+  hasRenderableCaseFileContent,
+  isStructuredCaseFileBlock,
+  prepareNotebookSections,
+  syncDossierValuesFromNotebookSections,
+  type CaseFileBlockType,
+} from '../utils/dossierBlocks';
 import {
   getBondLabelFromPerspective,
   getConnectedDossier,
 } from '../utils/bondLabels';
 import {
-  builtInSectionTemplates,
-  createSectionFromTemplate,
   dossierToFormValues,
-  duplicateSection,
   ensureDossierSections,
-  getSectionCapabilities,
   mergeDossierSectionsWithFormValues,
   normalizeSectionOrder,
-  readCustomSectionTemplates,
-  saveCustomSectionTemplate,
-  type SectionTemplate,
 } from '../utils/dossierSections';
 import { BondFormDialog } from './BondFormDialog';
 import { CoverImageInput } from './CoverImageInput';
@@ -194,58 +201,18 @@ export function DossierSheet({
   const [isQuickAdvancedOpen, setIsQuickAdvancedOpen] = useState(false);
   const [isQuickCreateDossierOpen, setIsQuickCreateDossierOpen] = useState(false);
   const [quickError, setQuickError] = useState<string | undefined>();
-  const [availableCustomTemplates, setAvailableCustomTemplates] = useState<SectionTemplate[]>(
-    readCustomSectionTemplates,
-  );
   const [isEditingSections, setIsEditingSections] = useState(false);
   const [draftSections, setDraftSections] = useState<DossierSection[]>([]);
-  const [isAddSectionOpen, setIsAddSectionOpen] = useState(false);
-  const [sectionSearchQuery, setSectionSearchQuery] = useState('');
-  const [customSectionTitle, setCustomSectionTitle] = useState('');
-  const [customSectionKind, setCustomSectionKind] = useState<DossierSectionKind>('custom');
-  const [customSectionReusable, setCustomSectionReusable] = useState(true);
-  const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [removingSection, setRemovingSection] = useState<DossierSection | null>(null);
   const [sectionNotice, setSectionNotice] = useState<string | undefined>();
   const [detailDraft, setDetailDraft] = useState<DossierFormValues>(() => createDetailDraft(dossier));
   const [detailImageError, setDetailImageError] = useState<string | undefined>();
   const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
+  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
-  const visibleSections = isEditingSections ? draftSections : sections;
-  const sectionKindOptions: Array<{ value: DossierSectionKind; label: string }> = [
-    { value: 'custom', label: 'Freeform Notes' },
-    { value: 'overview', label: 'Overview' },
-    { value: 'notes', label: 'Investigation Notes' },
-    { value: 'timeline', label: 'Timeline Foundation' },
-    { value: 'gallery', label: 'Gallery Foundation' },
-    { value: 'evidence', label: 'Evidence Foundation' },
-  ];
-  const availableSectionTemplates = useMemo(() => {
-    const query = sectionSearchQuery.trim().toLocaleLowerCase();
-
-    return [...builtInSectionTemplates, ...availableCustomTemplates].filter((template) => {
-      const singletonExists =
-        template.isSingleton &&
-        draftSections.some((section) => section.templateId === template.id);
-      const matchesSearch =
-        !query ||
-        template.title.toLocaleLowerCase().includes(query) ||
-        template.category.toLocaleLowerCase().includes(query);
-
-      return !singletonExists && matchesSearch;
-    });
-  }, [availableCustomTemplates, draftSections, sectionSearchQuery]);
-  const sectionTemplatesByCategory = useMemo(() => {
-    const categories = new Map<string, SectionTemplate[]>();
-
-    availableSectionTemplates.forEach((template) => {
-      const existingTemplates = categories.get(template.category) ?? [];
-      categories.set(template.category, [...existingTemplates, template]);
-    });
-
-    return Array.from(categories.entries());
-  }, [availableSectionTemplates]);
+  const caseFileSections = useMemo(
+    () => (isEditingSections ? getCaseFileSections(draftSections) : getVisibleCaseFileSections(sections)),
+    [draftSections, isEditingSections, sections],
+  );
   const keyFacts = useMemo(
     () => keyFactsForDossier(workingDossier).filter((field) => field.value),
     [workingDossier],
@@ -337,21 +304,7 @@ export function DossierSheet({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        if (removingSection) {
-          setRemovingSection(null);
-          return;
-        }
-
-        if (isAddSectionOpen) {
-          setIsAddSectionOpen(false);
-          return;
-        }
-
         onClose();
-        return;
-      }
-
-      if (isAddSectionOpen || removingSection) {
         return;
       }
 
@@ -383,7 +336,7 @@ export function DossierSheet({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isAddSectionOpen, onClose, removingSection]);
+  }, [onClose]);
 
   async function handleCreateBond(values: BondFormValues) {
     await createNewBond(values);
@@ -450,9 +403,14 @@ export function DossierSheet({
   async function saveSectionChanges(nextSections: DossierSection[], nextDetails = detailDraft) {
     const normalizedSections = normalizeSectionOrder(nextSections);
     const values: DossierFormValues = {
-      ...nextDetails,
-      dossierType: workingDossier.dossierType,
-      name: nextDetails.name.trim(),
+      ...syncDossierValuesFromNotebookSections(
+        {
+          ...nextDetails,
+          dossierType: workingDossier.dossierType,
+          name: nextDetails.name.trim(),
+        },
+        normalizedSections,
+      ),
       sections: normalizedSections,
     };
 
@@ -489,7 +447,7 @@ export function DossierSheet({
   }
 
   function enterSectionEditMode() {
-    setDraftSections(sections);
+    setDraftSections(ensureEditableNotebookSections(workingDossier));
     setDetailDraft(createDetailDraft(workingDossier));
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
@@ -513,14 +471,19 @@ export function DossierSheet({
     try {
       setDetailSaveError(undefined);
       const mergedSections = isDraftNewDossier
-        ? normalizeSectionOrder(draftSections)
-        : mergeDossierSectionsWithFormValues(
-            workingDossier,
-            {
-              ...detailDraft,
-              name: trimmedName,
-              sections: draftSections,
-            },
+        ? prepareNotebookSections(draftSections)
+        : prepareNotebookSections(
+            mergeDossierSectionsWithFormValues(
+              workingDossier,
+              syncDossierValuesFromNotebookSections(
+                {
+                  ...detailDraft,
+                  name: trimmedName,
+                  sections: draftSections,
+                },
+                draftSections,
+              ),
+            ),
           );
 
       await saveSectionChanges(mergedSections, {
@@ -528,9 +491,6 @@ export function DossierSheet({
         name: trimmedName,
       });
       setIsEditingSections(false);
-      setIsAddSectionOpen(false);
-      setRenamingSectionId(null);
-      setRemovingSection(null);
       setSectionNotice('Investigation Updated');
     } catch (error) {
       if (isDraftNewDossier) {
@@ -543,9 +503,6 @@ export function DossierSheet({
       }
 
       setIsEditingSections(false);
-      setIsAddSectionOpen(false);
-      setRenamingSectionId(null);
-      setRemovingSection(null);
       setSectionNotice(
         'Relationship Update Incomplete. LoreBound saved the Dossier, but one or more Threadmark relationships could not be completed.',
       );
@@ -563,14 +520,11 @@ export function DossierSheet({
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
     setIsEditingSections(false);
-    setIsAddSectionOpen(false);
-    setRenamingSectionId(null);
-    setRemovingSection(null);
     setSectionNotice(undefined);
   }
 
   function updateDraftSections(nextSections: DossierSection[]) {
-    setDraftSections(normalizeSectionOrder(nextSections));
+    setDraftSections(prepareNotebookSections(nextSections));
   }
 
   function updateSectionBody(sectionId: string, body: string) {
@@ -581,31 +535,138 @@ export function DossierSheet({
     );
   }
 
+  function updateNotebookBlock(sectionId: string, values: Partial<DossierSection>) {
+    updateDraftSections(
+      draftSections.map((section) =>
+        section.id === sectionId ? { ...section, ...values } : section,
+      ),
+    );
+  }
+
+  function addNotebookBlock(type: CaseFileBlockType = 'paragraph', afterSectionId?: string) {
+    const insertionIndex = afterSectionId
+      ? draftSections.findIndex((section) => section.id === afterSectionId) + 1
+      : draftSections.length;
+    const safeIndex = insertionIndex > 0 ? insertionIndex : draftSections.length;
+    const nextSections = [...draftSections];
+
+    nextSections.splice(safeIndex, 0, createCaseFileBlockSection(type, safeIndex));
+    updateDraftSections(nextSections);
+    setSectionNotice(`${getCaseFileBlockLabel(type)} added`);
+  }
+
+  function changeNotebookBlock(section: DossierSection, type: CaseFileBlockType) {
+    updateDraftSections(
+      draftSections.map((candidate) =>
+        candidate.id === section.id ? changeCaseFileBlockType(candidate, type) : candidate,
+      ),
+    );
+    setSectionNotice(`Changed to ${getCaseFileBlockLabel(type)}`);
+  }
+
+  function duplicateNotebookBlock(section: DossierSection) {
+    const index = draftSections.findIndex((candidate) => candidate.id === section.id);
+    const nextSections = [...draftSections];
+    const duplicate = {
+      ...section,
+      id: createStableId(section.templateId),
+      title: section.title,
+      isCollapsed: false,
+    };
+
+    nextSections.splice(index + 1, 0, duplicate);
+    updateDraftSections(nextSections);
+    setSectionNotice(`${getCaseFileBlockLabel(getCaseFileBlockType(section) ?? 'paragraph')} duplicated`);
+  }
+
+  function deleteNotebookBlock(section: DossierSection) {
+    const nextSections = draftSections.filter((candidate) => candidate.id !== section.id);
+
+    updateDraftSections(nextSections);
+    setSectionNotice('Block removed from draft');
+  }
+
+  function moveNotebookBlock(sectionId: string, direction: -1 | 1) {
+    const currentIndex = draftSections.findIndex((section) => section.id === sectionId);
+    let nextIndex = currentIndex + direction;
+
+    while (
+      nextIndex >= 0 &&
+      nextIndex < draftSections.length &&
+      !getCaseFileBlockType(draftSections[nextIndex])
+    ) {
+      nextIndex += direction;
+    }
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= draftSections.length) {
+      return;
+    }
+
+    const nextSections = [...draftSections];
+    const [section] = nextSections.splice(currentIndex, 1);
+    nextSections.splice(nextIndex, 0, section);
+    updateDraftSections(nextSections);
+    setSectionNotice('Block order updated');
+  }
+
+  function reorderNotebookBlock(sourceSectionId: string, targetSectionId: string) {
+    if (sourceSectionId === targetSectionId) {
+      return;
+    }
+
+    const sourceIndex = draftSections.findIndex((section) => section.id === sourceSectionId);
+    const targetIndex = draftSections.findIndex((section) => section.id === targetSectionId);
+
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return;
+    }
+
+    const nextSections = [...draftSections];
+    const [section] = nextSections.splice(sourceIndex, 1);
+    nextSections.splice(targetIndex, 0, section);
+    updateDraftSections(nextSections);
+    setDraggedSectionId(null);
+    setSectionNotice('Block order updated');
+  }
+
+  function handleNotebookInput(section: DossierSection, value: string) {
+    if (!section.body?.trim()) {
+      if (value.startsWith('## ')) {
+        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(3) }, 'section-heading'));
+        return;
+      }
+
+      if (value.startsWith('- ')) {
+        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(2) }, 'bulleted-list'));
+        return;
+      }
+
+      if (value.startsWith('1. ')) {
+        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(3) }, 'numbered-list'));
+        return;
+      }
+
+      if (value.startsWith('> ')) {
+        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(2) }, 'quote'));
+        return;
+      }
+
+      if (value.trim() === '---') {
+        updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: '' }, 'divider'));
+        return;
+      }
+    }
+
+    updateSectionBody(section.id, value);
+  }
+
   function updateDetailDraft(values: Partial<DossierFormValues>) {
     setDetailDraft((currentDraft) => ({ ...currentDraft, ...values }));
   }
 
-  function renderDetailFields() {
+  function renderIdentityMetadataEditor() {
     return (
-      <section className="dossier-reveal__section dossier-details-editor" aria-labelledby="dossier-details-editor-title">
-        <h3 id="dossier-details-editor-title">Dossier Details</h3>
-        <div className="case-form__field">
-          <label htmlFor={`dossier-details-name-${workingDossier.id}`}>Name</label>
-          <input
-            id={`dossier-details-name-${workingDossier.id}`}
-            value={detailDraft.name}
-            onChange={(event) => updateDetailDraft({ name: event.target.value })}
-            required
-          />
-        </div>
-
-        <CoverImageInput
-          value={detailDraft.coverImage}
-          errorMessage={detailImageError}
-          onChange={(coverImage) => updateDetailDraft({ coverImage })}
-          onError={setDetailImageError}
-        />
-
+      <div className="case-file-identity-fields" aria-label="Dossier identity metadata">
         {workingDossier.dossierType === 'Character' ? (
           <div className="case-form__grid">
             <label className="case-form__field">
@@ -726,207 +787,192 @@ export function DossierSheet({
           </div>
         ) : null}
 
-        <label className="case-form__field">
-          Summary
-          <textarea
-            rows={3}
-            value={detailDraft.summary ?? ''}
-            onChange={(event) => updateDetailDraft({ summary: event.target.value })}
-          />
-        </label>
-
-        <label className="case-form__field">
-          Investigation Notes
-          <textarea
-            rows={4}
-            value={detailDraft.notes ?? ''}
-            onChange={(event) => updateDetailDraft({ notes: event.target.value })}
-          />
-        </label>
-
         {detailSaveError ? (
           <p className="case-form__error" role="alert">
             {detailSaveError}
           </p>
         ) : null}
+      </div>
+    );
+  }
+
+  function renderCaseFileBlockView(section: DossierSection) {
+    const blockType = getCaseFileBlockType(section);
+    const body = section.body?.trim() ?? '';
+    const shouldShowLegacyHeading =
+      !isStructuredCaseFileBlock(section) &&
+      Boolean(section.title.trim()) &&
+      section.title !== 'Overview' &&
+      section.title !== 'Investigation Notes';
+    const listItems = body
+      .split(/\n+/)
+      .map((item) => item.replace(/^[-\d.\s]+/, '').trim())
+      .filter(Boolean);
+
+    if (!blockType || !hasRenderableCaseFileContent(section)) {
+      return null;
+    }
+
+    if (blockType === 'section-heading') {
+      return (
+        <section key={section.id} className="case-file-block case-file-block--heading">
+          <h3>{body || section.title}</h3>
+        </section>
+      );
+    }
+
+    if (blockType === 'bulleted-list') {
+      return (
+        <ul key={section.id} className="case-file-block case-file-block--list">
+          {listItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (blockType === 'numbered-list') {
+      return (
+        <ol key={section.id} className="case-file-block case-file-block--list">
+          {listItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ol>
+      );
+    }
+
+    if (blockType === 'quote') {
+      return (
+        <blockquote key={section.id} className="case-file-block case-file-block--quote">
+          {body}
+        </blockquote>
+      );
+    }
+
+    if (blockType === 'divider') {
+      return <hr key={section.id} className="case-file-block case-file-block--divider" />;
+    }
+
+    return (
+      <section key={section.id} className="case-file-block case-file-block--legacy">
+        {shouldShowLegacyHeading ? <h3>{section.title}</h3> : null}
+        <p>{body}</p>
       </section>
     );
   }
 
-  async function toggleSection(sectionId: string) {
-    const sourceSections = isEditingSections ? draftSections : sections;
-    const nextSections = sourceSections.map((section) =>
-        section.id === sectionId ? { ...section, isCollapsed: !section.isCollapsed } : section,
+  function renderCaseFileBlockEditor(section: DossierSection, index: number) {
+    const blockType = getCaseFileBlockType(section) ?? 'paragraph';
+    const blockLabel = getCaseFileBlockLabel(blockType);
+    const isDragged = draggedSectionId === section.id;
+    const contentLabel = `${blockLabel} content`;
+    const isStructuredBlock = isStructuredCaseFileBlock(section);
+
+    return (
+      <article
+        key={section.id}
+        className={isDragged ? 'case-file-editor-block case-file-editor-block--dragging' : 'case-file-editor-block'}
+        draggable
+        onDragStart={() => setDraggedSectionId(section.id)}
+        onDragEnd={() => setDraggedSectionId(null)}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+
+          if (draggedSectionId) {
+            reorderNotebookBlock(draggedSectionId, section.id);
+          }
+        }}
+      >
+        <div className="case-file-editor-block__rail">
+          <button
+            type="button"
+            className="case-file-editor-block__drag"
+            aria-label={`Drag ${blockLabel}`}
+            title="Drag to reorder"
+          >
+            Grip
+          </button>
+          <span>{blockLabel}</span>
+        </div>
+
+        <div className="case-file-editor-block__content">
+          {!isStructuredBlock ? (
+            <label className="case-file-editor-block__field case-file-editor-block__field--title">
+              <span>Section Heading</span>
+              <input
+                value={section.title}
+                onChange={(event) => updateNotebookBlock(section.id, { title: event.target.value })}
+              />
+            </label>
+          ) : null}
+
+          {blockType === 'divider' ? (
+            <hr className="case-file-block case-file-block--divider" />
+          ) : blockType === 'section-heading' ? (
+            <label className="case-file-editor-block__field">
+              <span>{contentLabel}</span>
+              <input
+                value={section.body ?? ''}
+                placeholder="Section heading"
+                onChange={(event) => updateSectionBody(section.id, event.target.value)}
+              />
+            </label>
+          ) : (
+            <label className="case-file-editor-block__field">
+              <span>{contentLabel}</span>
+              <ThreadmarkAuthoringTextarea
+                rows={blockType === 'quote' ? 3 : 4}
+                value={section.body ?? ''}
+                dossier={workingDossier}
+                sectionId={section.id}
+                dossiers={dossiers}
+                placeholder="Begin documenting..."
+                onChange={(value) => handleNotebookInput(section, value)}
+              />
+            </label>
+          )}
+        </div>
+
+        <details className="dossier-section-actions case-file-editor-block__actions">
+          <summary aria-label={`More actions for ${blockLabel}`}>
+            More Actions
+          </summary>
+          <div>
+            <span>Change Block Type</span>
+            {caseFileBlockOptions.map((option) => (
+              <button
+                key={option.type}
+                type="button"
+                onClick={() => changeNotebookBlock(section, option.type)}
+                disabled={option.type === blockType}
+              >
+                {option.label}
+              </button>
+            ))}
+            <button type="button" onClick={() => addNotebookBlock('paragraph', section.id)}>
+              Add Paragraph Below
+            </button>
+            <button type="button" onClick={() => duplicateNotebookBlock(section)}>
+              Duplicate
+            </button>
+            <button type="button" onClick={() => moveNotebookBlock(section.id, -1)} disabled={index === 0}>
+              Move Up
+            </button>
+            <button
+              type="button"
+              onClick={() => moveNotebookBlock(section.id, 1)}
+              disabled={index === caseFileSections.length - 1}
+            >
+              Move Down
+            </button>
+            <button type="button" className="danger-button" onClick={() => deleteNotebookBlock(section)}>
+              Delete
+            </button>
+          </div>
+        </details>
+      </article>
     );
-
-    if (isEditingSections) {
-      updateDraftSections(nextSections);
-      return;
-    }
-
-    await saveSectionChanges(nextSections);
-  }
-
-  function moveSection(sectionId: string, direction: -1 | 1) {
-    const currentIndex = draftSections.findIndex((section) => section.id === sectionId);
-    const nextIndex = currentIndex + direction;
-
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= draftSections.length) {
-      return;
-    }
-
-    const nextSections = [...draftSections];
-    const [section] = nextSections.splice(currentIndex, 1);
-    nextSections.splice(nextIndex, 0, section);
-    updateDraftSections(nextSections);
-  }
-
-  function addSection(template: SectionTemplate) {
-    const singletonExists =
-      template.isSingleton && draftSections.some((section) => section.templateId === template.id);
-
-    if (singletonExists) {
-      setSectionNotice(`${template.title} already exists in this Dossier.`);
-      return;
-    }
-
-    updateDraftSections([...draftSections, createSectionFromTemplate(template, draftSections.length)]);
-    setIsAddSectionOpen(false);
-    setSectionNotice(`${template.title} added`);
-  }
-
-  function addCustomSection() {
-    const title = customSectionTitle.trim();
-
-    if (!title || title.length > 80) {
-      setSectionNotice('Name the custom Section before adding it.');
-      return;
-    }
-
-    const template = customSectionReusable
-      ? saveCustomSectionTemplate(title, customSectionKind)
-      : {
-          id: createStableId('custom'),
-          title,
-          kind: customSectionKind,
-          isSingleton: false,
-          category: 'Custom',
-          isRenameable: true,
-          isDuplicable: true,
-        };
-
-    if (customSectionReusable) {
-      setAvailableCustomTemplates(readCustomSectionTemplates());
-    }
-
-    setCustomSectionTitle('');
-    setCustomSectionKind('custom');
-    addSection(template);
-  }
-
-  function startRenameSection(section: DossierSection) {
-    setRenamingSectionId(section.id);
-    setRenameValue(section.title);
-  }
-
-  function applySectionRename(section: DossierSection) {
-    const title = renameValue.trim();
-
-    if (!title || title.length > 80) {
-      setSectionNotice('Section names must be between 1 and 80 characters.');
-      return;
-    }
-
-    updateDraftSections(
-      draftSections.map((candidate) =>
-        candidate.id === section.id ? { ...candidate, title } : candidate,
-      ),
-    );
-    setRenamingSectionId(null);
-    setRenameValue('');
-    setSectionNotice(`${title} renamed`);
-  }
-
-  function duplicateDraftSection(section: DossierSection) {
-    const capabilities = getSectionCapabilities(section);
-
-    if (!capabilities.canDuplicate) {
-      setSectionNotice(`${section.title} cannot be duplicated.`);
-      return;
-    }
-
-    const index = draftSections.findIndex((candidate) => candidate.id === section.id);
-    const nextSections = [...draftSections];
-    nextSections.splice(index + 1, 0, duplicateSection(section));
-    updateDraftSections(nextSections);
-    setSectionNotice(`${section.title} duplicated`);
-  }
-
-  function confirmRemoveSection() {
-    if (!removingSection) {
-      return;
-    }
-
-    updateDraftSections(draftSections.filter((section) => section.id !== removingSection.id));
-    setSectionNotice(`${removingSection.title} removed from draft`);
-    setRemovingSection(null);
-  }
-
-  function renderSectionBody(section: DossierSection) {
-    if (section.kind === 'identity') {
-      return section.fields?.length ? (
-        <dl className="dossier-reveal__facts" aria-label={`${section.title} facts`}>
-          {section.fields.map((field) => (
-            <div key={field.id}>
-              <dt>{field.label}</dt>
-              <dd>{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="dossier-reveal__empty">No identity facts have been recorded.</p>
-      );
-    }
-
-    if (section.kind === 'relationships') {
-      return (
-        <p className="dossier-reveal__empty">
-          {dossierBonds.length
-            ? `${dossierBonds.length} Bonds are connected to this Dossier.`
-            : 'No Bonds have been recorded.'}
-        </p>
-      );
-    }
-
-    if (section.kind === 'timeline') {
-      return <p className="dossier-reveal__empty">Timeline Sections are reserved for a future LoreBound update.</p>;
-    }
-
-    if (section.kind === 'gallery') {
-      return <p className="dossier-reveal__empty">Gallery Sections are reserved for a future LoreBound update.</p>;
-    }
-
-    if (section.kind === 'evidence') {
-      return <p className="dossier-reveal__empty">Evidence Sections are reserved for a future LoreBound update.</p>;
-    }
-
-    if (isEditingSections && ['custom', 'overview', 'notes'].includes(section.kind)) {
-      return (
-        <label className="dossier-dynamic-section__body-editor">
-          Section Notes
-          <ThreadmarkAuthoringTextarea
-            rows={4}
-            value={section.body ?? ''}
-            dossier={workingDossier}
-            sectionId={section.id}
-            dossiers={dossiers}
-            onChange={(value) => updateSectionBody(section.id, value)}
-          />
-        </label>
-      );
-    }
-
-    return section.body ? <p>{section.body}</p> : <p className="dossier-reveal__empty">No entries recorded.</p>;
   }
 
   return (
@@ -945,7 +991,19 @@ export function DossierSheet({
         <div className="dossier-reveal__paper">
           <header className="dossier-reveal__header">
             <p>{dossierTypeLabels[workingDossier.dossierType]}</p>
-            <h2 id="dossier-sheet-title">{workingDossier.name}</h2>
+            {isEditingSections ? (
+              <label className="case-file-identity-name">
+                <span>Dossier Name</span>
+                <input
+                  id="dossier-sheet-title"
+                  value={detailDraft.name}
+                  onChange={(event) => updateDetailDraft({ name: event.target.value })}
+                  required
+                />
+              </label>
+            ) : (
+              <h2 id="dossier-sheet-title">{workingDossier.name}</h2>
+            )}
           </header>
 
           <div
@@ -955,7 +1013,16 @@ export function DossierSheet({
                 : 'dossier-reveal__lead dossier-reveal__lead--no-image'
             }
           >
-            {workingDossier.coverImage ? (
+            {isEditingSections ? (
+              <div className="dossier-reveal__photo dossier-reveal__photo--editor">
+                <CoverImageInput
+                  value={detailDraft.coverImage}
+                  errorMessage={detailImageError}
+                  onChange={(coverImage) => updateDetailDraft({ coverImage })}
+                  onError={setDetailImageError}
+                />
+              </div>
+            ) : workingDossier.coverImage ? (
               <figure className="dossier-reveal__photo">
                 <img src={workingDossier.coverImage} alt={`${workingDossier.name} cover`} />
               </figure>
@@ -965,7 +1032,9 @@ export function DossierSheet({
               </div>
             )}
 
-            {keyFacts.length > 0 ? (
+            {isEditingSections ? (
+              renderIdentityMetadataEditor()
+            ) : keyFacts.length > 0 ? (
               <dl className="dossier-reveal__facts" aria-label="Key facts">
                 {keyFacts.map((field) => (
                   <div key={field.label}>
@@ -981,103 +1050,42 @@ export function DossierSheet({
 
           <div className="dossier-section-toolbar">
             <div>
-              <span>{visibleSections.length} Sections</span>
+              <span>{caseFileSections.length} Case File Blocks</span>
               {sectionNotice ? <p role="status">{sectionNotice}</p> : null}
             </div>
             {isEditingSections ? (
-              <Button type="button" variant="plaque" onClick={() => setIsAddSectionOpen(true)}>
-                Add Section
+              <Button type="button" variant="plaque" onClick={() => addNotebookBlock('paragraph')}>
+                Add Block
               </Button>
             ) : null}
           </div>
 
-          {isEditingSections ? renderDetailFields() : null}
-
-          {visibleSections.map((section, index) => {
-            const capabilities = getSectionCapabilities(section);
-            const isRenaming = renamingSectionId === section.id;
-
-            return (
-            <section key={section.id} className="dossier-reveal__section dossier-dynamic-section">
-              <div className="dossier-dynamic-section__header">
-                <button
-                  type="button"
-                  className="dossier-dynamic-section__toggle"
-                  onClick={() => toggleSection(section.id)}
-                  aria-expanded={!section.isCollapsed}
-                >
-                  <h3>{section.title}</h3>
-                </button>
-                {isEditingSections ? (
-                  <details className="dossier-section-actions">
-                    <summary aria-label={`More actions for ${section.title}`}>
-                      More Actions
-                    </summary>
-                    <div>
-                      {capabilities.canRename ? (
-                        <button type="button" onClick={() => startRenameSection(section)}>
-                          Rename Section
-                        </button>
-                      ) : null}
-                      {capabilities.canDuplicate ? (
-                        <button type="button" onClick={() => duplicateDraftSection(section)}>
-                          Duplicate Section
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => moveSection(section.id, -1)}
-                        disabled={index === 0}
-                      >
-                        Move Up
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveSection(section.id, 1)}
-                        disabled={index === visibleSections.length - 1}
-                      >
-                        Move Down
-                      </button>
-                      {capabilities.canRemove ? (
-                        <button
-                          type="button"
-                          className="danger-button"
-                          onClick={() => setRemovingSection(section)}
-                        >
-                          Remove Section
-                        </button>
-                      ) : null}
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-              {isRenaming ? (
-                <div className="dossier-section-rename">
-                  <label>
-                    Section Name
-                    <input
-                      value={renameValue}
-                      onChange={(event) => setRenameValue(event.target.value)}
-                    />
-                  </label>
-                  <button type="button" onClick={() => applySectionRename(section)}>
-                    Apply
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRenamingSectionId(null);
-                      setRenameValue('');
-                    }}
-                  >
-                    Cancel
-                  </button>
+          <section className="case-file-canvas" aria-labelledby="case-file-canvas-title">
+            <div className="case-file-canvas__header">
+              <h3 id="case-file-canvas-title">Case File</h3>
+              {isEditingSections ? (
+                <div className="case-file-canvas__block-actions" aria-label="Add block">
+                  {caseFileBlockOptions.map((option) => (
+                    <button key={option.type} type="button" onClick={() => addNotebookBlock(option.type)}>
+                      {option.actionLabel}
+                    </button>
+                  ))}
                 </div>
               ) : null}
-              {!section.isCollapsed ? renderSectionBody(section) : null}
-            </section>
-            );
-          })}
+            </div>
+
+            {isEditingSections ? (
+              <div className="case-file-editor" aria-label="Case File authoring canvas">
+                {caseFileSections.map((section, index) => renderCaseFileBlockEditor(section, index))}
+              </div>
+            ) : caseFileSections.length > 0 ? (
+              <div className="case-file-reader">
+                {caseFileSections.map((section) => renderCaseFileBlockView(section))}
+              </div>
+            ) : (
+              <p className="dossier-reveal__empty">No Evidence Collected</p>
+            )}
+          </section>
 
           <section className="dossier-reveal__section dossier-bonds">
             <div className="dossier-bonds__header">
@@ -1373,127 +1381,6 @@ export function DossierSheet({
           </div>
         </div>
       </section>
-
-      {isAddSectionOpen && isEditingSections ? (
-        <div className="case-dialog-backdrop" role="presentation">
-          <section
-            className="case-dialog case-dialog--section-library"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-section-title"
-          >
-            <header className="case-dialog__header">
-              <div>
-                <p>Dossier Edit Mode</p>
-                <h2 id="add-section-title">Add Section</h2>
-              </div>
-              <Button type="button" variant="ghost" onClick={() => setIsAddSectionOpen(false)}>
-                Close
-              </Button>
-            </header>
-
-            <label className="case-form__field">
-              Search Section Library
-              <input
-                value={sectionSearchQuery}
-                onChange={(event) => setSectionSearchQuery(event.target.value)}
-                placeholder="Identity, Timeline, Quotes"
-              />
-            </label>
-
-            <div className="dossier-section-library">
-              {sectionTemplatesByCategory.length > 0 ? (
-                sectionTemplatesByCategory.map(([category, templates]) => (
-                  <section key={category} className="dossier-section-library__category">
-                    <div className="dossier-section-library__header">
-                      <h3>{category}</h3>
-                      <span>{templates.length} available</span>
-                    </div>
-                    <div className="dossier-section-library__actions">
-                      {templates.map((template) => (
-                        <button
-                          key={template.id}
-                          type="button"
-                          onClick={() => addSection(template)}
-                        >
-                          Add {template.title}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))
-              ) : (
-                <p className="dossier-reveal__empty">No matching Sections found.</p>
-              )}
-            </div>
-
-            <section className="dossier-section-library__custom" aria-labelledby="custom-section-title">
-              <h3 id="custom-section-title">Custom Section</h3>
-              <label>
-                Section Name
-                <input
-                  value={customSectionTitle}
-                  onChange={(event) => setCustomSectionTitle(event.target.value)}
-                  placeholder="Field Notes"
-                />
-              </label>
-              <label>
-                Section Type
-                <select
-                  value={customSectionKind}
-                  onChange={(event) => setCustomSectionKind(event.target.value as DossierSectionKind)}
-                >
-                  {sectionKindOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="dossier-section-library__check">
-                <input
-                  type="checkbox"
-                  checked={customSectionReusable}
-                  onChange={(event) => setCustomSectionReusable(event.target.checked)}
-                />
-                Save as reusable Section
-              </label>
-              <Button type="button" variant="brass" onClick={addCustomSection}>
-                Add Custom Section
-              </Button>
-            </section>
-          </section>
-        </div>
-      ) : null}
-
-      {removingSection ? (
-        <div className="case-dialog-backdrop" role="presentation">
-          <section
-            className="case-dialog case-dialog--narrow"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remove-section-title"
-          >
-            <header className="case-dialog__header">
-              <div>
-                <p>Remove Section</p>
-                <h2 id="remove-section-title">{removingSection.title}</h2>
-              </div>
-            </header>
-            <p className="case-dialog__copy">
-              This removes the Section from the draft Dossier. Save Changes is still required to make it permanent.
-            </p>
-            <div className="case-dialog__actions">
-              <Button type="button" variant="ghost" onClick={() => setRemovingSection(null)}>
-                Cancel
-              </Button>
-              <button type="button" className="danger-button" onClick={confirmRemoveSection}>
-                Remove Section
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
 
       {isCreatingBond ? (
         <BondFormDialog

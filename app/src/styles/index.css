@@ -2281,6 +2281,43 @@ textarea {
   line-height: 0.95;
 }
 
+.case-file-identity-name {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.case-file-identity-name span,
+.case-file-identity-fields .case-form__field,
+.case-file-editor-block__field span {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.case-file-identity-name input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgb(92 58 38 / 0.28);
+  background: rgb(255 250 241 / 0.44);
+  padding: 0.2rem 0.1rem 0.45rem;
+  color: var(--color-deep-graphite);
+  font: inherit;
+  font-family: var(--font-display);
+  font-size: clamp(2.1rem, 4.4vw, 4rem);
+  font-weight: 900;
+  line-height: 0.98;
+}
+
+.case-file-identity-name input:focus,
+.case-file-editor-block input:focus,
+.case-file-editor-block textarea:focus {
+  outline: 2px solid rgb(143 29 44 / 0.34);
+  outline-offset: 3px;
+}
+
 .dossier-reveal__lead {
   display: grid;
   grid-template-columns: minmax(11rem, 16rem) minmax(0, 1fr);
@@ -2338,6 +2375,25 @@ textarea {
   font-weight: 900;
 }
 
+.dossier-reveal__photo--editor {
+  display: block;
+  transform: none;
+}
+
+.dossier-reveal__photo--editor .case-form__field {
+  margin: 0;
+}
+
+.dossier-reveal__photo--editor .case-form__cover-preview {
+  margin-top: 0.55rem;
+}
+
+.case-file-identity-fields {
+  display: grid;
+  gap: 0.85rem;
+  align-self: stretch;
+}
+
 .dossier-reveal__facts,
 .dossier-reveal__metadata {
   display: grid;
@@ -2389,6 +2445,200 @@ textarea {
   font-size: 1rem;
   line-height: 1.65;
   white-space: pre-wrap;
+}
+
+.case-file-canvas {
+  margin-top: 1.35rem;
+  border-top: 1px solid rgb(92 58 38 / 0.18);
+  padding-top: 1rem;
+}
+
+.case-file-canvas__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.9rem;
+}
+
+.case-file-canvas__header h3 {
+  margin: 0;
+  color: var(--color-deep-crimson);
+  font-size: var(--text-label);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.case-file-canvas__block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.case-file-canvas__block-actions button,
+.case-file-editor-block__drag {
+  border: 1px solid rgb(92 58 38 / 0.14);
+  border-radius: var(--radius-sm);
+  background: rgb(255 250 241 / 0.52);
+  padding: 0.36rem 0.5rem;
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.case-file-reader {
+  max-width: 46rem;
+}
+
+.case-file-block {
+  margin: 0;
+}
+
+.case-file-block + .case-file-block {
+  margin-top: 0.85rem;
+}
+
+.case-file-block--heading {
+  margin-top: 1.35rem;
+  border-bottom: 1px solid rgb(92 58 38 / 0.16);
+  padding-bottom: 0.45rem;
+}
+
+.case-file-block--heading:first-child {
+  margin-top: 0;
+}
+
+.case-file-block--heading h3 {
+  margin: 0;
+  color: var(--color-deep-graphite);
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 2vw, 1.85rem);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.case-file-block--paragraph,
+.case-file-block--list,
+.case-file-block--quote,
+.case-file-block--legacy p {
+  color: var(--color-text-primary);
+  font-size: 1.02rem;
+  line-height: 1.72;
+  white-space: pre-wrap;
+}
+
+.case-file-block--legacy h3 {
+  margin: 0 0 0.45rem;
+  color: var(--color-deep-graphite);
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 1.8vw, 1.65rem);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.case-file-block--list {
+  padding-left: 1.35rem;
+}
+
+.case-file-block--quote {
+  border-left: 3px solid rgb(143 29 44 / 0.48);
+  padding: 0.35rem 0 0.35rem 0.95rem;
+  color: rgb(72 61 52);
+  font-style: italic;
+}
+
+.case-file-block--divider {
+  height: 1px;
+  border: 0;
+  background: rgb(92 58 38 / 0.2);
+}
+
+.case-file-editor {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.case-file-editor-block {
+  display: grid;
+  grid-template-columns: 8.2rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: start;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0.55rem;
+  transition:
+    border-color 160ms var(--ease-standard),
+    background 160ms var(--ease-standard),
+    box-shadow 160ms var(--ease-standard);
+}
+
+.case-file-editor-block:hover,
+.case-file-editor-block:focus-within {
+  border-color: rgb(92 58 38 / 0.16);
+  background: rgb(255 250 241 / 0.3);
+  box-shadow: 0 8px 18px rgb(31 26 23 / 0.08);
+}
+
+.case-file-editor-block--dragging {
+  opacity: 0.68;
+}
+
+.case-file-editor-block__rail {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.case-file-editor-block__rail span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.case-file-editor-block__content {
+  min-width: 0;
+}
+
+.case-file-editor-block__field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.case-file-editor-block__field + .case-file-editor-block__field {
+  margin-top: 0.6rem;
+}
+
+.case-file-editor-block input,
+.case-file-editor-block textarea {
+  width: 100%;
+  border: 1px solid rgb(92 58 38 / 0.16);
+  border-radius: var(--radius-sm);
+  background: rgb(255 250 241 / 0.72);
+  padding: 0.62rem 0.7rem;
+  color: var(--color-text-primary);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.case-file-editor-block textarea {
+  min-height: 7.2rem;
+  resize: vertical;
+}
+
+.case-file-editor-block__actions summary {
+  white-space: nowrap;
+}
+
+.case-file-editor-block__actions div > span {
+  padding: 0.3rem 0.35rem;
+  color: var(--color-deep-crimson);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .dossier-section-toolbar {
@@ -4124,6 +4374,25 @@ textarea {
   .dossier-reveal__lead--event,
   .dossier-reveal__lead--no-image {
     grid-template-columns: 1fr;
+  }
+
+  .case-file-canvas__header,
+  .case-file-editor-block {
+    grid-template-columns: 1fr;
+  }
+
+  .case-file-canvas__header {
+    display: grid;
+  }
+
+  .case-file-canvas__block-actions {
+    justify-content: flex-start;
+  }
+
+  .case-file-editor-block__rail {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .dossier-reveal__photo img,

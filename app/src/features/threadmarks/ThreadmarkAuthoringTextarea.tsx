@@ -12,6 +12,7 @@ export function ThreadmarkAuthoringTextarea({
   sectionId,
   dossiers,
   isMobile = false,
+  placeholder,
   onChange,
 }: {
   id?: string;
@@ -22,6 +23,7 @@ export function ThreadmarkAuthoringTextarea({
   sectionId: string;
   dossiers: readonly Dossier[];
   isMobile?: boolean;
+  placeholder?: string;
   onChange: (value: string) => void;
 }) {
   const generatedId = useId();
@@ -68,6 +70,7 @@ export function ThreadmarkAuthoringTextarea({
         aria-autocomplete="list"
         aria-expanded={authoringState.isMenuOpen}
         aria-controls={authoringState.isMenuOpen ? menuId : undefined}
+        placeholder={placeholder}
         aria-activedescendant={
           authoringState.isMenuOpen && suggestions[highlightedSuggestionIndex]
             ? `${menuId}-option-${highlightedSuggestionIndex}`
@@ -107,4 +110,3 @@ export function ThreadmarkAuthoringTextarea({
     </span>
   );
 }
-

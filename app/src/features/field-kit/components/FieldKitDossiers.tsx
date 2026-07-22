@@ -620,7 +620,7 @@ export function FieldKitDossiers({
             setIsEditingDossier(false);
             setSelectedDossier(dossier);
           }}
-          onEnterEdit={() => setIsEditingDossier(true)}
+          onEnterEdit={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
           onDoneEditing={() => setIsEditingDossier(false)}
           onSaveSections={handleSaveSections}
           onEditDetails={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
