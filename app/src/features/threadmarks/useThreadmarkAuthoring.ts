@@ -272,7 +272,7 @@ export function useThreadmarkAuthoring({
 
     return getTargetDossierSuggestions({
       query: authoringState.activeTargetFragment,
-      dossiers,
+      dossiers: dossiers.filter((candidate) => candidate.caseId === dossier.caseId),
       sourceDossierId: dossier.id,
       validTargetTypes: definition.validTargetTypes,
     });

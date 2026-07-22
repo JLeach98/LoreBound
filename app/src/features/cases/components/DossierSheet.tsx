@@ -1,19 +1,11 @@
 import { Button } from '../../../components/ui/Button';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createStableId } from '../../../lib/stableId';
-import {
-  executeThreadmarkBondReconciliation,
-  isThreadmarkGeneratedBond,
-} from '../../threadmarks';
+import { isThreadmarkGeneratedBond } from '../../threadmarks';
 import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
 import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
-import {
-  createBond as createStoredBond,
-  deleteBond as deleteStoredBond,
-  updateBond as updateStoredBond,
-} from '../storage/caseStorage';
 import {
   type Bond,
   type BondFormValues,
@@ -46,6 +38,7 @@ import {
 } from '../utils/dossierSections';
 import {
   createEvidenceAnchorContext,
+  createMissingEvidenceRecordsFromThreadmarks,
   type EvidenceLogEntry,
   formatEvidenceLogSelectedText,
   getEvidenceLogEntries,
@@ -368,33 +361,27 @@ export function DossierSheet({
     });
 
     await Promise.all(reconciledRecords.map((record) => evidenceRecordRepository.update(record)));
+    const latestCaseRecords = await evidenceRecordRepository.listByCase(updatedDossier.caseId);
+    const createdThreadmarkRecords = createMissingEvidenceRecordsFromThreadmarks({
+      records: latestCaseRecords,
+      sourceDossier: updatedDossier,
+      sections: normalizedSections,
+      dossiers,
+      updatedAt: now,
+      createId: () => createStableId('evidence'),
+    });
+
+    await Promise.all(createdThreadmarkRecords.map((record) => evidenceRecordRepository.create(record)));
 
     setWorkingDossier(updatedDossier);
     await refreshEvidenceRecords(updatedDossier.caseId);
     setIsDraftNewDossier(false);
     setDetailDraft(createDetailDraft(updatedDossier));
     onCreated?.(updatedDossier);
-    const reconciliationResult = await executeThreadmarkBondReconciliation(
-      {
-        sourceDossier: updatedDossier,
-        sections: normalizedSections,
-        dossiers,
-        bonds,
-      },
-      {
-        createBond: (values) => createStoredBond(updatedDossier.caseId, values),
-        updateBond: updateStoredBond,
-        deleteBond: deleteStoredBond,
-      },
-    );
     await refreshBonds();
 
-    if (
-      reconciliationResult.created.length > 0 ||
-      reconciliationResult.updated.length > 0 ||
-      reconciliationResult.removed.length > 0
-    ) {
-      requestAutomaticSynchronization('threadmark relationships updated');
+    if (createdThreadmarkRecords.length > 0) {
+      requestAutomaticSynchronization('threadmark evidence record created');
     }
   }
 

@@ -1,5 +1,7 @@
 import type { EvidenceRecord } from './evidenceRecordTypes';
-import type { Dossier } from '../cases/types/dossierTypes';
+import type { Dossier, DossierSection } from '../cases/types/dossierTypes';
+import { parseThreadmarks } from './threadmarkParser';
+import { resolveThreadmarkDocument } from './threadmarkResolver';
 
 export type EvidenceLogEntry = {
   record: EvidenceRecord;
@@ -229,4 +231,80 @@ export function reconcileEvidenceRecordsForSection({
         updatedAt,
       };
     });
+}
+
+export function createMissingEvidenceRecordsFromThreadmarks({
+  records,
+  sourceDossier,
+  sections,
+  dossiers,
+  updatedAt,
+  createId,
+}: {
+  records: readonly EvidenceRecord[];
+  sourceDossier: Dossier;
+  sections: readonly DossierSection[];
+  dossiers: readonly Dossier[];
+  updatedAt: string;
+  createId: () => string;
+}) {
+  const activeCaseDossiers = dossiers.filter((dossier) => dossier.caseId === sourceDossier.caseId);
+  const existingRecords: EvidenceRecord[] = [...records];
+  const createdRecords: EvidenceRecord[] = [];
+
+  sections.forEach((section) => {
+    const text = section.body ?? '';
+
+    if (!text.trim()) {
+      return;
+    }
+
+    const occurrences = parseThreadmarks(text);
+    const resolution = resolveThreadmarkDocument({
+      occurrences,
+      sourceDossier,
+      activeInvestigationId: sourceDossier.caseId,
+      dossiers: activeCaseDossiers,
+    });
+
+    resolution.results.forEach((result, index) => {
+      const occurrence = occurrences[index];
+
+      if (!occurrence || result.status !== 'resolved' || !result.targetDossierId) {
+        return;
+      }
+
+      const incoming = {
+        caseId: sourceDossier.caseId,
+        originDossierId: sourceDossier.id,
+        originSectionId: section.id,
+        targetDossierId: result.targetDossierId,
+        anchorStart: occurrence.startOffset,
+        anchorEnd: occurrence.endOffset,
+      };
+
+      if (hasDuplicateEvidenceRecord(existingRecords, incoming)) {
+        return;
+      }
+
+      const record: EvidenceRecord = {
+        id: createId(),
+        ...incoming,
+        selectedText: occurrence.rawText,
+        anchorContext: createEvidenceAnchorContext(text, occurrence.startOffset, occurrence.endOffset),
+        metadata: {
+          relationshipKey: result.relationshipKey,
+          targetDisplayName: result.targetDisplayName,
+        },
+        status: 'active',
+        createdAt: updatedAt,
+        updatedAt,
+      };
+
+      existingRecords.push(record);
+      createdRecords.push(record);
+    });
+  });
+
+  return createdRecords;
 }

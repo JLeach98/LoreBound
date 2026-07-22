@@ -2,7 +2,6 @@ import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode
 import { Button } from '../../../components/ui/Button';
 import { createStableId } from '../../../lib/stableId';
 import {
-  executeThreadmarkBondReconciliation,
   isThreadmarkGeneratedBond,
   ThreadmarkAuthoringTextarea,
 } from '../../threadmarks';
@@ -12,11 +11,6 @@ import { useBonds } from '../../cases/context/BondContext';
 import { useBoard } from '../../cases/context/BoardContext';
 import { useCases } from '../../cases/context/CaseContext';
 import { useDossiers } from '../../cases/context/DossierContext';
-import {
-  createBond as createStoredBond,
-  deleteBond as deleteStoredBond,
-  updateBond as updateStoredBond,
-} from '../../cases/storage/caseStorage';
 import type { Bond, BondFormValues } from '../../cases/types/bondTypes';
 import type {
   Dossier,
@@ -30,6 +24,7 @@ import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import {
   createEvidenceAnchorContext,
+  createMissingEvidenceRecordsFromThreadmarks,
   type EvidenceLogEntry,
   formatEvidenceLogSelectedText,
   getEvidenceLogEntries,
@@ -316,7 +311,6 @@ export function FieldKitDossiers({
   const { activeCase } = useCases();
   const { dossiers, updateExistingDossier, deleteExistingDossier, refreshDossiers } = useDossiers();
   const {
-    bonds,
     createNewBond,
     refreshBonds,
     bondsForDossier,
@@ -562,29 +556,23 @@ export function FieldKitDossiers({
     });
 
     await Promise.all(reconciledRecords.map((record) => evidenceRecordRepository.update(record)));
+    const latestCaseRecords = await evidenceRecordRepository.listByCase(updatedDossier.caseId);
+    const createdThreadmarkRecords = createMissingEvidenceRecordsFromThreadmarks({
+      records: latestCaseRecords,
+      sourceDossier: updatedDossier,
+      sections: normalizedSections,
+      dossiers: safeDossiers,
+      updatedAt: now,
+      createId: () => createStableId('evidence'),
+    });
+
+    await Promise.all(createdThreadmarkRecords.map((record) => evidenceRecordRepository.create(record)));
     setSelectedDossier(updatedDossier);
     await refreshEvidenceRecords(updatedDossier.caseId);
-    const reconciliationResult = await executeThreadmarkBondReconciliation(
-      {
-        sourceDossier: updatedDossier,
-        sections: normalizedSections,
-        dossiers: safeDossiers,
-        bonds,
-      },
-      {
-        createBond: (values) => createStoredBond(updatedDossier.caseId, values),
-        updateBond: updateStoredBond,
-        deleteBond: deleteStoredBond,
-      },
-    );
     await refreshBonds();
 
-    if (
-      reconciliationResult.created.length > 0 ||
-      reconciliationResult.updated.length > 0 ||
-      reconciliationResult.removed.length > 0
-    ) {
-      requestAutomaticSynchronization('threadmark relationships updated');
+    if (createdThreadmarkRecords.length > 0) {
+      requestAutomaticSynchronization('threadmark evidence record created');
     }
     return updatedDossier;
   }

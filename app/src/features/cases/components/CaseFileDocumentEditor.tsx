@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useMemo, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Dossier, DossierSection } from '../types/dossierTypes';
 import {
   getCaseFileBlockType,
@@ -8,8 +8,7 @@ import {
 } from '../utils/dossierBlocks';
 import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 import { ThreadmarkSuggestionMenu } from '../../threadmarks/ThreadmarkSuggestionMenu';
-import type { ThreadmarkTargetSuggestion } from '../../threadmarks/threadmarkAuthoringTypes';
-import { getTargetDossierSuggestions } from '../../threadmarks/threadmarkSuggestionEngine';
+import { useThreadmarkAuthoring } from '../../threadmarks/useThreadmarkAuthoring';
 
 type CaseFileDocumentEditorProps = {
   draft: CaseFileDocumentDraft;
@@ -205,76 +204,50 @@ export function CaseFileDocumentEditor({
   onCreateEvidenceRecord,
   onNotice,
 }: CaseFileDocumentEditorProps) {
-  const editorRef = useRef<HTMLTextAreaElement>(null);
   const [slashLineIndex, setSlashLineIndex] = useState<number | null>(null);
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
-  const [threadmarkSelection, setThreadmarkSelection] = useState<{
-    start: number;
-    end: number;
-    range: DraftSectionRange;
-    query: string;
-    highlightedIndex: number;
-  } | null>(null);
   const lineCount = useMemo(() => draft.text.split('\n').length, [draft.text]);
-  const threadmarkSuggestions = useMemo(
-    () =>
-      threadmarkSelection
-        ? getTargetDossierSuggestions({
-            query: threadmarkSelection.query,
-            dossiers: dossiers.filter((candidate) => candidate.caseId === dossier.caseId),
-            sourceDossierId: dossier.id,
-            validTargetTypes: ['Character', 'Location', 'Event', 'Organization', 'Theory', 'Artifact'],
-          }).results
-        : [],
-    [dossier.caseId, dossier.id, dossiers, threadmarkSelection],
-  );
 
   function updateDraft(text: string, lineFormats = draft.lineFormats) {
     onChange({ text, lineFormats });
   }
 
-  function updateThreadmarkSelection(selectionStart: number, selectionEnd: number) {
-    if (selectionEnd <= selectionStart) {
-      setThreadmarkSelection(null);
-      return;
-    }
+  const editorId = `case-file-document-editor-${dossier.id}`;
+  const threadmarkMenuId = `${editorId}-threadmarks`;
+  const {
+    textareaRef: editorRef,
+    authoringState,
+    suggestions: threadmarkSuggestions,
+    highlightedSuggestionIndex,
+    updateAuthoringFromCursor,
+    selectSuggestion,
+    handleKeyDown: handleThreadmarkKeyDown,
+  } = useThreadmarkAuthoring({
+    editorId,
+    dossier,
+    sectionId: 'case-file-canvas',
+    value: draft.text,
+    dossiers,
+    onChange: (text) => updateDraft(text),
+    onCreateEvidenceRecord: async (targetDossier, selectionRange) => {
+      const range = mapSelectionToSection(draft, sections, selectionRange.start, selectionRange.end);
 
-    const range = mapSelectionToSection(draft, sections, selectionStart, selectionEnd);
+      if (!range) {
+        onNotice?.('Select text inside one section to create a Threadmark.');
+        throw new Error('Select text inside one section to create a Threadmark.');
+      }
 
-    if (!range) {
-      onNotice?.('Select text inside one section to create a Threadmark.');
-      setThreadmarkSelection(null);
-      return;
-    }
-
-    setThreadmarkSelection({ start: selectionStart, end: selectionEnd, range, query: '', highlightedIndex: 0 });
-  }
-
-  function selectThreadmarkTarget(suggestion: ThreadmarkTargetSuggestion) {
-    if (!threadmarkSelection) {
-      return;
-    }
-
-    const selectedText = draft.text.slice(threadmarkSelection.start, threadmarkSelection.end);
-    const anchorStart = threadmarkSelection.start - threadmarkSelection.range.bodyStart;
-    const anchorEnd = threadmarkSelection.end - threadmarkSelection.range.bodyStart;
-
-    void onCreateEvidenceRecord({
-      targetDossier: suggestion.dossier,
-      originSectionId: threadmarkSelection.range.section.id,
-      selectedText,
-      anchorStart,
-      anchorEnd,
-      originText: threadmarkSelection.range.body,
-    })
-      .then(() => {
-        setThreadmarkSelection(null);
-        window.setTimeout(() => editorRef.current?.focus(), 0);
-      })
-      .catch((error) => {
-        onNotice?.(error instanceof Error ? error.message : 'Threadmark could not be created.');
+      await onCreateEvidenceRecord({
+        targetDossier,
+        originSectionId: range.section.id,
+        selectedText: draft.text.slice(selectionRange.start, selectionRange.end),
+        anchorStart: selectionRange.start - range.bodyStart,
+        anchorEnd: selectionRange.end - range.bodyStart,
+        originText: range.body,
       });
-  }
+    },
+    onAuthoringNotice: onNotice,
+  });
 
   function selectCommand(command: SlashCommand) {
     const editor = editorRef.current;
@@ -307,7 +280,13 @@ export function CaseFileDocumentEditor({
     const lineIndex = getLineIndex(text, event.target.selectionStart);
 
     updateDraft(text);
-    setThreadmarkSelection(null);
+    window.setTimeout(() => {
+      updateAuthoringFromCursor(
+        event.target.selectionStart,
+        event.target.selectionEnd,
+        'typing',
+      );
+    }, 0);
 
     if (lineStartsWithSlash(text, event.target.selectionStart)) {
       setSlashLineIndex(lineIndex);
@@ -319,52 +298,10 @@ export function CaseFileDocumentEditor({
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (threadmarkSelection) {
-      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setThreadmarkSelection((current) =>
-          current ? { ...current, query: `${current.query}${event.key}`, highlightedIndex: 0 } : current,
-        );
-        return;
-      }
+    handleThreadmarkKeyDown(event);
 
-      if (event.key === 'Backspace') {
-        event.preventDefault();
-        setThreadmarkSelection((current) =>
-          current ? { ...current, query: current.query.slice(0, -1), highlightedIndex: 0 } : current,
-        );
-        return;
-      }
-
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setThreadmarkSelection(null);
-        return;
-      }
-
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        setThreadmarkSelection((current) =>
-          current
-            ? {
-                ...current,
-                highlightedIndex:
-                  threadmarkSuggestions.length === 0
-                    ? 0
-                    : event.key === 'ArrowDown'
-                      ? (current.highlightedIndex + 1) % threadmarkSuggestions.length
-                      : (current.highlightedIndex - 1 + threadmarkSuggestions.length) % threadmarkSuggestions.length,
-              }
-            : current,
-        );
-        return;
-      }
-
-      if (event.key === 'Enter' && threadmarkSuggestions[threadmarkSelection.highlightedIndex]) {
-        event.preventDefault();
-        selectThreadmarkTarget(threadmarkSuggestions[threadmarkSelection.highlightedIndex]);
-        return;
-      }
+    if (event.defaultPrevented) {
+      return;
     }
 
     if (slashLineIndex === null) {
@@ -398,36 +335,50 @@ export function CaseFileDocumentEditor({
     <div className="case-file-document-editor">
       <textarea
         ref={editorRef}
+        id={editorId}
         className="case-file-document-editor__surface"
         aria-label="Case File document"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={authoringState.isMenuOpen}
+        aria-controls={authoringState.isMenuOpen ? threadmarkMenuId : undefined}
+        aria-activedescendant={
+          authoringState.isMenuOpen && threadmarkSuggestions[highlightedSuggestionIndex]
+            ? `${threadmarkMenuId}-option-${highlightedSuggestionIndex}`
+            : undefined
+        }
         placeholder="Begin documenting..."
         rows={Math.max(8, Math.min(28, lineCount + 2))}
         value={draft.text}
         onChange={handleChange}
         onClick={(event) =>
-          updateThreadmarkSelection(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)
+          updateAuthoringFromCursor(
+            event.currentTarget.selectionStart,
+            event.currentTarget.selectionEnd,
+            'cursor',
+          )
         }
         onKeyUp={(event) => {
           if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
             return;
           }
 
-          updateThreadmarkSelection(event.currentTarget.selectionStart, event.currentTarget.selectionEnd);
+          updateAuthoringFromCursor(
+            event.currentTarget.selectionStart,
+            event.currentTarget.selectionEnd,
+            'typing',
+          );
         }}
         onKeyDown={handleKeyDown}
       />
-      {threadmarkSelection ? (
+      {authoringState.isMenuOpen && authoringState.menuMode ? (
         <ThreadmarkSuggestionMenu
-          id="case-file-threadmark-targets"
-          mode="target"
+          id={threadmarkMenuId}
+          mode={authoringState.menuMode}
           suggestions={threadmarkSuggestions}
-          highlightedIndex={threadmarkSelection.highlightedIndex}
+          highlightedIndex={highlightedSuggestionIndex}
           isMobile={false}
-          onSelect={(suggestion) => {
-            if (suggestion.kind === 'target') {
-              selectThreadmarkTarget(suggestion);
-            }
-          }}
+          onSelect={selectSuggestion}
         />
       ) : null}
       {slashLineIndex !== null ? (
