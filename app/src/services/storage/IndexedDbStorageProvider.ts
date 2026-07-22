@@ -26,6 +26,15 @@ export const indexedDbStorageProvider: StorageProvider = {
   updateDossier: caseStorage.updateDossier,
   deleteDossier: caseStorage.deleteDossier,
   deleteDossiersByCaseId: caseStorage.deleteDossiersByCaseId,
+  upsertEvidenceRecord: caseStorage.upsertEvidenceRecord,
+  readEvidenceRecordById: caseStorage.readEvidenceRecordById,
+  readEvidenceRecordsByCaseId: caseStorage.readEvidenceRecordsByCaseId,
+  readEvidenceRecordsByTargetDossierId: caseStorage.readEvidenceRecordsByTargetDossierId,
+  readEvidenceRecordsByOriginDossierId: caseStorage.readEvidenceRecordsByOriginDossierId,
+  readEvidenceRecordsByOriginSectionId: caseStorage.readEvidenceRecordsByOriginSectionId,
+  deleteEvidenceRecord: async (id) => {
+    await caseStorage.deleteEvidenceRecord(id);
+  },
   readBoardPinsByCaseId: caseStorage.readBoardPinsByCaseId,
   pinDossierToBoard: caseStorage.pinDossierToBoard,
   removeBoardPin: async (id) => {

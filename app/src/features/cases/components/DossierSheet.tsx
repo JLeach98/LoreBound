@@ -1,10 +1,12 @@
 import { Button } from '../../../components/ui/Button';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import { createStableId } from '../../../lib/stableId';
 import {
   executeThreadmarkBondReconciliation,
   isThreadmarkGeneratedBond,
 } from '../../threadmarks';
 import { requestAutomaticSynchronization } from '../../../services/sync/AutomaticSyncContext';
+import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import { useBonds } from '../context/BondContext';
 import { useDossiers } from '../context/DossierContext';
 import {
@@ -47,6 +49,12 @@ import {
   mergeDossierSectionsWithFormValues,
   normalizeSectionOrder,
 } from '../utils/dossierSections';
+import {
+  createEvidenceAnchorContext,
+  hasDuplicateEvidenceRecord,
+  reconcileEvidenceRecordsForSection,
+} from '../../threadmarks/evidenceRecordSelectors';
+import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 import { BondFormDialog } from './BondFormDialog';
 import { CaseFileDocumentEditor } from './CaseFileDocumentEditor';
 import { CoverImageInput } from './CoverImageInput';
@@ -156,6 +164,21 @@ function getBondEvidenceCount(bond: Bond) {
     : 0;
 }
 
+function threadmarkButtonStyle(isDark = false) {
+  return {
+    background: 'transparent',
+    border: 0,
+    borderBottom: '2px solid rgba(176, 132, 56, 0.92)',
+    color: 'inherit',
+    cursor: 'pointer',
+    font: 'inherit',
+    padding: '0 1px 1px',
+    textDecoration: 'none',
+    outlineOffset: '3px',
+    textShadow: isDark ? '0 1px 1px rgba(0, 0, 0, 0.35)' : undefined,
+  } satisfies CSSProperties;
+}
+
 export function DossierSheet({
   dossier,
   onClose,
@@ -203,6 +226,8 @@ export function DossierSheet({
   const [detailDraft, setDetailDraft] = useState<DossierFormValues>(() => createDetailDraft(dossier));
   const [detailImageError, setDetailImageError] = useState<string | undefined>();
   const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
+  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
+  const [activeThreadmarkId, setActiveThreadmarkId] = useState<string | null>(null);
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const caseFileSections = useMemo(
     () => getVisibleCaseFileSections(sections),
@@ -243,6 +268,12 @@ export function DossierSheet({
     [bondsForDossier, workingDossier.id, bonds, dossiers],
   );
   const hasImage = Boolean(workingDossier.coverImage);
+  const activeThreadmark = activeThreadmarkId
+    ? evidenceRecords.find((record) => record.id === activeThreadmarkId)
+    : null;
+  const activeThreadmarkTarget = activeThreadmark
+    ? dossiers.find((candidate) => candidate.id === activeThreadmark.targetDossierId)
+    : null;
   const quickDefinition = findRelationshipDefinition(quickRelationshipName);
   const quickSearchResults = useMemo(() => {
     const query = normalizeDossierName(quickConnectedName);
@@ -287,6 +318,15 @@ export function DossierSheet({
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
   }, [dossier, isNewDraft]);
+
+  async function refreshEvidenceRecords(caseId = workingDossier.caseId) {
+    setEvidenceRecords(await evidenceRecordRepository.listByCase(caseId));
+  }
+
+  useEffect(() => {
+    void refreshEvidenceRecords(dossier.caseId);
+    setActiveThreadmarkId(null);
+  }, [dossier.caseId, dossier.id]);
 
   useEffect(() => {
     if (initialEditMode) {
@@ -396,6 +436,7 @@ export function DossierSheet({
   }
 
   async function saveSectionChanges(nextSections: DossierSection[], nextDetails = detailDraft) {
+    const previousSections = ensureDossierSections(workingDossier);
     const normalizedSections = normalizeSectionOrder(nextSections);
     const values: DossierFormValues = {
       ...syncDossierValuesFromNotebookSections(
@@ -413,7 +454,28 @@ export function DossierSheet({
       ? await createNewDossier(values)
       : await updateExistingDossier(workingDossier.id, values);
 
+    const now = new Date().toISOString();
+    const recordsForDossier = await evidenceRecordRepository.listByOriginDossier(workingDossier.id);
+    const reconciledRecords = previousSections.flatMap((previousSection) => {
+      const nextSection = normalizedSections.find((candidate) => candidate.id === previousSection.id);
+
+      if (!nextSection || (previousSection.body ?? '') === (nextSection.body ?? '')) {
+        return [];
+      }
+
+      return reconcileEvidenceRecordsForSection({
+        records: recordsForDossier,
+        originSectionId: previousSection.id,
+        previousText: previousSection.body ?? '',
+        updatedText: nextSection.body ?? '',
+        updatedAt: now,
+      });
+    });
+
+    await Promise.all(reconciledRecords.map((record) => evidenceRecordRepository.update(record)));
+
     setWorkingDossier(updatedDossier);
+    await refreshEvidenceRecords(updatedDossier.caseId);
     setIsDraftNewDossier(false);
     setDetailDraft(createDetailDraft(updatedDossier));
     onCreated?.(updatedDossier);
@@ -439,6 +501,112 @@ export function DossierSheet({
     ) {
       requestAutomaticSynchronization('threadmark relationships updated');
     }
+  }
+
+  async function createEvidenceRecordFromSelection({
+    targetDossier,
+    originSectionId,
+    selectedText,
+    anchorStart,
+    anchorEnd,
+    originText,
+  }: {
+    targetDossier: Dossier;
+    originSectionId: string;
+    selectedText: string;
+    anchorStart: number;
+    anchorEnd: number;
+    originText: string;
+  }) {
+    if (targetDossier.caseId !== workingDossier.caseId) {
+      throw new Error('Threadmarks can only reference Dossiers from the active Investigation.');
+    }
+
+    const currentRecords = await evidenceRecordRepository.listByCase(workingDossier.caseId);
+    const incoming = {
+      caseId: workingDossier.caseId,
+      originDossierId: workingDossier.id,
+      originSectionId,
+      targetDossierId: targetDossier.id,
+      anchorStart,
+      anchorEnd,
+    };
+
+    if (hasDuplicateEvidenceRecord(currentRecords, incoming)) {
+      throw new Error('This Threadmark already exists.');
+    }
+
+    const now = new Date().toISOString();
+    const record: EvidenceRecord = {
+      id: createStableId('evidence'),
+      ...incoming,
+      selectedText,
+      anchorContext: createEvidenceAnchorContext(originText, anchorStart, anchorEnd),
+      metadata: {},
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await evidenceRecordRepository.create(record);
+    await refreshEvidenceRecords(workingDossier.caseId);
+    requestAutomaticSynchronization('threadmark evidence record created');
+    setSectionNotice('Investigation Updated');
+  }
+
+  async function removeThreadmark(record: EvidenceRecord) {
+    await evidenceRecordRepository.delete(record.id);
+    setActiveThreadmarkId(null);
+    await refreshEvidenceRecords(record.caseId);
+    requestAutomaticSynchronization('threadmark evidence record removed');
+    setSectionNotice('Investigation Updated');
+  }
+
+  function renderThreadmarkedText(text: string, section: DossierSection, isDark = false, baseOffset = 0): ReactNode {
+    const records = evidenceRecords
+      .filter((record) => record.status === 'active')
+      .filter((record) => record.caseId === workingDossier.caseId)
+      .filter((record) => record.originDossierId === workingDossier.id)
+      .filter((record) => record.originSectionId === section.id)
+      .filter((record) => {
+        const localStart = record.anchorStart - baseOffset;
+        const localEnd = record.anchorEnd - baseOffset;
+        return localStart >= 0 && localEnd <= text.length && text.slice(localStart, localEnd) === record.selectedText;
+      })
+      .sort((left, right) => left.anchorStart - right.anchorStart);
+    const nodes: ReactNode[] = [];
+    let cursor = 0;
+
+    records.forEach((record) => {
+      const localStart = record.anchorStart - baseOffset;
+      const localEnd = record.anchorEnd - baseOffset;
+
+      if (localStart < cursor) {
+        return;
+      }
+
+      nodes.push(text.slice(cursor, localStart));
+      nodes.push(
+        <button
+          key={record.id}
+          type="button"
+          style={threadmarkButtonStyle(isDark)}
+          onClick={() => setActiveThreadmarkId(record.id)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setActiveThreadmarkId(record.id);
+            }
+          }}
+        >
+          {text.slice(localStart, localEnd)}
+        </button>,
+      );
+      cursor = localEnd;
+    });
+
+    nodes.push(text.slice(cursor));
+    return nodes;
   }
 
   function enterSectionEditMode() {
@@ -666,6 +834,12 @@ export function DossierSheet({
       .split(/\n+/)
       .map((item) => item.replace(/^[-\d.\s]+/, '').trim())
       .filter(Boolean);
+    let listSearchOffset = 0;
+    const listItemsWithOffsets = listItems.map((item) => {
+      const offset = Math.max(0, body.indexOf(item, listSearchOffset));
+      listSearchOffset = offset + item.length;
+      return { item, offset };
+    });
 
     if (!blockType || !hasRenderableCaseFileContent(section)) {
       return null;
@@ -682,8 +856,10 @@ export function DossierSheet({
     if (blockType === 'bulleted-list') {
       return (
         <ul key={section.id} className="case-file-block case-file-block--list">
-          {listItems.map((item) => (
-            <li key={item}>{item}</li>
+          {listItemsWithOffsets.map(({ item, offset }) => (
+            <li key={`${item}-${offset}`}>
+              {renderThreadmarkedText(item, section, false, offset)}
+            </li>
           ))}
         </ul>
       );
@@ -692,8 +868,10 @@ export function DossierSheet({
     if (blockType === 'numbered-list') {
       return (
         <ol key={section.id} className="case-file-block case-file-block--list">
-          {listItems.map((item) => (
-            <li key={item}>{item}</li>
+          {listItemsWithOffsets.map(({ item, offset }) => (
+            <li key={`${item}-${offset}`}>
+              {renderThreadmarkedText(item, section, false, offset)}
+            </li>
           ))}
         </ol>
       );
@@ -702,7 +880,7 @@ export function DossierSheet({
     if (blockType === 'quote') {
       return (
         <blockquote key={section.id} className="case-file-block case-file-block--quote">
-          {body}
+          {renderThreadmarkedText(body, section, true)}
         </blockquote>
       );
     }
@@ -714,7 +892,7 @@ export function DossierSheet({
     return (
       <section key={section.id} className="case-file-block case-file-block--legacy">
         {shouldShowLegacyHeading ? <h3>{section.title}</h3> : null}
-        <p>{body}</p>
+        <p>{renderThreadmarkedText(body, section)}</p>
       </section>
     );
   }
@@ -805,7 +983,16 @@ export function DossierSheet({
             </div>
 
             {isEditingSections ? (
-              <CaseFileDocumentEditor draft={caseFileDraft} onChange={setCaseFileDraft} />
+              <CaseFileDocumentEditor
+                draft={caseFileDraft}
+                dossier={workingDossier}
+                sections={sections}
+                dossiers={dossiers}
+                evidenceRecords={evidenceRecords}
+                onChange={setCaseFileDraft}
+                onCreateEvidenceRecord={createEvidenceRecordFromSelection}
+                onNotice={setSectionNotice}
+              />
             ) : caseFileSections.length > 0 ? (
               <div className="case-file-reader">
                 {caseFileSections.map((section) => renderCaseFileBlockView(section))}
@@ -814,6 +1001,49 @@ export function DossierSheet({
               <p className="dossier-reveal__empty">No Evidence Collected</p>
             )}
           </section>
+
+          {activeThreadmark ? (
+            <section
+              className="dossier-reveal__section"
+              role="dialog"
+              aria-label="Threadmark preview"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setActiveThreadmarkId(null);
+                }
+              }}
+            >
+              {activeThreadmarkTarget ? (
+                <>
+                  <h3>{activeThreadmarkTarget.name}</h3>
+                  <p>{activeThreadmarkTarget.dossierType}</p>
+                  <div className="dossier-bonds__actions">
+                    <Button
+                      type="button"
+                      variant="brass"
+                      onClick={() => {
+                        setActiveThreadmarkId(null);
+                        onOpenDossier?.(activeThreadmarkTarget);
+                      }}
+                    >
+                      Open Dossier
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => void removeThreadmark(activeThreadmark)}>
+                      Remove Threadmark
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3>Threadmark Unavailable</h3>
+                  <p>The linked Dossier is no longer available.</p>
+                  <Button type="button" variant="secondary" onClick={() => void removeThreadmark(activeThreadmark)}>
+                    Remove Threadmark
+                  </Button>
+                </>
+              )}
+            </section>
+          ) : null}
 
           <section className="dossier-reveal__section dossier-bonds">
             <div className="dossier-bonds__header">

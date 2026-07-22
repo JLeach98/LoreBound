@@ -2,6 +2,7 @@ import type { BoardPin, BoardPinPosition } from '../../features/cases/types/boar
 import type { Bond, BondFormValues } from '../../features/cases/types/bondTypes';
 import type { CaseFormValues, LoreCase } from '../../features/cases/types/caseTypes';
 import type { Dossier, DossierFormValues } from '../../features/cases/types/dossierTypes';
+import type { EvidenceRecord } from '../../features/threadmarks/evidenceRecordTypes';
 
 export type StorageProviderStatus = {
   mode: 'local' | 'cloud';
@@ -26,6 +27,13 @@ export interface StorageProvider {
   updateDossier: (id: string, values: DossierFormValues) => Promise<Dossier>;
   deleteDossier: (id: string) => Promise<void>;
   deleteDossiersByCaseId: (caseId: string) => Promise<void>;
+  upsertEvidenceRecord: (record: EvidenceRecord) => Promise<EvidenceRecord>;
+  readEvidenceRecordById: (id: string) => Promise<EvidenceRecord | undefined>;
+  readEvidenceRecordsByCaseId: (caseId: string) => Promise<EvidenceRecord[]>;
+  readEvidenceRecordsByTargetDossierId: (targetDossierId: string) => Promise<EvidenceRecord[]>;
+  readEvidenceRecordsByOriginDossierId: (originDossierId: string) => Promise<EvidenceRecord[]>;
+  readEvidenceRecordsByOriginSectionId: (originSectionId: string) => Promise<EvidenceRecord[]>;
+  deleteEvidenceRecord: (id: string) => Promise<void>;
   readBoardPinsByCaseId: (caseId: string) => Promise<BoardPin[]>;
   pinDossierToBoard: (
     caseId: string,

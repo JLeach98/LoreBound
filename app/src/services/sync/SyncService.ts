@@ -34,8 +34,10 @@ import {
   mapCloudCaseToLocal,
   mapCloudDossierToLocal,
   mapCloudDeletionLedgerToLocalTombstone,
+  mapCloudEvidenceRecordToLocal,
   mapDeletionTombstoneToCloudLedgerRow,
   mapDossierToCloudRow,
+  mapEvidenceRecordToCloudRow,
   buildDossierMetadataForSync,
   normalizeDossierSectionsForSync,
 } from './SyncMappers';
@@ -146,6 +148,7 @@ function createEmptyPlan(): SyncPlan {
       dossierCount: 0,
       bondCount: 0,
       boardEntryCount: 0,
+      evidenceRecordCount: 0,
       localImageCount: 0,
       estimatedTransferBytes: 0,
     },
@@ -155,12 +158,14 @@ function createEmptyPlan(): SyncPlan {
       dossierCount: 0,
       bondCount: 0,
       boardEntryCount: 0,
+      evidenceRecordCount: 0,
     },
     sections: {
       cases: { ...emptyPlanSection },
       dossiers: { ...emptyPlanSection },
       bonds: { ...emptyPlanSection },
       boardEntries: { ...emptyPlanSection },
+      evidenceRecords: { ...emptyPlanSection },
     },
     canSynchronize: false,
     canRetrieve: false,
@@ -183,11 +188,13 @@ function createEmptyPlan(): SyncPlan {
       localDossiersRead: 0,
       localBondsRead: 0,
       localEvidencePinsRead: 0,
+      localEvidenceRecordsRead: 0,
       cloudQueries: {
         cases: failedQuery,
         dossiers: failedQuery,
         bonds: failedQuery,
         boardEntries: failedQuery,
+        evidenceRecords: failedQuery,
         deletionLedger: failedQuery,
       },
       storage: {
@@ -345,6 +352,7 @@ function scopeLocalArchiveToCase(localArchive: LocalArchiveSnapshot, caseId: str
     dossiers: localArchive.dossiers.filter((record) => record.caseId === caseId),
     bonds: localArchive.bonds.filter((record) => record.caseId === caseId),
     boardPins: localArchive.boardPins.filter((record) => record.caseId === caseId),
+    evidenceRecords: localArchive.evidenceRecords.filter((record) => record.caseId === caseId),
     deletionTombstones: localArchive.deletionTombstones.filter(
       (tombstone) =>
         tombstone.caseId === caseId ||
@@ -368,6 +376,7 @@ function scopeCloudArchiveToCase(onlineArchive: CloudArchiveSnapshot, caseId: st
     dossiers: onlineArchive.dossiers.filter((record) => record.case_id === caseId),
     bonds: onlineArchive.bonds.filter((record) => record.case_id === caseId),
     boardEntries: onlineArchive.boardEntries.filter((record) => record.case_id === caseId),
+    evidenceRecords: onlineArchive.evidenceRecords.filter((record) => record.case_id === caseId),
     deletionLedger: onlineArchive.deletionLedger.filter(
       (record) =>
         record.case_id === caseId ||
@@ -485,6 +494,7 @@ function hasMissingCloudDependents(
   const localDossierIds = new Set(localArchive.dossiers.map((record) => record.id));
   const localBondIds = new Set(localArchive.bonds.map((record) => record.id));
   const localBoardPinIds = new Set(localArchive.boardPins.map((record) => record.id));
+  const localEvidenceRecordIds = new Set(localArchive.evidenceRecords.map((record) => record.id));
   const localImageCount = countLocalImages(localArchive);
   const cloudImageCount = countCloudImages(onlineArchive);
 
@@ -492,6 +502,7 @@ function hasMissingCloudDependents(
     onlineArchive.dossiers.some((record) => !localDossierIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'dossiers', record.id)) ||
     onlineArchive.bonds.some((record) => !localBondIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'bonds', record.id)) ||
     onlineArchive.boardEntries.some((record) => !localBoardPinIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'boardEntries', record.id)) ||
+    onlineArchive.evidenceRecords.some((record) => !localEvidenceRecordIds.has(record.id) && !hasDeletionAuthority(deletionAuthority, 'evidenceRecords', record.id)) ||
     cloudImageCount > localImageCount
   );
 }
@@ -689,6 +700,7 @@ function mergePartialRepairArchive(
   const dossiersById = new Map(localArchive.dossiers.map((record) => [record.id, record]));
   const bondsById = new Map(localArchive.bonds.map((record) => [record.id, record]));
   const boardPinsById = new Map(localArchive.boardPins.map((record) => [record.id, record]));
+  const evidenceRecordsById = new Map(localArchive.evidenceRecords.map((record) => [record.id, record]));
 
   localArchive.cases.forEach((record) => {
     const retrievedCase = casesById.get(record.id);
@@ -713,12 +725,18 @@ function mergePartialRepairArchive(
       boardPinsById.set(record.id, record);
     }
   });
+  retrievedArchive.evidenceRecords.forEach((record) => {
+    if (!evidenceRecordsById.has(record.id)) {
+      evidenceRecordsById.set(record.id, record);
+    }
+  });
 
   return {
     cases: [...casesById.values()],
     dossiers: [...dossiersById.values()],
     bonds: [...bondsById.values()],
     boardPins: [...boardPinsById.values()],
+    evidenceRecords: [...evidenceRecordsById.values()],
     deletionTombstones: localArchive.deletionTombstones,
     activeCaseId: localArchive.activeCaseId ?? localArchive.cases[0]?.id ?? retrievedArchive.cases[0]?.id ?? null,
   };
@@ -749,6 +767,10 @@ function mergeScopedArchiveIntoFullArchive(
     boardPins: [
       ...fullArchive.boardPins.filter((record) => record.caseId !== caseId),
       ...scopedArchive.boardPins,
+    ],
+    evidenceRecords: [
+      ...fullArchive.evidenceRecords.filter((record) => record.caseId !== caseId),
+      ...scopedArchive.evidenceRecords,
     ],
     deletionTombstones: [
       ...fullArchive.deletionTombstones.filter(
@@ -993,7 +1015,42 @@ function expandDeletionAuthorityWithCaseDependents(
           deletedDossierIds.has(record.dossier_id),
       )
       .forEach((record) => addDerivedEntry('boardEntries', record.id, record.case_id, caseEntry));
+    localArchive.evidenceRecords
+      .filter(
+        (record) =>
+          record.caseId === caseEntry.entityId ||
+          deletedDossierIds.has(record.originDossierId) ||
+          deletedDossierIds.has(record.targetDossierId),
+      )
+      .forEach((record) => addDerivedEntry('evidenceRecords', record.id, record.caseId, caseEntry));
+    onlineArchive.evidenceRecords
+      .filter(
+        (record) =>
+          record.case_id === caseEntry.entityId ||
+          deletedDossierIds.has(record.origin_dossier_id) ||
+          deletedDossierIds.has(record.target_dossier_id),
+      )
+      .forEach((record) => addDerivedEntry('evidenceRecords', record.id, record.case_id, caseEntry));
   });
+
+  [...entries.values()]
+    .filter((entry) => entry.entityType === 'dossiers')
+    .forEach((dossierEntry) => {
+      localArchive.evidenceRecords
+        .filter(
+          (record) =>
+            record.originDossierId === dossierEntry.entityId ||
+            record.targetDossierId === dossierEntry.entityId,
+        )
+        .forEach((record) => addDerivedEntry('evidenceRecords', record.id, record.caseId, dossierEntry));
+      onlineArchive.evidenceRecords
+        .filter(
+          (record) =>
+            record.origin_dossier_id === dossierEntry.entityId ||
+            record.target_dossier_id === dossierEntry.entityId,
+        )
+        .forEach((record) => addDerivedEntry('evidenceRecords', record.id, record.case_id, dossierEntry));
+    });
 
   deletedCaseIds.forEach((caseId) => {
     const caseEntry = entries.get(getDeletionKey('cases', caseId));
@@ -1047,6 +1104,7 @@ function hasActionId(
     dossiers: Set<string>;
     bonds: Set<string>;
     boardPins: Set<string>;
+    evidenceRecords: Set<string>;
   },
   entry: SharedDeletionAuthorityEntry,
 ) {
@@ -1062,7 +1120,11 @@ function hasActionId(
     return actionIds.bonds.has(entry.entityId);
   }
 
-  return actionIds.boardPins.has(entry.entityId);
+  if (entry.entityType === 'boardEntries') {
+    return actionIds.boardPins.has(entry.entityId);
+  }
+
+  return actionIds.evidenceRecords.has(entry.entityId);
 }
 
 function sanitizeEntityId(id: string | null | undefined) {
@@ -1096,6 +1158,7 @@ function createRemoteDeletionBaselineEntries(deletedIds: {
   dossiers: Set<string>;
   bonds: Set<string>;
   boardPins: Set<string>;
+  evidenceRecords: Set<string>;
 }) {
   const deletedAt = new Date().toISOString();
 
@@ -1122,6 +1185,12 @@ function createRemoteDeletionBaselineEntries(deletedIds: {
       [...deletedIds.boardPins].map((id) => [
         getDeletionKey('boardEntries', id),
         createRemoteDeletionBaselineEntry('boardEntries', id, deletedAt),
+      ]),
+    ),
+    ...Object.fromEntries(
+      [...deletedIds.evidenceRecords].map((id) => [
+        getDeletionKey('evidenceRecords', id),
+        createRemoteDeletionBaselineEntry('evidenceRecords', id, deletedAt),
       ]),
     ),
   };
@@ -1324,6 +1393,47 @@ function normalizeBoardEntryContent(record: {
       x: roundCoordinate(record.position_x ?? record.position?.x ?? 0),
       y: roundCoordinate(record.position_y ?? record.position?.y ?? 0),
     },
+  };
+}
+
+function normalizeEvidenceRecordContent(record: {
+  id: string;
+  case_id?: string;
+  caseId?: string;
+  origin_dossier_id?: string;
+  originDossierId?: string;
+  origin_section_id?: string;
+  originSectionId?: string;
+  target_dossier_id?: string;
+  targetDossierId?: string;
+  selected_text?: string;
+  selectedText?: string;
+  anchor_start?: number;
+  anchorStart?: number;
+  anchor_end?: number;
+  anchorEnd?: number;
+  anchor_context?: Record<string, unknown>;
+  anchorContext?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  status?: string;
+}) {
+  const anchorContext = record.anchor_context ?? record.anchorContext ?? {};
+
+  return {
+    id: record.id,
+    caseId: normalizeOptional(record.case_id ?? record.caseId),
+    originDossierId: normalizeOptional(record.origin_dossier_id ?? record.originDossierId),
+    originSectionId: normalizeOptional(record.origin_section_id ?? record.originSectionId),
+    targetDossierId: normalizeOptional(record.target_dossier_id ?? record.targetDossierId),
+    selectedText: normalizeOptional(record.selected_text ?? record.selectedText),
+    anchorStart: Number(record.anchor_start ?? record.anchorStart ?? 0),
+    anchorEnd: Number(record.anchor_end ?? record.anchorEnd ?? 0),
+    anchorContext: canonicalize({
+      prefix: typeof anchorContext.prefix === 'string' ? anchorContext.prefix : '',
+      suffix: typeof anchorContext.suffix === 'string' ? anchorContext.suffix : '',
+    }),
+    metadata: canonicalize(record.metadata ?? {}),
+    status: record.status === 'orphaned' ? 'orphaned' : 'active',
   };
 }
 
@@ -1703,12 +1813,20 @@ function findContradictoryDeletionActions(actions: SyncRecordAction[]) {
   });
 }
 
-function isArchiveEmpty(snapshot: { cases: unknown[]; dossiers: unknown[]; bonds: unknown[]; boardEntries?: unknown[]; boardPins?: unknown[] }) {
+function isArchiveEmpty(snapshot: {
+  cases: unknown[];
+  dossiers: unknown[];
+  bonds: unknown[];
+  boardEntries?: unknown[];
+  boardPins?: unknown[];
+  evidenceRecords?: unknown[];
+}) {
   return (
     snapshot.cases.length +
       snapshot.dossiers.length +
       snapshot.bonds.length +
-      (snapshot.boardEntries?.length ?? snapshot.boardPins?.length ?? 0) ===
+      (snapshot.boardEntries?.length ?? snapshot.boardPins?.length ?? 0) +
+      (snapshot.evidenceRecords?.length ?? 0) ===
     0
   );
 }
@@ -1737,6 +1855,16 @@ function validateDependencies(localArchive: LocalArchiveSnapshot) {
   localArchive.boardPins.forEach((pin) => {
     if (!caseIds.has(pin.caseId) || !dossierIds.has(pin.dossierId)) {
       reasons.push('An Evidence Pin references a missing Investigation or Dossier.');
+    }
+  });
+
+  localArchive.evidenceRecords.forEach((record) => {
+    if (!caseIds.has(record.caseId)) {
+      reasons.push(`Evidence Record "${record.id}" is missing its Investigation.`);
+    }
+
+    if (!dossierIds.has(record.originDossierId) || !dossierIds.has(record.targetDossierId)) {
+      reasons.push(`Evidence Record "${record.id}" references a missing Dossier.`);
     }
   });
 
@@ -1775,6 +1903,10 @@ function createLocalFingerprintSnapshot(
       getFingerprintKey('boardEntries', record.id),
       fingerprint(normalizeBoardEntryContent(record)),
     ]),
+    ...localArchive.evidenceRecords.map((record) => [
+      getFingerprintKey('evidenceRecords', record.id),
+      fingerprint(normalizeEvidenceRecordContent(record)),
+    ]),
   ]);
 }
 
@@ -1795,6 +1927,10 @@ function createCloudFingerprintSnapshot(onlineArchive: CloudArchiveSnapshot) {
     ...onlineArchive.boardEntries.map((record) => [
       getFingerprintKey('boardEntries', record.id),
       fingerprint(normalizeBoardEntryContent(record)),
+    ]),
+    ...onlineArchive.evidenceRecords.map((record) => [
+      getFingerprintKey('evidenceRecords', record.id),
+      fingerprint(normalizeEvidenceRecordContent(record)),
     ]),
   ]);
 }
@@ -1838,6 +1974,7 @@ function createBaselineRecordIds(localArchive: LocalArchiveSnapshot) {
     dossiers: localArchive.dossiers.map((record) => record.id),
     bonds: localArchive.bonds.map((record) => record.id),
     boardPins: localArchive.boardPins.map((record) => record.id),
+    evidenceRecords: localArchive.evidenceRecords.map((record) => record.id),
   };
 }
 
@@ -1847,6 +1984,7 @@ function createBaselineUpdatedAt(localArchive: LocalArchiveSnapshot) {
     ...localArchive.dossiers.map((record) => [record.id, record.dateModified]),
     ...localArchive.bonds.map((record) => [record.id, record.dateModified]),
     ...localArchive.boardPins.map((record) => [record.id, record.datePinned]),
+    ...localArchive.evidenceRecords.map((record) => [record.id, record.updatedAt]),
   ]);
 }
 
@@ -1856,6 +1994,7 @@ function createRecordKeySet(localArchive: LocalArchiveSnapshot) {
     ...localArchive.dossiers.map((record) => getFingerprintKey('dossiers', record.id)),
     ...localArchive.bonds.map((record) => getFingerprintKey('bonds', record.id)),
     ...localArchive.boardPins.map((record) => getFingerprintKey('boardEntries', record.id)),
+    ...localArchive.evidenceRecords.map((record) => getFingerprintKey('evidenceRecords', record.id)),
   ]);
 }
 
@@ -1883,6 +2022,7 @@ function scopeLocalSyncStateToArchive(
   const dossierIds = new Set(localArchive.dossiers.map((record) => record.id));
   const bondIds = new Set(localArchive.bonds.map((record) => record.id));
   const boardPinIds = new Set(localArchive.boardPins.map((record) => record.id));
+  const evidenceRecordIds = new Set(localArchive.evidenceRecords.map((record) => record.id));
   const recordKeys = createRecordKeySet(localArchive);
   const deletionKeys = new Set(
     localArchive.deletionTombstones.map((tombstone) =>
@@ -1897,12 +2037,14 @@ function scopeLocalSyncStateToArchive(
       dossiers: localSyncState.synchronizedRecordIds.dossiers.filter((id) => dossierIds.has(id)),
       bonds: localSyncState.synchronizedRecordIds.bonds.filter((id) => bondIds.has(id)),
       boardPins: localSyncState.synchronizedRecordIds.boardPins.filter((id) => boardPinIds.has(id)),
+      evidenceRecords: (localSyncState.synchronizedRecordIds.evidenceRecords ?? []).filter((id) => evidenceRecordIds.has(id)),
     },
     synchronizedUpdatedAt: filterObjectByKeys(localSyncState.synchronizedUpdatedAt, new Set([
       ...localArchive.cases.map((record) => record.id),
       ...localArchive.dossiers.map((record) => record.id),
       ...localArchive.bonds.map((record) => record.id),
       ...localArchive.boardPins.map((record) => record.id),
+      ...localArchive.evidenceRecords.map((record) => record.id),
     ])),
     synchronizedFingerprints: localSyncState.synchronizedFingerprints
       ? filterObjectByKeys(localSyncState.synchronizedFingerprints, recordKeys)
@@ -1932,6 +2074,7 @@ function mergeLocalSyncState(
   const dossierIds = new Set(scopedArchive.dossiers.map((record) => record.id));
   const bondIds = new Set(scopedArchive.bonds.map((record) => record.id));
   const boardPinIds = new Set(scopedArchive.boardPins.map((record) => record.id));
+  const evidenceRecordIds = new Set(scopedArchive.evidenceRecords.map((record) => record.id));
   const scopedRecordKeys = createRecordKeySet(scopedArchive);
 
   return {
@@ -1953,11 +2096,15 @@ function mergeLocalSyncState(
         ...existingState.synchronizedRecordIds.boardPins.filter((id) => !boardPinIds.has(id)),
         ...nextState.synchronizedRecordIds.boardPins,
       ],
+      evidenceRecords: [
+        ...(existingState.synchronizedRecordIds.evidenceRecords ?? []).filter((id) => !evidenceRecordIds.has(id)),
+        ...nextState.synchronizedRecordIds.evidenceRecords,
+      ],
     },
     synchronizedUpdatedAt: {
       ...Object.fromEntries(
         Object.entries(existingState.synchronizedUpdatedAt).filter(([id]) =>
-          !caseIds.has(id) && !dossierIds.has(id) && !bondIds.has(id) && !boardPinIds.has(id),
+          !caseIds.has(id) && !dossierIds.has(id) && !bondIds.has(id) && !boardPinIds.has(id) && !evidenceRecordIds.has(id),
         ),
       ),
       ...nextState.synchronizedUpdatedAt,
@@ -2407,6 +2554,7 @@ class LoreBoundSyncService implements SyncService {
       dossierCount: localArchive.dossiers.length,
       bondCount: localArchive.bonds.length,
       boardEntryCount: localArchive.boardPins.length,
+      evidenceRecordCount: localArchive.evidenceRecords.length,
       localImageCount,
       estimatedTransferBytes: estimateBytes(localArchive),
     };
@@ -2416,6 +2564,7 @@ class LoreBoundSyncService implements SyncService {
       dossiers: createLocalOnlyPlanSection(localArchive.dossiers.length),
       bonds: createLocalOnlyPlanSection(localArchive.bonds.length),
       boardEntries: createLocalOnlyPlanSection(localArchive.boardPins.length),
+      evidenceRecords: createLocalOnlyPlanSection(localArchive.evidenceRecords.length),
     };
     plan.lastSynchronizedAt = localSyncState?.lastSuccessfulSynchronizationAt ?? null;
     plan.diagnostics = {
@@ -2424,6 +2573,7 @@ class LoreBoundSyncService implements SyncService {
       localDossiersRead: localArchive.dossiers.length,
       localBondsRead: localArchive.bonds.length,
       localEvidencePinsRead: localArchive.boardPins.length,
+      localEvidenceRecordsRead: localArchive.evidenceRecords.length,
       archiveState: {
         ...plan.diagnostics.archiveState,
         activeInvestigationIdPresent: Boolean(localArchive.activeCaseId),
@@ -2462,7 +2612,8 @@ class LoreBoundSyncService implements SyncService {
             localArchive.cases.length +
             localArchive.dossiers.length +
             localArchive.bonds.length +
-            localArchive.boardPins.length,
+            localArchive.boardPins.length +
+            localArchive.evidenceRecords.length,
           outboundGateReason: 'LoreBound Online could not be reviewed.',
         },
       };
@@ -2490,6 +2641,7 @@ class LoreBoundSyncService implements SyncService {
       dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
       bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
       boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+      evidenceRecords: filterRecordsByDeletionAuthority(localArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
     };
     const liveOnlineArchive = {
       ...onlineArchive,
@@ -2497,6 +2649,7 @@ class LoreBoundSyncService implements SyncService {
       dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
       bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
       boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+      evidenceRecords: filterRecordsByDeletionAuthority(onlineArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
     };
     const cloudImagePaths = getCloudImagePaths(liveOnlineArchive);
     const localBaselineFingerprints = createLocalFingerprintSnapshot(liveLocalArchive, cloudImagePaths);
@@ -2533,6 +2686,7 @@ class LoreBoundSyncService implements SyncService {
       dossierCount: localArchive.dossiers.length,
       bondCount: localArchive.bonds.length,
       boardEntryCount: localArchive.boardPins.length,
+      evidenceRecordCount: localArchive.evidenceRecords.length,
       localImageCount,
       estimatedTransferBytes: estimateBytes(localArchive),
     };
@@ -2542,6 +2696,7 @@ class LoreBoundSyncService implements SyncService {
       dossierCount: onlineArchive.dossiers.length,
       bondCount: onlineArchive.bonds.length,
       boardEntryCount: onlineArchive.boardEntries.length,
+      evidenceRecordCount: onlineArchive.evidenceRecords.length,
     };
     plan.isLocalArchiveEmpty = isLocalArchiveEmpty;
     plan.isOnlineArchiveEmpty = isOnlineArchiveEmpty;
@@ -2642,6 +2797,18 @@ class LoreBoundSyncService implements SyncService {
         deletionAuthority,
         reconciliationStats,
       ),
+      evidenceRecords: compareById(
+        'evidenceRecords',
+        liveLocalArchive.evidenceRecords,
+        liveOnlineArchive.evidenceRecords,
+        (record) => record.updatedAt,
+        (record) => record.updated_at,
+        normalizeEvidenceRecordContent,
+        normalizeEvidenceRecordContent,
+        localSyncState?.synchronizedFingerprints,
+        deletionAuthority,
+        reconciliationStats,
+      ),
     };
     plan.sections =
       sameInvestigationIdLocalAndCloud && caseNormalizedMatch
@@ -2715,6 +2882,18 @@ class LoreBoundSyncService implements SyncService {
         (record) => record.updated_at,
         normalizeBoardEntryContent,
         normalizeBoardEntryContent,
+        localSyncState?.synchronizedFingerprints,
+        baselineState.status,
+        deletionAuthority,
+      ),
+      ...createRecordActions(
+        'evidenceRecords',
+        localArchive.evidenceRecords,
+        onlineArchive.evidenceRecords,
+        (record) => record.updatedAt,
+        (record) => record.updated_at,
+        normalizeEvidenceRecordContent,
+        normalizeEvidenceRecordContent,
         localSyncState?.synchronizedFingerprints,
         baselineState.status,
         deletionAuthority,
@@ -2808,12 +2987,14 @@ class LoreBoundSyncService implements SyncService {
       localArchive.cases.length - liveLocalArchive.cases.length +
       localArchive.dossiers.length - liveLocalArchive.dossiers.length +
       localArchive.bonds.length - liveLocalArchive.bonds.length +
-      localArchive.boardPins.length - liveLocalArchive.boardPins.length;
+      localArchive.boardPins.length - liveLocalArchive.boardPins.length +
+      localArchive.evidenceRecords.length - liveLocalArchive.evidenceRecords.length;
     const liveCloudSuppressed =
       onlineArchive.cases.length - liveOnlineArchive.cases.length +
       onlineArchive.dossiers.length - liveOnlineArchive.dossiers.length +
       onlineArchive.bonds.length - liveOnlineArchive.bonds.length +
-      onlineArchive.boardEntries.length - liveOnlineArchive.boardEntries.length;
+      onlineArchive.boardEntries.length - liveOnlineArchive.boardEntries.length +
+      onlineArchive.evidenceRecords.length - liveOnlineArchive.evidenceRecords.length;
 
     recordThreadmarkSynchronizationDiagnostics({
       generatedBondsPendingUpload: generatedLocalOnlyCount + generatedLocalNewerCount,
@@ -3160,7 +3341,7 @@ class LoreBoundSyncService implements SyncService {
       return {
         ok: false,
         message: 'Investigator Connect is required before synchronization.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         completedStages: [],
         itemsRequiringReview: 0,
       };
@@ -3172,7 +3353,7 @@ class LoreBoundSyncService implements SyncService {
       return {
         ok: false,
         message: planResult.plan.blockingReasons[0] ?? 'Synchronization is not available for this archive.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         completedStages: [],
         itemsRequiringReview: Object.values(planResult.plan.sections).reduce(
           (total, section) => total + section.itemsRequiringReview,
@@ -3205,6 +3386,11 @@ class LoreBoundSyncService implements SyncService {
           .filter((action) => action.entityType === 'boardEntries' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
           .map((action) => action.id),
       ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && (action.action === 'upload-local-only' || action.action === 'upload-local-newer'))
+          .map((action) => action.id),
+      ),
     };
     const deleteCloudActionIds = {
       cases: new Set(
@@ -3225,6 +3411,11 @@ class LoreBoundSyncService implements SyncService {
       boardPins: new Set(
         planResult.plan.diagnostics.reconciliation.recordActions
           .filter((action) => action.entityType === 'boardEntries' && (action.action === 'delete-cloud' || action.action === 'remote-record-recreated'))
+          .map((action) => action.id),
+      ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && (action.action === 'delete-cloud' || action.action === 'remote-record-recreated'))
           .map((action) => action.id),
       ),
     };
@@ -3249,6 +3440,11 @@ class LoreBoundSyncService implements SyncService {
           .filter((action) => action.entityType === 'boardEntries' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
           .map((action) => action.id),
       ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && (action.action === 'retrieve-cloud-only' || action.action === 'retrieve-cloud-newer'))
+          .map((action) => action.id),
+      ),
     };
     const deleteLocalActionIds = {
       cases: new Set(
@@ -3269,6 +3465,11 @@ class LoreBoundSyncService implements SyncService {
       boardPins: new Set(
         planResult.plan.diagnostics.reconciliation.recordActions
           .filter((action) => action.entityType === 'boardEntries' && action.action === 'delete-local')
+          .map((action) => action.id),
+      ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && action.action === 'delete-local')
           .map((action) => action.id),
       ),
     };
@@ -3293,12 +3494,18 @@ class LoreBoundSyncService implements SyncService {
           .filter((action) => action.entityType === 'boardEntries' && action.action === 'deletion-verified')
           .map((action) => action.id),
       ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && action.action === 'deletion-verified')
+          .map((action) => action.id),
+      ),
     };
     const uploadArchive: LocalArchiveSnapshot = {
       cases: localArchive.cases.filter((record) => uploadActionIds.cases.has(record.id)),
       dossiers: localArchive.dossiers.filter((record) => uploadActionIds.dossiers.has(record.id)),
       bonds: localArchive.bonds.filter((record) => uploadActionIds.bonds.has(record.id)),
       boardPins: localArchive.boardPins.filter((record) => uploadActionIds.boardPins.has(record.id)),
+      evidenceRecords: localArchive.evidenceRecords.filter((record) => uploadActionIds.evidenceRecords.has(record.id)),
       deletionTombstones: localArchive.deletionTombstones,
       activeCaseId: localArchive.activeCaseId,
     };
@@ -3315,13 +3522,18 @@ class LoreBoundSyncService implements SyncService {
         return deleteCloudActionIds.bonds.has(tombstone.entityId);
       }
 
-      return deleteCloudActionIds.boardPins.has(tombstone.entityId);
+      if (tombstone.entityType === 'boardEntries') {
+        return deleteCloudActionIds.boardPins.has(tombstone.entityId);
+      }
+
+      return deleteCloudActionIds.evidenceRecords.has(tombstone.entityId);
     });
     const deleteCloudTargetCount =
       deleteCloudActionIds.cases.size +
       deleteCloudActionIds.dossiers.size +
       deleteCloudActionIds.bonds.size +
-      deleteCloudActionIds.boardPins.size;
+      deleteCloudActionIds.boardPins.size +
+      deleteCloudActionIds.evidenceRecords.size;
     const deletionFinalizationTombstones = localArchive.deletionTombstones.filter((tombstone) => {
       if (tombstone.synchronizationStatus === 'verified') {
         return false;
@@ -3339,23 +3551,30 @@ class LoreBoundSyncService implements SyncService {
         return deletionFinalizationActionIds.bonds.has(tombstone.entityId);
       }
 
-      return deletionFinalizationActionIds.boardPins.has(tombstone.entityId);
+      if (tombstone.entityType === 'boardEntries') {
+        return deletionFinalizationActionIds.boardPins.has(tombstone.entityId);
+      }
+
+      return deletionFinalizationActionIds.evidenceRecords.has(tombstone.entityId);
     });
     const totalRecords =
       uploadArchive.cases.length +
       uploadArchive.dossiers.length +
       uploadArchive.bonds.length +
       uploadArchive.boardPins.length +
+      uploadArchive.evidenceRecords.length +
       deleteCloudTargetCount +
       deletionFinalizationTombstones.length +
       deleteLocalActionIds.cases.size +
       deleteLocalActionIds.dossiers.size +
       deleteLocalActionIds.bonds.size +
       deleteLocalActionIds.boardPins.size +
+      deleteLocalActionIds.evidenceRecords.size +
       retrievalActionIds.cases.size +
       retrievalActionIds.dossiers.size +
       retrievalActionIds.bonds.size +
-      retrievalActionIds.boardPins.size;
+      retrievalActionIds.boardPins.size +
+      retrievalActionIds.evidenceRecords.size;
     let activeStage: SyncStage = 'Preparing Archive';
     let completedImages = 0;
     let completedRecords = 0;
@@ -3406,6 +3625,7 @@ class LoreBoundSyncService implements SyncService {
       );
       const bondRows = uploadArchive.bonds.map((record) => mapBondToCloudRow(record, user.id));
       const boardEntryRows = uploadArchive.boardPins.map((record) => mapBoardPinToCloudRow(record, user.id));
+      const evidenceRecordRows = uploadArchive.evidenceRecords.map((record) => mapEvidenceRecordToCloudRow(record, user.id));
       const localSyncStateBeforeDelete = scopeLocalSyncStateToArchive(await readLocalSyncState(), localArchive);
       let onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
       let synchronizationDeletionAuthority = expandDeletionAuthorityWithCaseDependents(
@@ -3462,6 +3682,7 @@ class LoreBoundSyncService implements SyncService {
           }
 
           report('Synchronizing Investigation', `Deleting ${deleteCloudTargetCount} archived records from LoreBound Online.`);
+          await cloudArchiveRepository.deleteEvidenceRecords([...deleteCloudActionIds.evidenceRecords]);
           await cloudArchiveRepository.deleteBoardEntries([...deleteCloudActionIds.boardPins]);
           await cloudArchiveRepository.deleteBonds([...deleteCloudActionIds.bonds]);
           await cloudArchiveRepository.deleteDossiers([...deleteCloudActionIds.dossiers]);
@@ -3472,14 +3693,16 @@ class LoreBoundSyncService implements SyncService {
             dossiersAbsent,
             bondsAbsent,
             boardEntriesAbsent,
+            evidenceRecordsAbsent,
           ] = await Promise.all([
             cloudArchiveRepository.verifyCasesAbsent([...deleteCloudActionIds.cases]),
             cloudArchiveRepository.verifyDossiersAbsent([...deleteCloudActionIds.dossiers]),
             cloudArchiveRepository.verifyBondsAbsent([...deleteCloudActionIds.bonds]),
             cloudArchiveRepository.verifyBoardEntriesAbsent([...deleteCloudActionIds.boardPins]),
+            cloudArchiveRepository.verifyEvidenceRecordsAbsent([...deleteCloudActionIds.evidenceRecords]),
           ]);
 
-          if (!casesAbsent || !dossiersAbsent || !bondsAbsent || !boardEntriesAbsent) {
+          if (!casesAbsent || !dossiersAbsent || !bondsAbsent || !boardEntriesAbsent || !evidenceRecordsAbsent) {
             await Promise.all(
               deleteCloudTombstones.map((tombstone) =>
                 markDeletionTombstoneFailed(tombstone, 'Cloud deletion verification'),
@@ -3527,6 +3750,9 @@ class LoreBoundSyncService implements SyncService {
       await cloudArchiveRepository.upsertBoardEntries(boardEntryRows);
       completedRecords += boardEntryRows.length;
       completeStage('Synchronizing Evidence Board');
+      report('Synchronizing Evidence Files', `Securing ${evidenceRecordRows.length} Evidence Record anchors.`);
+      await cloudArchiveRepository.upsertEvidenceRecords(evidenceRecordRows);
+      completedRecords += evidenceRecordRows.length;
       report('Verifying Investigation', 'Verifying secured Investigation records.');
       onlineArchive = scopeCloudArchiveToCase(await cloudArchiveRepository.readArchive(), activeCaseId);
       synchronizationDeletionAuthority = expandDeletionAuthorityWithCaseDependents(
@@ -3552,7 +3778,11 @@ class LoreBoundSyncService implements SyncService {
           return onlineArchive.bonds.some((record) => record.id === tombstone.entityId);
         }
 
-        return onlineArchive.boardEntries.some((record) => record.id === tombstone.entityId);
+        if (tombstone.entityType === 'boardEntries') {
+          return onlineArchive.boardEntries.some((record) => record.id === tombstone.entityId);
+        }
+
+        return onlineArchive.evidenceRecords.some((record) => record.id === tombstone.entityId);
       });
 
       if (failedDeletion) {
@@ -3589,10 +3819,12 @@ class LoreBoundSyncService implements SyncService {
         retrievalActionIds.dossiers.size > 0 ||
         retrievalActionIds.bonds.size > 0 ||
         retrievalActionIds.boardPins.size > 0 ||
+        retrievalActionIds.evidenceRecords.size > 0 ||
         deleteLocalActionIds.cases.size > 0 ||
         deleteLocalActionIds.dossiers.size > 0 ||
         deleteLocalActionIds.bonds.size > 0 ||
-        deleteLocalActionIds.boardPins.size > 0
+        deleteLocalActionIds.boardPins.size > 0 ||
+        deleteLocalActionIds.evidenceRecords.size > 0
       ) {
         report('Retrieving Investigations', 'Retrieving safe LoreBound Online updates.');
         const retrievedCases = await restoreCaseImages(
@@ -3632,24 +3864,32 @@ class LoreBoundSyncService implements SyncService {
           .filter((record) => retrievalActionIds.boardPins.has(record.id))
           .map(mapCloudBoardEntryToLocal);
         completeStage('Retrieving Evidence Pins');
+        const retrievedEvidenceRecords = onlineArchive.evidenceRecords
+          .filter((record) => !hasDeletionAuthority(synchronizationDeletionAuthority, 'evidenceRecords', record.id))
+          .filter((record) => retrievalActionIds.evidenceRecords.has(record.id))
+          .map(mapCloudEvidenceRecordToLocal);
         const casesById = new Map(localArchive.cases.map((record) => [record.id, record]));
         const dossiersById = new Map(localArchive.dossiers.map((record) => [record.id, record]));
         const bondsById = new Map(localArchive.bonds.map((record) => [record.id, record]));
         const boardPinsById = new Map(localArchive.boardPins.map((record) => [record.id, record]));
+        const evidenceRecordsById = new Map(localArchive.evidenceRecords.map((record) => [record.id, record]));
 
         retrievedCases.forEach((record) => casesById.set(record.id, record));
         retrievedDossiers.forEach((record) => dossiersById.set(record.id, record));
         retrievedBonds.forEach((record) => bondsById.set(record.id, record));
         retrievedBoardPins.forEach((record) => boardPinsById.set(record.id, record));
+        retrievedEvidenceRecords.forEach((record) => evidenceRecordsById.set(record.id, record));
         deleteLocalActionIds.cases.forEach((id) => casesById.delete(id));
         deleteLocalActionIds.dossiers.forEach((id) => dossiersById.delete(id));
         deleteLocalActionIds.bonds.forEach((id) => bondsById.delete(id));
         deleteLocalActionIds.boardPins.forEach((id) => boardPinsById.delete(id));
+        deleteLocalActionIds.evidenceRecords.forEach((id) => evidenceRecordsById.delete(id));
         synchronizedArchive = {
           cases: [...casesById.values()],
           dossiers: [...dossiersById.values()],
           bonds: [...bondsById.values()],
           boardPins: [...boardPinsById.values()],
+          evidenceRecords: [...evidenceRecordsById.values()],
           deletionTombstones: localArchive.deletionTombstones,
           activeCaseId: localArchive.activeCaseId,
         };
@@ -3661,10 +3901,12 @@ class LoreBoundSyncService implements SyncService {
           retrievedDossiers.length +
           retrievedBonds.length +
           retrievedBoardPins.length +
+          retrievedEvidenceRecords.length +
           deleteLocalActionIds.cases.size +
           deleteLocalActionIds.dossiers.size +
           deleteLocalActionIds.bonds.size +
-          deleteLocalActionIds.boardPins.size;
+          deleteLocalActionIds.boardPins.size +
+          deleteLocalActionIds.evidenceRecords.size;
         notifyLocalArchiveRestored();
       }
 
@@ -3713,6 +3955,7 @@ class LoreBoundSyncService implements SyncService {
           dossiers: synchronizedArchive.dossiers.length,
           bonds: synchronizedArchive.bonds.length,
           boardEntries: synchronizedArchive.boardPins.length,
+          evidenceRecords: synchronizedArchive.evidenceRecords.length,
           images: uploadedImageCount,
         },
         completedStages,
@@ -3733,7 +3976,7 @@ class LoreBoundSyncService implements SyncService {
           error instanceof Error
             ? error.message
             : 'Unable to synchronize this Local Archive. LoreBound can safely retry.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         failedStage: activeStage,
         completedStages,
         itemsRequiringReview: Object.values(planResult.plan.sections).reduce(
@@ -3752,7 +3995,7 @@ class LoreBoundSyncService implements SyncService {
       return {
         ok: false,
         message: 'Investigator Connect is required before retrieving this Investigation.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         completedStages: [],
       };
     }
@@ -3801,6 +4044,7 @@ class LoreBoundSyncService implements SyncService {
         dossiers: filterRecordsByDeletionAuthority(caseOnlineArchive.dossiers, 'dossiers', caseDeletionAuthority),
         bonds: filterRecordsByDeletionAuthority(caseOnlineArchive.bonds, 'bonds', caseDeletionAuthority),
         boardEntries: filterRecordsByDeletionAuthority(caseOnlineArchive.boardEntries, 'boardEntries', caseDeletionAuthority),
+        evidenceRecords: filterRecordsByDeletionAuthority(caseOnlineArchive.evidenceRecords, 'evidenceRecords', caseDeletionAuthority),
       };
 
       report('Retrieving Investigations', 'Retrieving selected Investigation record.');
@@ -3821,12 +4065,14 @@ class LoreBoundSyncService implements SyncService {
       report('Retrieving Evidence Pins', `${liveOnlineArchive.boardEntries.length} Evidence Pin records.`);
       const boardPins = liveOnlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
       completeStage('Retrieving Evidence Pins');
+      const evidenceRecords = liveOnlineArchive.evidenceRecords.map(mapCloudEvidenceRecordToLocal);
 
       const retrievedArchive: LocalArchiveSnapshot = {
         cases,
         dossiers,
         bonds,
         boardPins,
+        evidenceRecords,
         deletionTombstones: fullLocalArchive.deletionTombstones.filter(
           (tombstone) =>
             tombstone.caseId === caseId ||
@@ -3875,6 +4121,7 @@ class LoreBoundSyncService implements SyncService {
           dossiers: retrievedArchive.dossiers.length,
           bonds: retrievedArchive.bonds.length,
           boardEntries: retrievedArchive.boardPins.length,
+          evidenceRecords: retrievedArchive.evidenceRecords.length,
         },
         completedStages,
         completedAt: new Date().toISOString(),
@@ -3889,7 +4136,7 @@ class LoreBoundSyncService implements SyncService {
           error instanceof Error
             ? error.message
             : 'Unable to retrieve this Investigation. Your Local Archive remains available.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         failedStage: activeStage,
         completedStages,
       };
@@ -3903,7 +4150,7 @@ class LoreBoundSyncService implements SyncService {
       return {
         ok: false,
         message: 'Investigator Connect is required before rebuilding the synchronization baseline.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         completedStages: [],
         itemsRequiringReview: 0,
       };
@@ -3932,7 +4179,7 @@ class LoreBoundSyncService implements SyncService {
             planResult.plan.blockingReasons[0] ??
             planResult.plan.diagnostics.reconciliation.baselineReason ??
             'Synchronization baseline rebuild is not available.',
-          counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+          counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
           failedStage: activeStage,
           completedStages,
           itemsRequiringReview: Object.values(planResult.plan.sections).reduce(
@@ -3964,6 +4211,7 @@ class LoreBoundSyncService implements SyncService {
         dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
         bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
         boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+        evidenceRecords: filterRecordsByDeletionAuthority(localArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
       };
       const liveOnlineArchive = {
         ...onlineArchive,
@@ -3971,6 +4219,7 @@ class LoreBoundSyncService implements SyncService {
         dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
         bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
         boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+        evidenceRecords: filterRecordsByDeletionAuthority(onlineArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
       };
       const cloudImagePaths = getCloudImagePaths(liveOnlineArchive);
       const localFingerprints = createLocalFingerprintSnapshot(liveLocalArchive, cloudImagePaths);
@@ -4017,6 +4266,7 @@ class LoreBoundSyncService implements SyncService {
           dossiers: localArchive.dossiers.length,
           bonds: localArchive.bonds.length,
           boardEntries: localArchive.boardPins.length,
+          evidenceRecords: localArchive.evidenceRecords.length,
           images: countLocalImages(localArchive),
         },
         completedStages,
@@ -4034,7 +4284,7 @@ class LoreBoundSyncService implements SyncService {
           error instanceof Error
             ? error.message
             : 'Unable to rebuild this synchronization baseline. No records were changed.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         failedStage: activeStage,
         completedStages,
         itemsRequiringReview: 0,
@@ -4049,7 +4299,7 @@ class LoreBoundSyncService implements SyncService {
       return {
         ok: false,
         message: planResult.plan.blockingReasons[0] ?? 'Retrieve Investigation is not available.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
       };
     }
 
@@ -4075,6 +4325,11 @@ class LoreBoundSyncService implements SyncService {
       boardPins: new Set(
         planResult.plan.diagnostics.reconciliation.recordActions
           .filter((action) => action.entityType === 'boardEntries' && action.action === 'delete-local')
+          .map((action) => action.id),
+      ),
+      evidenceRecords: new Set(
+        planResult.plan.diagnostics.reconciliation.recordActions
+          .filter((action) => action.entityType === 'evidenceRecords' && action.action === 'delete-local')
           .map((action) => action.id),
       ),
     };
@@ -4111,6 +4366,7 @@ class LoreBoundSyncService implements SyncService {
         dossiers: filterRecordsByDeletionAuthority(localArchive.dossiers, 'dossiers', deletionAuthority),
         bonds: filterRecordsByDeletionAuthority(localArchive.bonds, 'bonds', deletionAuthority),
         boardPins: filterRecordsByDeletionAuthority(localArchive.boardPins, 'boardEntries', deletionAuthority),
+        evidenceRecords: filterRecordsByDeletionAuthority(localArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
       };
       const liveOnlineArchive = {
         ...onlineArchive,
@@ -4118,6 +4374,7 @@ class LoreBoundSyncService implements SyncService {
         dossiers: filterRecordsByDeletionAuthority(onlineArchive.dossiers, 'dossiers', deletionAuthority),
         bonds: filterRecordsByDeletionAuthority(onlineArchive.bonds, 'bonds', deletionAuthority),
         boardEntries: filterRecordsByDeletionAuthority(onlineArchive.boardEntries, 'boardEntries', deletionAuthority),
+        evidenceRecords: filterRecordsByDeletionAuthority(onlineArchive.evidenceRecords, 'evidenceRecords', deletionAuthority),
       };
 
       if (isRepair) {
@@ -4159,14 +4416,16 @@ class LoreBoundSyncService implements SyncService {
       report('Retrieving Evidence Pins', `${liveOnlineArchive.boardEntries.length} Evidence Pin records.`);
       const boardPins = liveOnlineArchive.boardEntries.map(mapCloudBoardEntryToLocal);
       completeStage('Retrieving Evidence Pins');
+      const evidenceRecords = liveOnlineArchive.evidenceRecords.map(mapCloudEvidenceRecordToLocal);
       const repairedArchive =
         isRepair && !isEmptyShellRepair
-          ? mergePartialRepairArchive(liveLocalArchive, { cases, dossiers, bonds, boardPins })
+          ? mergePartialRepairArchive(liveLocalArchive, { cases, dossiers, bonds, boardPins, evidenceRecords })
           : {
               cases,
               dossiers,
               bonds,
               boardPins,
+              evidenceRecords,
               deletionTombstones: localArchive.deletionTombstones,
               activeCaseId: cases[0]?.id ?? null,
             };
@@ -4191,7 +4450,8 @@ class LoreBoundSyncService implements SyncService {
         verifiedLocalArchive.cases.length < repairedArchive.cases.length ||
         verifiedLocalArchive.dossiers.length < repairedArchive.dossiers.length ||
         verifiedLocalArchive.bonds.length < repairedArchive.bonds.length ||
-        verifiedLocalArchive.boardPins.length < repairedArchive.boardPins.length
+        verifiedLocalArchive.boardPins.length < repairedArchive.boardPins.length ||
+        verifiedLocalArchive.evidenceRecords.length < repairedArchive.evidenceRecords.length
       ) {
         throw new Error(isRepair ? 'Repair Local Archive could not be verified.' : 'Retrieve Investigation could not be verified.');
       }
@@ -4223,12 +4483,14 @@ class LoreBoundSyncService implements SyncService {
             dossiers: repairedArchive.dossiers.map((record) => record.id),
             bonds: repairedArchive.bonds.map((record) => record.id),
             boardPins: repairedArchive.boardPins.map((record) => record.id),
+            evidenceRecords: repairedArchive.evidenceRecords.map((record) => record.id),
           },
           synchronizedUpdatedAt: Object.fromEntries([
             ...repairedArchive.cases.map((record) => [record.id, record.dateLastModified]),
             ...repairedArchive.dossiers.map((record) => [record.id, record.dateModified]),
             ...repairedArchive.bonds.map((record) => [record.id, record.dateModified]),
             ...repairedArchive.boardPins.map((record) => [record.id, record.datePinned]),
+            ...repairedArchive.evidenceRecords.map((record) => [record.id, record.updatedAt]),
           ]),
           synchronizedFingerprints: createLocalFingerprintSnapshot(
             repairedArchive,
@@ -4255,6 +4517,7 @@ class LoreBoundSyncService implements SyncService {
           dossiers: repairedArchive.dossiers.length,
           bonds: repairedArchive.bonds.length,
           boardEntries: repairedArchive.boardPins.length,
+          evidenceRecords: repairedArchive.evidenceRecords.length,
         },
         failedStage: undefined,
         completedStages,
@@ -4269,7 +4532,7 @@ class LoreBoundSyncService implements SyncService {
           error instanceof Error
             ? error.message
             : 'Unable to retrieve this Investigation. Your Local Archive remains available.',
-        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0 },
+        counts: { cases: 0, dossiers: 0, bonds: 0, boardEntries: 0, evidenceRecords: 0 },
         failedStage: activeStage,
         completedStages,
       };
@@ -4281,6 +4544,7 @@ class LoreBoundSyncService implements SyncService {
     const onlineDossiers = new Map(onlineArchive.dossiers.map((record) => [record.id, record]));
     const onlineBonds = new Map(onlineArchive.bonds.map((record) => [record.id, record]));
     const onlineBoardEntries = new Map(onlineArchive.boardEntries.map((record) => [record.id, record]));
+    const onlineEvidenceRecords = new Map(onlineArchive.evidenceRecords.map((record) => [record.id, record]));
 
     localArchive.cases.forEach((record) => {
       if (onlineCases.get(record.id)?.user_id !== userId) {
@@ -4334,6 +4598,27 @@ class LoreBoundSyncService implements SyncService {
 
       if (!onlineRecord || onlineRecord.user_id !== userId || !onlineDossiers.has(record.dossierId)) {
         throw new Error('Unable to verify synchronized Evidence Pins.');
+      }
+    });
+
+    localArchive.evidenceRecords.forEach((record) => {
+      const onlineRecord = onlineEvidenceRecords.get(record.id);
+
+      if (
+        !onlineRecord ||
+        onlineRecord.user_id !== userId ||
+        !onlineCases.has(record.caseId) ||
+        !onlineDossiers.has(record.originDossierId) ||
+        !onlineDossiers.has(record.targetDossierId)
+      ) {
+        throw new Error('Unable to verify synchronized Evidence Records.');
+      }
+
+      const localFingerprint = fingerprint(normalizeEvidenceRecordContent(record));
+      const cloudFingerprint = fingerprint(normalizeEvidenceRecordContent(onlineRecord));
+
+      if (localFingerprint !== cloudFingerprint) {
+        throw new Error('Unable to verify synchronized Evidence Record anchors.');
       }
     });
   }

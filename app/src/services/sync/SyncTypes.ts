@@ -3,12 +3,14 @@ import type { Bond } from '../../features/cases/types/bondTypes';
 import type { LoreCase } from '../../features/cases/types/caseTypes';
 import type { DeletionTombstone } from '../../features/cases/storage/caseStorage';
 import type { Dossier } from '../../features/cases/types/dossierTypes';
+import type { EvidenceRecord } from '../../features/threadmarks/evidenceRecordTypes';
 
 export type LocalArchiveSnapshot = {
   cases: LoreCase[];
   dossiers: Dossier[];
   bonds: Bond[];
   boardPins: BoardPin[];
+  evidenceRecords: EvidenceRecord[];
   deletionTombstones: DeletionTombstone[];
   activeCaseId: string | null;
 };
@@ -18,6 +20,7 @@ export type CloudArchiveSnapshot = {
   dossiers: CloudDossierRow[];
   bonds: CloudBondRow[];
   boardEntries: CloudBoardEntryRow[];
+  evidenceRecords: CloudEvidenceRecordRow[];
   deletionLedger: CloudDeletionLedgerRow[];
 };
 
@@ -44,12 +47,14 @@ export type SyncDiagnostics = {
   localDossiersRead: number;
   localBondsRead: number;
   localEvidencePinsRead: number;
+  localEvidenceRecordsRead?: number;
   cloudQueries: {
     profiles?: CloudQueryStatus;
     cases: CloudQueryStatus;
     dossiers: CloudQueryStatus;
     bonds: CloudQueryStatus;
     boardEntries: CloudQueryStatus;
+    evidenceRecords?: CloudQueryStatus;
     deletionLedger?: CloudQueryStatus;
   };
   storage: {
@@ -215,7 +220,7 @@ export type SyncDiagnostics = {
   };
 };
 
-export type SyncEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
+export type SyncEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries' | 'evidenceRecords';
 
 export type SyncRecordActionKind =
   | 'upload-local-only'
@@ -286,6 +291,7 @@ export type SyncPlan = {
     dossierCount: number;
     bondCount: number;
     boardEntryCount: number;
+    evidenceRecordCount?: number;
     localImageCount: number;
     estimatedTransferBytes: number;
   };
@@ -295,8 +301,9 @@ export type SyncPlan = {
     dossierCount: number;
     bondCount: number;
     boardEntryCount: number;
+    evidenceRecordCount?: number;
   };
-  sections: Record<SyncEntityType, SyncPlanSection>;
+  sections: Record<string, SyncPlanSection>;
   canSynchronize: boolean;
   canRetrieve: boolean;
   isLocalArchiveEmpty: boolean;
@@ -333,6 +340,7 @@ export type SyncResult = {
     dossiers: number;
     bonds: number;
     boardEntries: number;
+    evidenceRecords?: number;
     images?: number;
   };
   failedStage?: SyncStage;
@@ -587,7 +595,24 @@ export type CloudBoardEntryRow = {
   updated_at: string;
 };
 
-export type CloudDeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'board_entries';
+export type CloudEvidenceRecordRow = {
+  id: string;
+  user_id: string;
+  case_id: string;
+  origin_dossier_id: string;
+  origin_section_id: string;
+  target_dossier_id: string;
+  selected_text: string;
+  anchor_start: number;
+  anchor_end: number;
+  anchor_context: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CloudDeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'board_entries' | 'evidence_records';
 
 export type CloudDeletionLedgerRow = {
   id: string;

@@ -23,8 +23,10 @@ import type {
   CloudDeletionEntityType,
   CloudDeletionLedgerRow,
   CloudDossierRow,
+  CloudEvidenceRecordRow,
 } from './SyncTypes';
 import type { DeletionEntityType, DeletionTombstone } from '../../features/cases/storage/caseStorage';
+import type { EvidenceRecord } from '../../features/threadmarks/evidenceRecordTypes';
 
 const metadataFields = [
   'alias',
@@ -45,11 +47,27 @@ function optional(value?: string | null) {
 }
 
 export function localDeletionEntityToCloud(entityType: DeletionEntityType): CloudDeletionEntityType {
-  return entityType === 'boardEntries' ? 'board_entries' : entityType;
+  if (entityType === 'boardEntries') {
+    return 'board_entries';
+  }
+
+  if (entityType === 'evidenceRecords') {
+    return 'evidence_records';
+  }
+
+  return entityType;
 }
 
 export function cloudDeletionEntityToLocal(entityType: CloudDeletionEntityType): DeletionEntityType {
-  return entityType === 'board_entries' ? 'boardEntries' : entityType;
+  if (entityType === 'board_entries') {
+    return 'boardEntries';
+  }
+
+  if (entityType === 'evidence_records') {
+    return 'evidenceRecords';
+  }
+
+  return entityType;
 }
 
 export function createDeletionLedgerId(entityType: DeletionEntityType, entityId: string) {
@@ -260,6 +278,25 @@ export function mapBoardPinToCloudRow(pin: BoardPin, userId: string): CloudBoard
   };
 }
 
+export function mapEvidenceRecordToCloudRow(record: EvidenceRecord, userId: string): CloudEvidenceRecordRow {
+  return {
+    id: record.id,
+    user_id: userId,
+    case_id: record.caseId,
+    origin_dossier_id: record.originDossierId,
+    origin_section_id: record.originSectionId,
+    target_dossier_id: record.targetDossierId,
+    selected_text: record.selectedText,
+    anchor_start: record.anchorStart,
+    anchor_end: record.anchorEnd,
+    anchor_context: record.anchorContext,
+    metadata: record.metadata,
+    status: record.status,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
 export function mapCloudCaseToLocal(row: CloudCaseRow): LoreCase {
   return {
     id: row.id,
@@ -333,6 +370,29 @@ export function mapCloudBoardEntryToLocal(row: CloudBoardEntryRow): BoardPin {
       y: row.position_y,
     },
     datePinned: row.date_pinned,
+  };
+}
+
+export function mapCloudEvidenceRecordToLocal(row: CloudEvidenceRecordRow): EvidenceRecord {
+  const anchorContext = row.anchor_context ?? {};
+
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    originDossierId: row.origin_dossier_id,
+    originSectionId: row.origin_section_id,
+    targetDossierId: row.target_dossier_id,
+    selectedText: row.selected_text,
+    anchorStart: row.anchor_start,
+    anchorEnd: row.anchor_end,
+    anchorContext: {
+      prefix: typeof anchorContext.prefix === 'string' ? anchorContext.prefix : '',
+      suffix: typeof anchorContext.suffix === 'string' ? anchorContext.suffix : '',
+    },
+    metadata: row.metadata ?? {},
+    status: row.status === 'orphaned' ? 'orphaned' : 'active',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

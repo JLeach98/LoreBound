@@ -7,10 +7,11 @@ import type {
   CloudDeletionEntityType,
   CloudDeletionLedgerRow,
   CloudDossierRow,
+  CloudEvidenceRecordRow,
   CloudQueryStatus,
 } from './SyncTypes';
 
-type TableName = 'profiles' | 'cases' | 'dossiers' | 'bonds' | 'board_entries' | 'deletion_ledger';
+type TableName = 'profiles' | 'cases' | 'dossiers' | 'bonds' | 'board_entries' | 'evidence_records' | 'deletion_ledger';
 
 function requireSupabase() {
   if (!supabase) {
@@ -218,11 +219,12 @@ async function updateRows<T extends { id: string }>(tableName: TableName, rows: 
 
 class CloudArchiveRepository {
   async readArchive(): Promise<CloudArchiveSnapshot> {
-    const [cases, dossiers, bonds, boardEntries, deletionLedger] = await Promise.all([
+    const [cases, dossiers, bonds, boardEntries, evidenceRecords, deletionLedger] = await Promise.all([
       readTable<CloudCaseRow>('cases'),
       readTable<CloudDossierRow>('dossiers'),
       readTable<CloudBondRow>('bonds'),
       readTable<CloudBoardEntryRow>('board_entries'),
+      readTable<CloudEvidenceRecordRow>('evidence_records'),
       readTable<CloudDeletionLedgerRow>('deletion_ledger'),
     ]);
 
@@ -231,17 +233,19 @@ class CloudArchiveRepository {
       dossiers,
       bonds,
       boardEntries,
+      evidenceRecords,
       deletionLedger,
     };
   }
 
   async readArchiveWithDiagnostics() {
-    const [profiles, cases, dossiers, bonds, boardEntries, deletionLedger] = await Promise.all([
+    const [profiles, cases, dossiers, bonds, boardEntries, evidenceRecords, deletionLedger] = await Promise.all([
       readTableWithStatus<Record<string, unknown>>('profiles'),
       readTableWithStatus<CloudCaseRow>('cases'),
       readTableWithStatus<CloudDossierRow>('dossiers'),
       readTableWithStatus<CloudBondRow>('bonds'),
       readTableWithStatus<CloudBoardEntryRow>('board_entries'),
+      readTableWithStatus<CloudEvidenceRecordRow>('evidence_records'),
       readTableWithStatus<CloudDeletionLedgerRow>('deletion_ledger'),
     ]);
 
@@ -251,6 +255,7 @@ class CloudArchiveRepository {
         dossiers: dossiers.rows,
         bonds: bonds.rows,
         boardEntries: boardEntries.rows,
+        evidenceRecords: evidenceRecords.rows,
         deletionLedger: deletionLedger.rows,
       },
       queries: {
@@ -259,6 +264,7 @@ class CloudArchiveRepository {
         dossiers: dossiers.query,
         bonds: bonds.query,
         boardEntries: boardEntries.query,
+        evidenceRecords: evidenceRecords.query,
         deletionLedger: deletionLedger.query,
       },
       isAvailable:
@@ -267,8 +273,32 @@ class CloudArchiveRepository {
         dossiers.query.status === 'Success' &&
         bonds.query.status === 'Success' &&
         boardEntries.query.status === 'Success' &&
+        evidenceRecords.query.status === 'Success' &&
         deletionLedger.query.status === 'Success',
     };
+  }
+
+  async readEvidenceRecordsByCaseId(caseId: string) {
+    const client = requireSupabase();
+    const { data: userData, error: userError } = await client.auth.getUser();
+
+    if (userError || !userData.user) {
+      throw new Error('evidence_records read failed: Investigator Connect is required.');
+    }
+
+    const { data, error, status } = await client
+      .from('evidence_records')
+      .select('*')
+      .eq('user_id', userData.user.id)
+      .eq('case_id', caseId);
+
+    if (error) {
+      throw new Error(
+        `evidence_records read failed for case ${caseId}: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+      );
+    }
+
+    return (data ?? []) as CloudEvidenceRecordRow[];
   }
 
   async readDeletionLedger() {
@@ -325,6 +355,10 @@ class CloudArchiveRepository {
     await upsertRows('board_entries', rows);
   }
 
+  async upsertEvidenceRecords(rows: CloudEvidenceRecordRow[]) {
+    await upsertRows('evidence_records', rows);
+  }
+
   async deleteCases(ids: string[]) {
     await deleteRows('cases', ids);
   }
@@ -341,6 +375,10 @@ class CloudArchiveRepository {
     await deleteRows('board_entries', ids);
   }
 
+  async deleteEvidenceRecords(ids: string[]) {
+    await deleteRows('evidence_records', ids);
+  }
+
   async verifyCasesAbsent(ids: string[]) {
     return verifyRowsAbsent('cases', ids);
   }
@@ -355,6 +393,27 @@ class CloudArchiveRepository {
 
   async verifyBoardEntriesAbsent(ids: string[]) {
     return verifyRowsAbsent('board_entries', ids);
+  }
+
+  async verifyEvidenceRecordsAbsent(ids: string[]) {
+    return verifyRowsAbsent('evidence_records', ids);
+  }
+
+  async verifyEvidenceRecordsExist(ids: string[]) {
+    if (ids.length === 0) {
+      return true;
+    }
+
+    const client = requireSupabase();
+    const { data, error, status } = await client.from('evidence_records').select('id').in('id', ids);
+
+    if (error) {
+      throw new Error(
+        `evidence_records verification failed: ${getCloudErrorCode(error)} ${getCloudErrorMessage(error)} HTTP ${status ?? getCloudErrorStatus(error) ?? 'unknown'}`,
+      );
+    }
+
+    return new Set((data ?? []).map((row) => row.id)).size === ids.length;
   }
 }
 

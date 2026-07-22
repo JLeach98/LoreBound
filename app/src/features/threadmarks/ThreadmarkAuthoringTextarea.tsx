@@ -16,6 +16,8 @@ export function ThreadmarkAuthoringTextarea({
   blockId,
   onKeyDown,
   onChange,
+  onCreateEvidenceRecord,
+  onAuthoringNotice,
 }: {
   id?: string;
   className?: string;
@@ -29,6 +31,8 @@ export function ThreadmarkAuthoringTextarea({
   blockId?: string;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChange: (value: string) => void;
+  onCreateEvidenceRecord?: (targetDossier: Dossier, selectionRange: { start: number; end: number }) => Promise<void> | void;
+  onAuthoringNotice?: (message: string) => void;
 }) {
   const generatedId = useId();
   const editorId = id ?? `threadmark-editor-${generatedId}`;
@@ -48,6 +52,8 @@ export function ThreadmarkAuthoringTextarea({
     value,
     dossiers,
     onChange,
+    onCreateEvidenceRecord,
+    onAuthoringNotice,
     isMobile,
   });
 

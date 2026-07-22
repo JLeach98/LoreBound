@@ -2,15 +2,17 @@ import type { CaseFormValues, LoreCase } from '../types/caseTypes';
 import type { Bond, BondEvidence, BondFormValues } from '../types/bondTypes';
 import type { BoardPin, BoardPinPosition } from '../types/boardTypes';
 import type { Dossier, DossierFormValues } from '../types/dossierTypes';
+import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 import { createStableId } from '../../../lib/stableId';
 import { createDefaultDossierSections } from '../utils/dossierSections';
 
 const databaseName = 'lorebound-local-archive';
-const databaseVersion = 4;
+const databaseVersion = 5;
 const caseStoreName = 'cases';
 const dossierStoreName = 'dossiers';
 const boardPinStoreName = 'boardPins';
 const bondStoreName = 'bonds';
+const evidenceRecordStoreName = 'evidenceRecords';
 const metaStoreName = 'meta';
 const activeCaseKey = 'activeCaseId';
 const syncStateKey = 'syncState';
@@ -19,7 +21,7 @@ const localClientIdKey = 'localClientId';
 
 export const DELETION_SYNC_VERSION = 1;
 
-export type DeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries';
+export type DeletionEntityType = 'cases' | 'dossiers' | 'bonds' | 'boardEntries' | 'evidenceRecords';
 
 export type DeletionTombstone = {
   id: string;
@@ -44,6 +46,7 @@ export const localArchiveStorageInfo = {
     dossierStoreName,
     boardPinStoreName,
     bondStoreName,
+    evidenceRecordStoreName,
     metaStoreName,
   ],
 };
@@ -79,6 +82,14 @@ function openDatabase() {
 
       if (!database.objectStoreNames.contains(bondStoreName)) {
         database.createObjectStore(bondStoreName, { keyPath: 'id' });
+      }
+
+      if (!database.objectStoreNames.contains(evidenceRecordStoreName)) {
+        const evidenceRecordStore = database.createObjectStore(evidenceRecordStoreName, { keyPath: 'id' });
+        evidenceRecordStore.createIndex('caseId', 'caseId');
+        evidenceRecordStore.createIndex('targetDossierId', 'targetDossierId');
+        evidenceRecordStore.createIndex('originDossierId', 'originDossierId');
+        evidenceRecordStore.createIndex('originSectionId', 'originSectionId');
       }
 
       if (!database.objectStoreNames.contains(metaStoreName)) {
@@ -308,13 +319,14 @@ export async function readFullLocalArchive() {
   const [caseRecordGroups, activeCaseId, deletionTombstones] = await Promise.all([
     Promise.all(
       cases.map(async (loreCase) => {
-        const [dossiers, bonds, boardPins] = await Promise.all([
+        const [dossiers, bonds, boardPins, evidenceRecords] = await Promise.all([
           readDossiersByCaseId(loreCase.id),
           readBondsByCaseId(loreCase.id),
           readBoardPinsByCaseId(loreCase.id),
+          readEvidenceRecordsByCaseId(loreCase.id),
         ]);
 
-        return { dossiers, bonds, boardPins };
+        return { dossiers, bonds, boardPins, evidenceRecords };
       }),
     ),
     readActiveCaseId(),
@@ -326,6 +338,7 @@ export async function readFullLocalArchive() {
     dossiers: caseRecordGroups.flatMap((group) => group.dossiers),
     bonds: caseRecordGroups.flatMap((group) => group.bonds),
     boardPins: caseRecordGroups.flatMap((group) => group.boardPins),
+    evidenceRecords: caseRecordGroups.flatMap((group) => group.evidenceRecords),
     deletionTombstones,
     activeCaseId,
   };
@@ -339,6 +352,7 @@ export type LocalSyncState = {
     dossiers: string[];
     bonds: string[];
     boardPins: string[];
+    evidenceRecords: string[];
   };
   synchronizedUpdatedAt: Record<string, string>;
   synchronizedFingerprints?: Record<string, string>;
@@ -546,16 +560,18 @@ export async function importFullLocalArchive(records: {
   dossiers: Dossier[];
   bonds: Bond[];
   boardPins: BoardPin[];
+  evidenceRecords: EvidenceRecord[];
   activeCaseId?: string | null;
 }) {
   await runMultiStoreTransaction(
-    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, metaStoreName],
+    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, evidenceRecordStoreName, metaStoreName],
     'readwrite',
     async (stores) => {
       const caseIds = new Set(records.cases.map((record) => record.id));
       const dossierIds = new Set(records.dossiers.map((record) => record.id));
       const bondIds = new Set(records.bonds.map((record) => record.id));
       const boardPinIds = new Set(records.boardPins.map((record) => record.id));
+      const evidenceRecordIds = new Set(records.evidenceRecords.map((record) => record.id));
 
       for (const key of await requestToPromise(stores[caseStoreName].getAllKeys())) {
         if (!caseIds.has(String(key))) {
@@ -581,6 +597,12 @@ export async function importFullLocalArchive(records: {
         }
       }
 
+      for (const key of await requestToPromise(stores[evidenceRecordStoreName].getAllKeys())) {
+        if (!evidenceRecordIds.has(String(key))) {
+          await requestToPromise(stores[evidenceRecordStoreName].delete(key));
+        }
+      }
+
       for (const loreCase of records.cases) {
         await requestToPromise(stores[caseStoreName].put(loreCase));
       }
@@ -595,6 +617,12 @@ export async function importFullLocalArchive(records: {
 
       for (const boardPin of records.boardPins) {
         await requestToPromise(stores[boardPinStoreName].put(boardPin));
+      }
+
+      for (const evidenceRecord of records.evidenceRecords) {
+        if (caseIds.has(evidenceRecord.caseId)) {
+          await requestToPromise(stores[evidenceRecordStoreName].put(evidenceRecord));
+        }
       }
 
       const activeCaseId = records.activeCaseId ?? records.cases[0]?.id;
@@ -613,13 +641,16 @@ export async function replaceEmptyCaseShellWithCloudArchive(
     dossiers: Dossier[];
     bonds: Bond[];
     boardPins: BoardPin[];
+    evidenceRecords: EvidenceRecord[];
     activeCaseId?: string | null;
   },
 ) {
   await runMultiStoreTransaction(
-    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, metaStoreName],
+    [caseStoreName, dossierStoreName, bondStoreName, boardPinStoreName, evidenceRecordStoreName, metaStoreName],
     'readwrite',
     async (stores) => {
+      const caseIds = new Set(records.cases.map((record) => record.id));
+
       for (const loreCase of records.cases) {
         await requestToPromise(stores[caseStoreName].put(loreCase));
       }
@@ -634,6 +665,12 @@ export async function replaceEmptyCaseShellWithCloudArchive(
 
       for (const boardPin of records.boardPins) {
         await requestToPromise(stores[boardPinStoreName].put(boardPin));
+      }
+
+      for (const evidenceRecord of records.evidenceRecords) {
+        if (caseIds.has(evidenceRecord.caseId)) {
+          await requestToPromise(stores[evidenceRecordStoreName].put(evidenceRecord));
+        }
       }
 
       const activeCaseId = records.activeCaseId ?? records.cases[0]?.id;
@@ -677,6 +714,7 @@ export async function updateCase(id: string, values: CaseFormValues) {
 }
 
 export async function deleteCase(id: string) {
+  await deleteEvidenceRecordsByCaseId(id);
   await deleteDossiersByCaseId(id);
   await deleteBondsByCaseId(id);
   await deleteBoardPinsByCaseId(id);
@@ -800,11 +838,17 @@ export async function updateDossier(id: string, values: DossierFormValues) {
     ...cleanDossierValues(values),
   };
 
+  const existingSectionIds = new Set((existingDossier.sections ?? []).map((section) => section.id));
+  const nextSectionIds = new Set((updatedDossier.sections ?? []).map((section) => section.id));
+  const removedSectionIds = [...existingSectionIds].filter((sectionId) => !nextSectionIds.has(sectionId));
+
+  await Promise.all(removedSectionIds.map((sectionId) => deleteEvidenceRecordsByOriginSectionId(sectionId)));
   await runTransaction(dossierStoreName, 'readwrite', (store) => store.put(updatedDossier));
   return updatedDossier;
 }
 
 export async function deleteDossier(id: string) {
+  await deleteEvidenceRecordsByDossierId(id);
   await deleteBondsByDossierId(id);
   await deleteBoardPinsByDossierId(id);
   return deleteRecordWithTombstone<Dossier>(
@@ -818,6 +862,84 @@ export async function deleteDossier(id: string) {
 export async function deleteDossiersByCaseId(caseId: string) {
   const dossiers = await readDossiersByCaseId(caseId);
   await Promise.all(dossiers.map((dossier) => deleteDossier(dossier.id)));
+}
+
+export async function upsertEvidenceRecord(record: EvidenceRecord) {
+  await runTransaction(evidenceRecordStoreName, 'readwrite', (store) => store.put(record));
+  return record;
+}
+
+export function readEvidenceRecordById(id: string) {
+  return runTransaction<EvidenceRecord | undefined>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.get(id),
+  );
+}
+
+export async function readEvidenceRecordsByCaseId(caseId: string) {
+  const records = await runTransaction<EvidenceRecord[]>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return records
+    .filter((record) => record.caseId === caseId)
+    .sort(
+      (left, right) =>
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+    );
+}
+
+export async function readEvidenceRecordsByTargetDossierId(targetDossierId: string) {
+  const records = await runTransaction<EvidenceRecord[]>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return records.filter((record) => record.targetDossierId === targetDossierId);
+}
+
+export async function readEvidenceRecordsByOriginDossierId(originDossierId: string) {
+  const records = await runTransaction<EvidenceRecord[]>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return records.filter((record) => record.originDossierId === originDossierId);
+}
+
+export async function readEvidenceRecordsByOriginSectionId(originSectionId: string) {
+  const records = await runTransaction<EvidenceRecord[]>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+
+  return records.filter((record) => record.originSectionId === originSectionId);
+}
+
+export function deleteEvidenceRecord(id: string) {
+  return deleteRecordWithTombstone<EvidenceRecord>(
+    evidenceRecordStoreName,
+    'evidenceRecords',
+    id,
+    (record) => record.caseId,
+  );
+}
+
+export async function deleteEvidenceRecordsByCaseId(caseId: string) {
+  const records = await readEvidenceRecordsByCaseId(caseId);
+  await Promise.all(records.map((record) => deleteEvidenceRecord(record.id)));
+}
+
+export async function deleteEvidenceRecordsByDossierId(dossierId: string) {
+  const records = await runTransaction<EvidenceRecord[]>(evidenceRecordStoreName, 'readonly', (store) =>
+    store.getAll(),
+  );
+  const matchingRecords = records.filter(
+    (record) => record.originDossierId === dossierId || record.targetDossierId === dossierId,
+  );
+
+  await Promise.all(matchingRecords.map((record) => deleteEvidenceRecord(record.id)));
+}
+
+export async function deleteEvidenceRecordsByOriginSectionId(originSectionId: string) {
+  const records = await readEvidenceRecordsByOriginSectionId(originSectionId);
+  await Promise.all(records.map((record) => deleteEvidenceRecord(record.id)));
 }
 
 export async function readBoardPinsByCaseId(caseId: string) {

@@ -5,7 +5,7 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react';
-import type { Dossier, DossierType } from '../cases/types/dossierTypes';
+import { dossierTypes, type Dossier, type DossierType } from '../cases/types/dossierTypes';
 import {
   getThreadmarkDefinition,
 } from './threadmarkSelectors';
@@ -19,6 +19,7 @@ import {
 import type {
   ThreadmarkAuthoringState,
   ThreadmarkAuthoringSuggestion,
+  ThreadmarkTargetSuggestion,
 } from './threadmarkAuthoringTypes';
 import { getRelationshipSuggestions, getTargetDossierSuggestions } from './threadmarkSuggestionEngine';
 import { replaceThreadmarkTextRange } from './threadmarkTextInsertion';
@@ -102,6 +103,8 @@ export function useThreadmarkAuthoring({
   value,
   dossiers,
   onChange,
+  onCreateEvidenceRecord,
+  onAuthoringNotice,
   isMobile = false,
 }: {
   editorId: string;
@@ -110,6 +113,8 @@ export function useThreadmarkAuthoring({
   value: string;
   dossiers: readonly Dossier[];
   onChange: (value: string) => void;
+  onCreateEvidenceRecord?: (targetDossier: Dossier, selectionRange: { start: number; end: number }) => Promise<void> | void;
+  onAuthoringNotice?: (message: string) => void;
   isMobile?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -142,6 +147,30 @@ export function useThreadmarkAuthoring({
     triggerOrigin: ThreadmarkAuthoringState['triggerOrigin'] = 'cursor',
   ) {
     try {
+      const selectedText = value.slice(cursorOffset, selectionEnd);
+
+      if (onCreateEvidenceRecord && selectionEnd > cursorOffset && selectedText.trim()) {
+        setAuthoringState(
+          Object.freeze({
+            state: 'targetSearch',
+            editorId,
+            dossierId: dossier.id,
+            sectionId,
+            sourceKnowledgeType: dossier.dossierType,
+            cursorOffset,
+            selectionRange: { start: cursorOffset, end: selectionEnd },
+            activeRelationshipFragment: '',
+            activeTargetFragment: '',
+            replacementRange: { start: cursorOffset, end: selectionEnd },
+            highlightedSuggestionIndex: 0,
+            triggerOrigin,
+            menuMode: 'target',
+            isMenuOpen: true,
+          }),
+        );
+        return;
+      }
+
       const relationshipContext = getRelationshipFragmentBeforeCursor(value, cursorOffset);
 
       if (relationshipContext) {
@@ -218,7 +247,20 @@ export function useThreadmarkAuthoring({
   );
 
   const targetSearch = useMemo(() => {
-    if (authoringState.menuMode !== 'target' || !authoringState.canonicalRelationshipKey) {
+    if (authoringState.menuMode !== 'target') {
+      return Object.freeze({ results: Object.freeze([]), durationMs: 0 });
+    }
+
+    if (!authoringState.canonicalRelationshipKey && onCreateEvidenceRecord) {
+      return getTargetDossierSuggestions({
+        query: authoringState.activeTargetFragment,
+        dossiers: dossiers.filter((candidate) => candidate.caseId === dossier.caseId),
+        sourceDossierId: dossier.id,
+        validTargetTypes: dossierTypes,
+      });
+    }
+
+    if (!authoringState.canonicalRelationshipKey) {
       return Object.freeze({ results: Object.freeze([]), durationMs: 0 });
     }
 
@@ -239,7 +281,9 @@ export function useThreadmarkAuthoring({
     authoringState.canonicalRelationshipKey,
     authoringState.menuMode,
     dossier.id,
+    dossier.caseId,
     dossiers,
+    onCreateEvidenceRecord,
   ]);
 
   const suggestions: readonly ThreadmarkAuthoringSuggestion[] =
@@ -287,6 +331,31 @@ export function useThreadmarkAuthoring({
         return;
       }
 
+      if (onCreateEvidenceRecord && suggestion.kind === 'target' && !authoringState.canonicalRelationshipKey) {
+        void Promise.resolve(
+          onCreateEvidenceRecord(
+            (suggestion as ThreadmarkTargetSuggestion).dossier,
+            authoringState.selectionRange,
+          ),
+        )
+          .then(() => {
+            setSelectionInserted(true);
+            closeSuggestions('complete');
+            window.setTimeout(() => textareaRef.current?.focus(), 0);
+          })
+          .catch((error) => {
+            console.warn('Threadmark Evidence Record creation failed.', error);
+            onAuthoringNotice?.(
+              error instanceof Error && error.message.trim()
+                ? error.message
+                : 'Threadmark could not be created.',
+            );
+            setInsertionFailureCount((count) => count + 1);
+            closeSuggestions('invalidContext');
+          });
+        return;
+      }
+
       const result = replaceThreadmarkTextRange(
         value,
         authoringState.replacementRange,
@@ -306,6 +375,32 @@ export function useThreadmarkAuthoring({
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (!authoringState.isMenuOpen) {
       return;
+    }
+
+    if (onCreateEvidenceRecord && authoringState.menuMode === 'target' && !authoringState.canonicalRelationshipKey) {
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        setAuthoringState((current) =>
+          Object.freeze({
+            ...current,
+            activeTargetFragment: `${current.activeTargetFragment}${event.key}`,
+            highlightedSuggestionIndex: 0,
+          }),
+        );
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        setAuthoringState((current) =>
+          Object.freeze({
+            ...current,
+            activeTargetFragment: current.activeTargetFragment.slice(0, -1),
+            highlightedSuggestionIndex: 0,
+          }),
+        );
+        return;
+      }
     }
 
     if (event.key === 'Escape') {
