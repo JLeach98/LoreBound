@@ -1,4 +1,4 @@
-import { useId, type ChangeEvent } from 'react';
+import { useId, type ChangeEvent, type KeyboardEvent } from 'react';
 import type { Dossier } from '../cases/types/dossierTypes';
 import { ThreadmarkSuggestionMenu } from './ThreadmarkSuggestionMenu';
 import { useThreadmarkAuthoring } from './useThreadmarkAuthoring';
@@ -13,6 +13,8 @@ export function ThreadmarkAuthoringTextarea({
   dossiers,
   isMobile = false,
   placeholder,
+  blockId,
+  onKeyDown,
   onChange,
 }: {
   id?: string;
@@ -24,6 +26,8 @@ export function ThreadmarkAuthoringTextarea({
   dossiers: readonly Dossier[];
   isMobile?: boolean;
   placeholder?: string;
+  blockId?: string;
+  onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onChange: (value: string) => void;
 }) {
   const generatedId = useId();
@@ -71,6 +75,7 @@ export function ThreadmarkAuthoringTextarea({
         aria-expanded={authoringState.isMenuOpen}
         aria-controls={authoringState.isMenuOpen ? menuId : undefined}
         placeholder={placeholder}
+        data-case-file-block-id={blockId}
         aria-activedescendant={
           authoringState.isMenuOpen && suggestions[highlightedSuggestionIndex]
             ? `${menuId}-option-${highlightedSuggestionIndex}`
@@ -95,7 +100,13 @@ export function ThreadmarkAuthoringTextarea({
             'typing',
           );
         }}
-        onKeyDown={handleKeyDown}
+        onKeyDown={(event) => {
+          handleKeyDown(event);
+
+          if (!event.defaultPrevented) {
+            onKeyDown?.(event);
+          }
+        }}
       />
       {authoringState.isMenuOpen && authoringState.menuMode ? (
         <ThreadmarkSuggestionMenu

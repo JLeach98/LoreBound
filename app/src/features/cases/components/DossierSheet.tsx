@@ -1,5 +1,5 @@
 import { Button } from '../../../components/ui/Button';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createStableId } from '../../../lib/stableId';
 import {
   executeThreadmarkBondReconciliation,
@@ -184,6 +184,8 @@ export function DossierSheet({
   } = useBonds();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
+  const pendingBlockFocusIdRef = useRef<string | null>(null);
+  const didFocusInitialBlockRef = useRef(false);
   const [workingDossier, setWorkingDossier] = useState(dossier);
   const [isDraftNewDossier, setIsDraftNewDossier] = useState(isNewDraft);
   const [isCreatingBond, setIsCreatingBond] = useState(false);
@@ -208,6 +210,8 @@ export function DossierSheet({
   const [detailImageError, setDetailImageError] = useState<string | undefined>();
   const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+  const [isInsertMenuOpen, setIsInsertMenuOpen] = useState(false);
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const caseFileSections = useMemo(
     () => (isEditingSections ? getCaseFileSections(draftSections) : getVisibleCaseFileSections(sections)),
@@ -300,6 +304,35 @@ export function DossierSheet({
     // The initial edit request should only apply when a new sheet opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!isEditingSections) {
+      didFocusInitialBlockRef.current = false;
+      return;
+    }
+
+    const pendingFocusId = pendingBlockFocusIdRef.current;
+    const initialFocusId =
+      pendingFocusId ??
+      (!didFocusInitialBlockRef.current
+        ? caseFileSections.find((section) => getCaseFileBlockType(section) === 'paragraph' && !section.body?.trim())?.id
+        : null);
+    const blockIdToFocus = initialFocusId ?? null;
+
+    if (!blockIdToFocus) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      const field = documentRef.current?.querySelector<HTMLElement>(
+        `[data-case-file-block-id="${blockIdToFocus}"]`,
+      );
+
+      field?.focus();
+      pendingBlockFocusIdRef.current = null;
+      didFocusInitialBlockRef.current = true;
+    }, 0);
+  }, [caseFileSections, isEditingSections]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -451,6 +484,8 @@ export function DossierSheet({
     setDetailDraft(createDetailDraft(workingDossier));
     setDetailImageError(undefined);
     setDetailSaveError(undefined);
+    pendingBlockFocusIdRef.current = null;
+    didFocusInitialBlockRef.current = false;
     setIsEditingSections(true);
     setSectionNotice('Editing Dossier');
   }
@@ -515,6 +550,8 @@ export function DossierSheet({
       return;
     }
 
+    pendingBlockFocusIdRef.current = null;
+    didFocusInitialBlockRef.current = false;
     setDraftSections([]);
     setDetailDraft(createDetailDraft(workingDossier));
     setDetailImageError(undefined);
@@ -525,6 +562,14 @@ export function DossierSheet({
 
   function updateDraftSections(nextSections: DossierSection[]) {
     setDraftSections(prepareNotebookSections(nextSections));
+  }
+
+  function focusNotebookBlock(sectionId: string) {
+    window.setTimeout(() => {
+      documentRef.current
+        ?.querySelector<HTMLElement>(`[data-case-file-block-id="${sectionId}"]`)
+        ?.focus();
+    }, 0);
   }
 
   function updateSectionBody(sectionId: string, body: string) {
@@ -549,9 +594,14 @@ export function DossierSheet({
       : draftSections.length;
     const safeIndex = insertionIndex > 0 ? insertionIndex : draftSections.length;
     const nextSections = [...draftSections];
+    const newSection = createCaseFileBlockSection(type, safeIndex);
 
-    nextSections.splice(safeIndex, 0, createCaseFileBlockSection(type, safeIndex));
+    nextSections.splice(safeIndex, 0, newSection);
+    pendingBlockFocusIdRef.current = newSection.id;
     updateDraftSections(nextSections);
+    setActiveBlockId(newSection.id);
+    setIsInsertMenuOpen(false);
+    focusNotebookBlock(newSection.id);
     setSectionNotice(`${getCaseFileBlockLabel(type)} added`);
   }
 
@@ -580,7 +630,16 @@ export function DossierSheet({
   }
 
   function deleteNotebookBlock(section: DossierSection) {
+    const contentSections = getCaseFileSections(draftSections);
+    const currentIndex = contentSections.findIndex((candidate) => candidate.id === section.id);
+    const fallbackSection = contentSections[currentIndex - 1] ?? contentSections[currentIndex + 1] ?? null;
     const nextSections = draftSections.filter((candidate) => candidate.id !== section.id);
+
+    if (fallbackSection) {
+      pendingBlockFocusIdRef.current = fallbackSection.id;
+      setActiveBlockId(fallbackSection.id);
+      focusNotebookBlock(fallbackSection.id);
+    }
 
     updateDraftSections(nextSections);
     setSectionNotice('Block removed from draft');
@@ -658,6 +717,22 @@ export function DossierSheet({
     }
 
     updateSectionBody(section.id, value);
+  }
+
+  function handleNotebookKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+    section: DossierSection,
+  ) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      addNotebookBlock('paragraph', section.id);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !section.body?.trim() && caseFileSections.length > 1) {
+      event.preventDefault();
+      deleteNotebookBlock(section);
+    }
   }
 
   function updateDetailDraft(values: Partial<DossierFormValues>) {
@@ -867,11 +942,17 @@ export function DossierSheet({
     const isDragged = draggedSectionId === section.id;
     const contentLabel = `${blockLabel} content`;
     const isStructuredBlock = isStructuredCaseFileBlock(section);
+    const isActive = activeBlockId === section.id;
 
     return (
       <article
         key={section.id}
-        className={isDragged ? 'case-file-editor-block case-file-editor-block--dragging' : 'case-file-editor-block'}
+        className={[
+          'case-file-editor-block',
+          `case-file-editor-block--${blockType}`,
+          isDragged ? 'case-file-editor-block--dragging' : '',
+          isActive ? 'case-file-editor-block--active' : '',
+        ].filter(Boolean).join(' ')}
         draggable
         onDragStart={() => setDraggedSectionId(section.id)}
         onDragEnd={() => setDraggedSectionId(null)}
@@ -883,6 +964,8 @@ export function DossierSheet({
             reorderNotebookBlock(draggedSectionId, section.id);
           }
         }}
+        onFocusCapture={() => setActiveBlockId(section.id)}
+        onMouseDown={() => setActiveBlockId(section.id)}
       >
         <div className="case-file-editor-block__rail">
           <button
@@ -891,9 +974,8 @@ export function DossierSheet({
             aria-label={`Drag ${blockLabel}`}
             title="Drag to reorder"
           >
-            Grip
+            Move
           </button>
-          <span>{blockLabel}</span>
         </div>
 
         <div className="case-file-editor-block__content">
@@ -901,6 +983,7 @@ export function DossierSheet({
             <label className="case-file-editor-block__field case-file-editor-block__field--title">
               <span>Section Heading</span>
               <input
+                data-case-file-block-id={`${section.id}-title`}
                 value={section.title}
                 onChange={(event) => updateNotebookBlock(section.id, { title: event.target.value })}
               />
@@ -913,9 +996,11 @@ export function DossierSheet({
             <label className="case-file-editor-block__field">
               <span>{contentLabel}</span>
               <input
+                data-case-file-block-id={section.id}
                 value={section.body ?? ''}
                 placeholder="Section heading"
                 onChange={(event) => updateSectionBody(section.id, event.target.value)}
+                onKeyDown={(event) => handleNotebookKeyDown(event, section)}
               />
             </label>
           ) : (
@@ -928,6 +1013,9 @@ export function DossierSheet({
                 sectionId={section.id}
                 dossiers={dossiers}
                 placeholder="Begin documenting..."
+                blockId={section.id}
+                className="case-file-editor-block__textarea"
+                onKeyDown={(event) => handleNotebookKeyDown(event, section)}
                 onChange={(value) => handleNotebookInput(section, value)}
               />
             </label>
@@ -1050,32 +1138,53 @@ export function DossierSheet({
 
           <div className="dossier-section-toolbar">
             <div>
-              <span>{caseFileSections.length} Case File Blocks</span>
+              <span>Case File Canvas</span>
               {sectionNotice ? <p role="status">{sectionNotice}</p> : null}
             </div>
             {isEditingSections ? (
-              <Button type="button" variant="plaque" onClick={() => addNotebookBlock('paragraph')}>
-                Add Block
-              </Button>
+              <details
+                className="case-file-insert-menu"
+                open={isInsertMenuOpen}
+                onToggle={(event) => setIsInsertMenuOpen(event.currentTarget.open)}
+              >
+                <summary aria-label="Add Case File block">Add Block</summary>
+                <div>
+                  {caseFileBlockOptions.map((option) => (
+                    <button key={option.type} type="button" onClick={() => addNotebookBlock(option.type)}>
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </details>
             ) : null}
           </div>
 
           <section className="case-file-canvas" aria-labelledby="case-file-canvas-title">
             <div className="case-file-canvas__header">
               <h3 id="case-file-canvas-title">Case File</h3>
-              {isEditingSections ? (
-                <div className="case-file-canvas__block-actions" aria-label="Add block">
-                  {caseFileBlockOptions.map((option) => (
-                    <button key={option.type} type="button" onClick={() => addNotebookBlock(option.type)}>
-                      {option.actionLabel}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
             </div>
 
             {isEditingSections ? (
-              <div className="case-file-editor" aria-label="Case File authoring canvas">
+              <div
+                className="case-file-editor"
+                aria-label="Case File authoring canvas"
+                onClick={(event) => {
+                  if (event.currentTarget !== event.target) {
+                    return;
+                  }
+
+                  const firstBlock = caseFileSections[0];
+
+                  if (firstBlock) {
+                    pendingBlockFocusIdRef.current = firstBlock.id;
+                    setActiveBlockId(firstBlock.id);
+                    focusNotebookBlock(firstBlock.id);
+                    return;
+                  }
+
+                  addNotebookBlock('paragraph');
+                }}
+              >
                 {caseFileSections.map((section, index) => renderCaseFileBlockEditor(section, index))}
               </div>
             ) : caseFileSections.length > 0 ? (
