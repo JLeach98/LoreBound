@@ -2487,6 +2487,15 @@ textarea {
   cursor: pointer;
 }
 
+.case-file-editor-block__drag {
+  cursor: grab;
+  min-height: 2.1rem;
+}
+
+.case-file-editor-block__drag:active {
+  cursor: grabbing;
+}
+
 .case-file-insert-menu summary::-webkit-details-marker {
   display: none;
 }
@@ -2714,6 +2723,35 @@ textarea {
   text-transform: uppercase;
 }
 
+.case-file-slash-menu {
+  display: grid;
+  width: min(14rem, 100%);
+  gap: 0.2rem;
+  margin: 0.25rem 0 0.45rem 0.55rem;
+  border: 1px solid rgb(92 58 38 / 0.18);
+  border-radius: var(--radius-md);
+  background: rgb(250 244 232 / 0.98);
+  box-shadow: var(--shadow-md);
+  padding: 0.35rem;
+}
+
+.case-file-slash-menu button {
+  min-height: 2.35rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0.45rem 0.55rem;
+  color: var(--color-text-primary);
+  font-weight: 900;
+  text-align: left;
+}
+
+.case-file-slash-menu button:hover,
+.case-file-slash-menu button[aria-selected='true'] {
+  background: rgb(143 29 44 / 0.1);
+  color: var(--color-deep-crimson);
+}
+
 .case-file-editor-block__field > span {
   position: absolute;
   height: 1px;
@@ -2914,6 +2952,8 @@ textarea {
   background: rgb(250 244 232 / 0.98);
   box-shadow: var(--shadow-md);
   padding: 0.45rem;
+  max-height: min(22rem, calc(100vh - 11rem));
+  overflow: auto;
 }
 
 .dossier-section-actions div button {
@@ -3100,6 +3140,7 @@ textarea {
   background: rgb(246 240 230 / 0.96);
   box-shadow: 0 12px 24px rgb(31 26 23 / 0.12);
   padding: 0.55rem;
+  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
 }
 
 .dossier-bonds__header {
@@ -4484,6 +4525,23 @@ textarea {
   .case-file-editor-block__actions {
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .case-file-editor-block__drag,
+  .case-file-editor-block__actions summary,
+  .case-file-insert-menu summary,
+  .case-file-insert-menu button,
+  .case-file-slash-menu button {
+    min-height: 2.75rem;
+  }
+
+  .dossier-reveal__actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .dossier-reveal__actions > * {
+    flex: 1 1 9rem;
   }
 
   .dossier-reveal__photo img,

@@ -212,6 +212,8 @@ export function DossierSheet({
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [isInsertMenuOpen, setIsInsertMenuOpen] = useState(false);
+  const [slashCommandBlockId, setSlashCommandBlockId] = useState<string | null>(null);
+  const [slashCommandHighlight, setSlashCommandHighlight] = useState(0);
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const caseFileSections = useMemo(
     () => (isEditingSections ? getCaseFileSections(draftSections) : getVisibleCaseFileSections(sections)),
@@ -337,6 +339,11 @@ export function DossierSheet({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        if (isInsertMenuOpen) {
+          setIsInsertMenuOpen(false);
+          return;
+        }
+
         onClose();
         return;
       }
@@ -369,7 +376,7 @@ export function DossierSheet({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [isInsertMenuOpen, onClose]);
 
   async function handleCreateBond(values: BondFormValues) {
     await createNewBond(values);
@@ -611,6 +618,22 @@ export function DossierSheet({
         candidate.id === section.id ? changeCaseFileBlockType(candidate, type) : candidate,
       ),
     );
+    setSlashCommandBlockId(null);
+    setSectionNotice(`Changed to ${getCaseFileBlockLabel(type)}`);
+  }
+
+  function selectSlashCommand(section: DossierSection, type: CaseFileBlockType) {
+    updateDraftSections(
+      draftSections.map((candidate) =>
+        candidate.id === section.id
+          ? changeCaseFileBlockType({ ...candidate, body: '' }, type)
+          : candidate,
+      ),
+    );
+    setSlashCommandBlockId(null);
+    setSlashCommandHighlight(0);
+    setActiveBlockId(section.id);
+    focusNotebookBlock(section.id);
     setSectionNotice(`Changed to ${getCaseFileBlockLabel(type)}`);
   }
 
@@ -689,6 +712,20 @@ export function DossierSheet({
   }
 
   function handleNotebookInput(section: DossierSection, value: string) {
+    const blockType = getCaseFileBlockType(section);
+
+    if (blockType === 'paragraph' && !section.body?.trim() && value === '/') {
+      setSlashCommandBlockId(section.id);
+      setSlashCommandHighlight(0);
+      updateSectionBody(section.id, value);
+      return;
+    }
+
+    if (slashCommandBlockId === section.id && value !== '/') {
+      setSlashCommandBlockId(null);
+      setSlashCommandHighlight(0);
+    }
+
     if (!section.body?.trim()) {
       if (value.startsWith('## ')) {
         updateNotebookBlock(section.id, changeCaseFileBlockType({ ...section, body: value.slice(3) }, 'section-heading'));
@@ -723,13 +760,74 @@ export function DossierSheet({
     event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
     section: DossierSection,
   ) {
+    const blockType = getCaseFileBlockType(section) ?? 'paragraph';
+    const target = event.currentTarget;
+
+    if (slashCommandBlockId === section.id) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSlashCommandHighlight((currentIndex) =>
+          event.key === 'ArrowDown'
+            ? (currentIndex + 1) % caseFileBlockOptions.length
+            : (currentIndex - 1 + caseFileBlockOptions.length) % caseFileBlockOptions.length,
+        );
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setSlashCommandBlockId(null);
+        setSlashCommandHighlight(0);
+        updateSectionBody(section.id, '');
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        selectSlashCommand(section, caseFileBlockOptions[slashCommandHighlight].type);
+        return;
+      }
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
+      if (blockType === 'bulleted-list' || blockType === 'numbered-list') {
+        const selectionStart = target.selectionStart ?? 0;
+        const selectionEnd = target.selectionEnd ?? selectionStart;
+        const value = target.value;
+        const lineStart = value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1;
+        const lineEnd = value.indexOf('\n', selectionEnd);
+        const currentLine = value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd);
+
+        if (!currentLine.trim()) {
+          event.preventDefault();
+          const nextBody = `${value.slice(0, lineStart)}${value.slice(lineEnd === -1 ? value.length : lineEnd + 1)}`.trimEnd();
+
+          updateSectionBody(section.id, nextBody);
+          addNotebookBlock('paragraph', section.id);
+        }
+
+        return;
+      }
+
+      if (blockType === 'quote' && !section.body?.trim()) {
+        event.preventDefault();
+        addNotebookBlock('paragraph', section.id);
+        return;
+      }
+
       event.preventDefault();
       addNotebookBlock('paragraph', section.id);
       return;
     }
 
-    if (event.key === 'Backspace' && !section.body?.trim() && caseFileSections.length > 1) {
+    if (
+      event.key === 'Backspace' &&
+      !section.body?.trim() &&
+      target.selectionStart === 0 &&
+      target.selectionEnd === 0 &&
+      caseFileSections.length > 1
+    ) {
       event.preventDefault();
       deleteNotebookBlock(section);
     }
@@ -953,8 +1051,8 @@ export function DossierSheet({
           isDragged ? 'case-file-editor-block--dragging' : '',
           isActive ? 'case-file-editor-block--active' : '',
         ].filter(Boolean).join(' ')}
-        draggable
-        onDragStart={() => setDraggedSectionId(section.id)}
+        data-case-file-block-id={blockType === 'divider' ? section.id : undefined}
+        tabIndex={blockType === 'divider' ? 0 : undefined}
         onDragEnd={() => setDraggedSectionId(null)}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
@@ -973,6 +1071,8 @@ export function DossierSheet({
             className="case-file-editor-block__drag"
             aria-label={`Drag ${blockLabel}`}
             title="Drag to reorder"
+            draggable
+            onDragStart={() => setDraggedSectionId(section.id)}
           >
             Move
           </button>
@@ -1020,9 +1120,38 @@ export function DossierSheet({
               />
             </label>
           )}
+          {slashCommandBlockId === section.id ? (
+            <div
+              className="case-file-slash-menu"
+              role="listbox"
+              aria-label="Case File block commands"
+            >
+              {caseFileBlockOptions.map((option, optionIndex) => (
+                <button
+                  key={option.type}
+                  type="button"
+                  role="option"
+                  aria-selected={slashCommandHighlight === optionIndex}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectSlashCommand(section, option.type)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
-        <details className="dossier-section-actions case-file-editor-block__actions">
+        <details
+          className="dossier-section-actions case-file-editor-block__actions"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.removeAttribute('open');
+            }
+          }}
+        >
           <summary aria-label={`More actions for ${blockLabel}`}>
             More Actions
           </summary>
@@ -1173,7 +1302,10 @@ export function DossierSheet({
                     return;
                   }
 
-                  const firstBlock = caseFileSections[0];
+                  const finalEmptyParagraph = [...caseFileSections]
+                    .reverse()
+                    .find((section) => getCaseFileBlockType(section) === 'paragraph' && !section.body?.trim());
+                  const firstBlock = finalEmptyParagraph ?? caseFileSections[caseFileSections.length - 1];
 
                   if (firstBlock) {
                     pendingBlockFocusIdRef.current = firstBlock.id;

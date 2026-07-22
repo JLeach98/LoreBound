@@ -90,7 +90,7 @@ export function changeCaseFileBlockType(
     templateId: `${blockTemplatePrefix}${type}`,
     kind: 'custom',
     title: getCaseFileBlockLabel(type),
-    body: type === 'divider' ? '' : section.body ?? '',
+    body: section.body ?? '',
   };
 }
 
