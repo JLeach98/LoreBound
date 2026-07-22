@@ -30,6 +30,7 @@ import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import {
   createEvidenceAnchorContext,
+  type EvidenceLogEntry,
   formatEvidenceLogSelectedText,
   getEvidenceLogEntries,
   hasDuplicateEvidenceRecord,
@@ -317,8 +318,6 @@ export function FieldKitDossiers({
   const {
     bonds,
     createNewBond,
-    updateExistingBond,
-    deleteExistingBond,
     refreshBonds,
     bondsForDossier,
   } = useBonds();
@@ -330,9 +329,11 @@ export function FieldKitDossiers({
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
   const [editorState, setEditorState] = useState<DossierEditorState>(null);
   const [isEditingDossier, setIsEditingDossier] = useState(false);
-  const [bondEditor, setBondEditor] = useState<{ dossier: Dossier; bond?: Bond } | null>(null);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
-  const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
+  const [creatingBondFromEvidence, setCreatingBondFromEvidence] = useState<{
+    dossier: Dossier;
+    entry: EvidenceLogEntry;
+  } | null>(null);
   const [repairPlan, setRepairPlan] = useState<SyncPlan | null>(null);
   const [repairState, setRepairState] = useState<'idle' | 'working' | 'failed'>('idle');
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
@@ -529,27 +530,10 @@ export function FieldKitDossiers({
     setDeletingDossier(null);
   }
 
-  async function handleBondSubmit(values: BondFormValues) {
-    if (!bondEditor) {
-      return;
-    }
-
-    if (bondEditor.bond) {
-      await updateExistingBond(bondEditor.bond.id, values);
-    } else {
-      await createNewBond(values);
-    }
-
-    setBondEditor(null);
-  }
-
-  async function handleDeleteBond() {
-    if (!deletingBond) {
-      return;
-    }
-
-    await deleteExistingBond(deletingBond.id);
-    setDeletingBond(null);
+  async function handleCreateBondFromEvidence(values: BondFormValues) {
+    await createNewBond(values);
+    setCreatingBondFromEvidence(null);
+    await refreshBonds();
   }
 
   async function handleSaveSections(dossier: Dossier, sections: DossierSection[]) {
@@ -733,9 +717,7 @@ export function FieldKitDossiers({
           onUnpin={async () => {
             await removeDossierFromBoard(selectedDossier.id);
           }}
-          onCreateBond={() => setBondEditor({ dossier: selectedDossier })}
-          onEditBond={(bond) => setBondEditor({ dossier: selectedDossier, bond })}
-          onDeleteBond={setDeletingBond}
+          onCreateBondFromEvidence={(entry) => setCreatingBondFromEvidence({ dossier: selectedDossier, entry })}
           onCreateEvidenceRecord={handleCreateEvidenceRecord}
           onRemoveEvidenceRecord={handleRemoveEvidenceRecord}
         >
@@ -752,13 +734,19 @@ export function FieldKitDossiers({
               onOpenDossier={setSelectedDossier}
             />
           ) : null}
-          {bondEditor ? (
+          {creatingBondFromEvidence ? (
             <BondFormDialog
-              dossiers={safeDossiers}
-              initialBond={bondEditor.bond}
-              initialSourceDossierId={bondEditor.dossier.id}
-              onCancel={() => setBondEditor(null)}
-              onSubmit={handleBondSubmit}
+              dossiers={safeDossiers.filter(
+                (candidate) => candidate.caseId === creatingBondFromEvidence.dossier.caseId,
+              )}
+              initialSourceDossierId={creatingBondFromEvidence.entry.originDossier.id}
+              initialTargetDossierId={creatingBondFromEvidence.dossier.id}
+              initialEvidenceRecordIds={[creatingBondFromEvidence.entry.record.id]}
+              evidenceRecords={evidenceRecords}
+              requireEvidenceRecords
+              defaultLabelsEmpty
+              onCancel={() => setCreatingBondFromEvidence(null)}
+              onSubmit={handleCreateBondFromEvidence}
             />
           ) : null}
           {deletingDossier ? (
@@ -768,14 +756,6 @@ export function FieldKitDossiers({
               onCancel={() => setDeletingDossier(null)}
               onConfirm={handleDeleteDossier}
               confirmLabel="Delete"
-            />
-          ) : null}
-          {deletingBond ? (
-            <ConfirmPanel
-              title="Remove Bond?"
-              message={getBondRemovalMessage(deletingBond, selectedDossier, safeDossiers)}
-              onCancel={() => setDeletingBond(null)}
-              onConfirm={handleDeleteBond}
             />
           ) : null}
         </FieldKitDossierView>
@@ -911,9 +891,7 @@ type FieldKitDossierViewProps = {
   onDelete: () => void;
   onPin: () => Promise<void>;
   onUnpin: () => Promise<void>;
-  onCreateBond: () => void;
-  onEditBond: (bond: Bond) => void;
-  onDeleteBond: (bond: Bond) => void;
+  onCreateBondFromEvidence: (entry: EvidenceLogEntry) => void;
   onCreateEvidenceRecord: (details: {
     dossier: Dossier;
     section: DossierSection;
@@ -940,9 +918,7 @@ function FieldKitDossierView({
   onDelete,
   onPin,
   onUnpin,
-  onCreateBond,
-  onEditBond,
-  onDeleteBond,
+  onCreateBondFromEvidence,
   onCreateEvidenceRecord,
   onRemoveEvidenceRecord,
 }: FieldKitDossierViewProps) {
@@ -1467,6 +1443,9 @@ function FieldKitDossierView({
                     <Button type="button" variant="secondary" onClick={() => onOpenDossier(entry.originDossier)}>
                       Open Origin Dossier
                     </Button>
+                    <Button type="button" variant="brass" onClick={() => onCreateBondFromEvidence(entry)}>
+                      Create Bond
+                    </Button>
                   </div>
                 </article>
               </li>
@@ -1542,16 +1521,10 @@ function FieldKitDossierView({
       <section className="field-kit-file-section">
         <div className="field-kit-section-heading">
           <h3>Bonds</h3>
-          {isEditing ? (
-            <Button type="button" variant="secondary" onClick={onCreateBond}>
-              Add Bond
-            </Button>
-          ) : null}
         </div>
         {displayBonds.map((bond) => {
           const connectedDossier = getConnectedDossier(bond);
           const bondLabel = getBondLabel(bond, dossier.id);
-          const isGeneratedBond = isThreadmarkGeneratedBond(bond);
 
           return (
             <article key={bond.id} className="field-kit-bond-card">
@@ -1583,31 +1556,9 @@ function FieldKitDossierView({
                   </span>
                 </div>
               )}
-              {isEditing && !isGeneratedBond ? (
-                <div className="field-kit-inline-actions">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => onEditBond(bond)}
-                    aria-label={`Edit Bond with ${connectedDossier?.name ?? 'missing Dossier'}`}
-                  >
-                    Edit Bond
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="field-kit-danger-action"
-                    onClick={() => onDeleteBond(bond)}
-                    aria-label={`Remove Bond between ${dossier.name} and ${connectedDossier?.name ?? 'missing Dossier'}`}
-                  >
-                    Remove Bond
-                  </Button>
-                </div>
-              ) : null}
             </article>
           );
         })}
-        {displayBonds.length === 0 ? <p>No Bonds recorded.</p> : null}
       </section>
 
       {isAddSectionOpen ? (
@@ -1850,16 +1801,6 @@ function renderFieldKitSection(
   ) : (
     <p>No entries recorded.</p>
   );
-}
-
-function getBondRemovalMessage(bond: Bond, currentDossier: Dossier, dossiers: Dossier[]) {
-  const connectedId =
-    bond.sourceDossierId === currentDossier.id ? bond.targetDossierId : bond.sourceDossierId;
-  const connectedDossier = dossiers.find((candidate) => candidate.id === connectedId);
-
-  return `The connection between "${currentDossier.name}" and "${
-    connectedDossier?.name ?? 'the connected Dossier'
-  }" will be removed. The connected Dossiers will not be deleted.`;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {

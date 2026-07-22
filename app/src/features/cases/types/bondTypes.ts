@@ -31,6 +31,7 @@ export type BondEvidence = {
   sourceType?: string;
   reference?: string;
   evidenceNotes?: string;
+  evidenceRecordIds?: string[];
 };
 
 export type Bond = {

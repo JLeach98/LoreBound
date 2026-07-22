@@ -1,5 +1,5 @@
 import { Button } from '../../../components/ui/Button';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createStableId } from '../../../lib/stableId';
 import {
   executeThreadmarkBondReconciliation,
@@ -15,20 +15,15 @@ import {
   updateBond as updateStoredBond,
 } from '../storage/caseStorage';
 import {
-  bondStatuses,
-  builtInBondTypes,
   type Bond,
-  type BondEvidence,
   type BondFormValues,
-  type BondStatus,
 } from '../types/bondTypes';
 import type {
   Dossier,
   DossierFormValues,
   DossierSection,
-  DossierType,
 } from '../types/dossierTypes';
-import { dossierTypeLabels, dossierTypes } from '../types/dossierTypes';
+import { dossierTypeLabels } from '../types/dossierTypes';
 import {
   blocksToDocumentDraft,
   documentDraftToBlocks,
@@ -51,6 +46,7 @@ import {
 } from '../utils/dossierSections';
 import {
   createEvidenceAnchorContext,
+  type EvidenceLogEntry,
   formatEvidenceLogSelectedText,
   getEvidenceLogEntries,
   hasDuplicateEvidenceRecord,
@@ -60,8 +56,6 @@ import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 import { BondFormDialog } from './BondFormDialog';
 import { CaseFileDocumentEditor } from './CaseFileDocumentEditor';
 import { CoverImageInput } from './CoverImageInput';
-import { DeleteBondDialog } from './DeleteBondDialog';
-import { DossierFormDialog } from './DossierFormDialog';
 
 type DossierSheetProps = {
   dossier: Dossier;
@@ -130,18 +124,6 @@ function formatRecordDate(value: string) {
   }).format(new Date(value));
 }
 
-function normalizeDossierName(value: string) {
-  return value.trim().toLocaleLowerCase();
-}
-
-function findRelationshipDefinition(name: string) {
-  return builtInBondTypes.find((definition) => definition.name === name);
-}
-
-function buildEvidence(evidence: BondEvidence) {
-  return Object.values(evidence).some((value) => value?.trim()) ? evidence : undefined;
-}
-
 function getInitials(name: string) {
   const initials = name
     .trim()
@@ -161,9 +143,15 @@ function createDetailDraft(dossier: Dossier) {
 }
 
 function getBondEvidenceCount(bond: Bond) {
-  return bond.evidence
-    ? Object.values(bond.evidence).filter((value) => value?.trim()).length
-    : 0;
+  if (!bond.evidence) {
+    return 0;
+  }
+
+  const evidenceNoteCount = Object.entries(bond.evidence)
+    .filter(([key]) => key !== 'evidenceRecordIds')
+    .filter(([, value]) => typeof value === 'string' && value.trim()).length;
+
+  return evidenceNoteCount + (bond.evidence.evidenceRecordIds?.length ?? 0);
 }
 
 function threadmarkButtonStyle(isDark = false) {
@@ -198,28 +186,12 @@ export function DossierSheet({
     bondsForDossier,
     refreshBonds,
     createNewBond,
-    updateExistingBond,
-    deleteExistingBond,
   } = useBonds();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
   const [workingDossier, setWorkingDossier] = useState(dossier);
   const [isDraftNewDossier, setIsDraftNewDossier] = useState(isNewDraft);
-  const [isCreatingBond, setIsCreatingBond] = useState(false);
-  const [editingBond, setEditingBond] = useState<Bond | null>(null);
-  const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
-  const [quickRelationshipName, setQuickRelationshipName] = useState(
-    builtInBondTypes[0].name,
-  );
-  const [quickConnectedName, setQuickConnectedName] = useState('');
-  const [quickTargetDossierId, setQuickTargetDossierId] = useState('');
-  const [quickMissingType, setQuickMissingType] = useState<DossierType>('Character');
-  const [quickStatus, setQuickStatus] = useState<BondStatus | ''>('');
-  const [quickNotes, setQuickNotes] = useState('');
-  const [quickEvidence, setQuickEvidence] = useState<BondEvidence>({});
-  const [isQuickAdvancedOpen, setIsQuickAdvancedOpen] = useState(false);
-  const [isQuickCreateDossierOpen, setIsQuickCreateDossierOpen] = useState(false);
-  const [quickError, setQuickError] = useState<string | undefined>();
+  const [creatingBondFromEvidence, setCreatingBondFromEvidence] = useState<EvidenceLogEntry | null>(null);
   const [isEditingSections, setIsEditingSections] = useState(false);
   const [caseFileDraft, setCaseFileDraft] = useState<CaseFileDocumentDraft>(() =>
     blocksToDocumentDraft(ensureDossierSections(dossier)),
@@ -286,39 +258,6 @@ export function DossierSheet({
       }),
     [dossiers, evidenceRecords, workingDossier.caseId, workingDossier.id],
   );
-  const quickDefinition = findRelationshipDefinition(quickRelationshipName);
-  const quickSearchResults = useMemo(() => {
-    const query = normalizeDossierName(quickConnectedName);
-
-    if (!query) {
-      return [];
-    }
-
-    return dossiers
-      .filter((candidate) => candidate.id !== workingDossier.id)
-      .filter((candidate) => candidate.name.toLocaleLowerCase().includes(query))
-      .slice(0, 5);
-  }, [workingDossier.id, dossiers, quickConnectedName]);
-  const exactQuickMatch = useMemo(
-    () =>
-      dossiers.find(
-        (candidate) =>
-          candidate.id !== workingDossier.id &&
-          candidate.name.toLocaleLowerCase() === normalizeDossierName(quickConnectedName),
-      ),
-    [workingDossier.id, dossiers, quickConnectedName],
-  );
-  const quickTargetDossier =
-    dossiers.find((candidate) => candidate.id === quickTargetDossierId) ??
-    exactQuickMatch ??
-    null;
-  const canCreateMissingQuickDossier =
-    normalizeDossierName(quickConnectedName).length > 0 && !exactQuickMatch;
-  const canQuickSubmit =
-    Boolean(quickDefinition) &&
-    Boolean(quickTargetDossier) &&
-    quickTargetDossier?.id !== workingDossier.id;
-
   useEffect(() => {
     closeButtonRef.current?.focus();
   }, []);
@@ -387,64 +326,8 @@ export function DossierSheet({
 
   async function handleCreateBond(values: BondFormValues) {
     await createNewBond(values);
-    setIsCreatingBond(false);
-  }
-
-  async function handleUpdateBond(values: BondFormValues) {
-    if (!editingBond) {
-      return;
-    }
-
-    await updateExistingBond(editingBond.id, values);
-    setEditingBond(null);
-  }
-
-  async function handleDeleteBond() {
-    if (!deletingBond) {
-      return;
-    }
-
-    await deleteExistingBond(deletingBond.id);
-    setDeletingBond(null);
-  }
-
-  async function handleQuickCreateMissingDossier(values: DossierFormValues) {
-    const createdDossier = await createNewDossier(values);
-    setQuickTargetDossierId(createdDossier.id);
-    setQuickConnectedName(createdDossier.name);
-    setIsQuickCreateDossierOpen(false);
-  }
-
-  async function handleQuickCreateBond(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!quickDefinition || !quickTargetDossier) {
-      setQuickError('Choose a relationship and a connected Dossier before adding a Bond.');
-      return;
-    }
-
-    try {
-      await createNewBond({
-        sourceDossierId: workingDossier.id,
-        targetDossierId: quickTargetDossier.id,
-        bondType: quickDefinition.name,
-        bondBehavior: quickDefinition.behavior,
-        sourceLabel: quickDefinition.sourceLabel,
-        targetLabel: quickDefinition.targetLabel,
-        status: quickStatus || undefined,
-        notes: quickNotes,
-        evidence: buildEvidence(quickEvidence),
-      });
-      setQuickConnectedName('');
-      setQuickTargetDossierId('');
-      setQuickStatus('');
-      setQuickNotes('');
-      setQuickEvidence({});
-      setQuickError(undefined);
-    } catch (error) {
-      console.error(error);
-      setQuickError(error instanceof Error ? error.message : 'The Bond could not be added.');
-    }
+    setCreatingBondFromEvidence(null);
+    await refreshBonds();
   }
 
   async function saveSectionChanges(nextSections: DossierSection[], nextDetails = detailDraft) {
@@ -645,6 +528,9 @@ export function DossierSheet({
                       Open Origin Dossier
                     </Button>
                   ) : null}
+                  <Button type="button" variant="brass" onClick={() => setCreatingBondFromEvidence(entry)}>
+                    Create Bond
+                  </Button>
                 </article>
               </li>
             ))}
@@ -1097,167 +983,7 @@ export function DossierSheet({
           <section className="dossier-reveal__section dossier-bonds">
             <div className="dossier-bonds__header">
               <h3>Bonds</h3>
-              {isEditingSections ? (
-                <Button type="button" variant="plaque" onClick={() => setIsCreatingBond(true)}>
-                  Add Bond
-                </Button>
-              ) : null}
             </div>
-            {isEditingSections ? (
-              <form className="quick-bond" onSubmit={handleQuickCreateBond}>
-                <div className="quick-bond__row">
-                  <label>
-                    Relationship
-                    <select
-                      value={quickRelationshipName}
-                      onChange={(event) => setQuickRelationshipName(event.target.value)}
-                    >
-                      {builtInBondTypes.map((definition) => (
-                        <option key={definition.name} value={definition.name}>
-                          {definition.sourceLabel}
-                          {definition.targetLabel ? ` / ${definition.targetLabel}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Connected Dossier
-                    <input
-                      value={quickConnectedName}
-                      placeholder="Lilith Sorrengail"
-                      aria-describedby="quick-bond-results quick-bond-preview"
-                      onChange={(event) => {
-                        setQuickConnectedName(event.target.value);
-                        setQuickTargetDossierId('');
-                      }}
-                    />
-                  </label>
-                  <Button type="submit" variant="brass" disabled={!canQuickSubmit}>
-                    Add Bond
-                  </Button>
-                </div>
-
-                <div id="quick-bond-results" className="quick-bond__results" aria-live="polite">
-                  {quickSearchResults.length > 0 ? (
-                    <>
-                      <span>Likely matches</span>
-                      <div>
-                        {quickSearchResults.map((candidate) => (
-                          <button
-                            key={candidate.id}
-                            type="button"
-                            aria-pressed={quickTargetDossier?.id === candidate.id}
-                            onClick={() => {
-                              setQuickTargetDossierId(candidate.id);
-                              setQuickConnectedName(candidate.name);
-                            }}
-                          >
-                            {candidate.name} · {dossierTypeLabels[candidate.dossierType]}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
-
-                  {canCreateMissingQuickDossier ? (
-                    <div className="quick-bond__missing">
-                      <select
-                        aria-label="Missing Dossier Knowledge Type"
-                        value={quickMissingType}
-                        onChange={(event) => setQuickMissingType(event.target.value as DossierType)}
-                      >
-                        {dossierTypes.map((type) => (
-                          <option key={type} value={type}>
-                            {dossierTypeLabels[type]}
-                          </option>
-                        ))}
-                      </select>
-                      <button type="button" onClick={() => setIsQuickCreateDossierOpen(true)}>
-                        Create "{quickConnectedName.trim()}" as {quickMissingType}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-
-                {quickDefinition && quickTargetDossier ? (
-                  <div id="quick-bond-preview" className="quick-bond__preview" aria-live="polite">
-                    <strong>Reciprocal preview</strong>
-                    <span>
-                      {workingDossier.name}: {quickDefinition.sourceLabel} - {quickTargetDossier.name}
-                    </span>
-                    <span>
-                      {quickTargetDossier.name}:{' '}
-                      {quickDefinition.behavior === 'Directional'
-                        ? `Connected through ${quickDefinition.sourceLabel}`
-                        : (quickDefinition.targetLabel ?? quickDefinition.sourceLabel)}{' '}
-                      - {workingDossier.name}
-                    </span>
-                  </div>
-                ) : null}
-
-                <details
-                  className="quick-bond__advanced"
-                  open={isQuickAdvancedOpen}
-                  onToggle={(event) => setIsQuickAdvancedOpen(event.currentTarget.open)}
-                >
-                  <summary>Advanced Details</summary>
-                  <div className="case-form__grid">
-                    <label className="case-form__field">
-                      Status
-                      <select
-                        value={quickStatus}
-                        onChange={(event) => setQuickStatus(event.target.value as BondStatus | '')}
-                      >
-                        <option value="">No status</option>
-                        {bondStatuses.map((bondStatus) => (
-                          <option key={bondStatus} value={bondStatus}>
-                            {bondStatus}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="case-form__field">
-                      Source Title
-                      <input
-                        value={quickEvidence.sourceTitle ?? ''}
-                        onChange={(event) =>
-                          setQuickEvidence((currentEvidence) => ({
-                            ...currentEvidence,
-                            sourceTitle: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="case-form__field">
-                      Reference
-                      <input
-                        value={quickEvidence.reference ?? ''}
-                        onChange={(event) =>
-                          setQuickEvidence((currentEvidence) => ({
-                            ...currentEvidence,
-                            reference: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <label className="case-form__field">
-                    Notes
-                    <textarea
-                      rows={2}
-                      value={quickNotes}
-                      onChange={(event) => setQuickNotes(event.target.value)}
-                    />
-                  </label>
-                </details>
-
-                {quickError ? (
-                  <p className="case-form__error" role="alert">
-                    {quickError}
-                  </p>
-                ) : null}
-              </form>
-            ) : null}
 
             {dossierBonds.length > 0 ? (
               <ul className="dossier-bonds__list" aria-label={`${workingDossier.name} Bonds`}>
@@ -1265,7 +991,6 @@ export function DossierSheet({
                   const connectedDossier = getConnectedDossier(bond, workingDossier.id, dossiers);
                   const label = getBondLabelFromPerspective(bond, workingDossier.id);
                   const evidenceCount = getBondEvidenceCount(bond);
-                  const isGeneratedBond = isThreadmarkGeneratedBond(bond);
 
                   return (
                     <li key={bond.id} className="dossier-bonds__item">
@@ -1302,32 +1027,11 @@ export function DossierSheet({
                           </span>
                         </div>
                       )}
-                      {isEditingSections && !isGeneratedBond ? (
-                        <div className="dossier-bonds__actions">
-                          <button
-                            type="button"
-                            onClick={() => setEditingBond(bond)}
-                            aria-label={`Edit Bond with ${connectedDossier?.name ?? 'missing Dossier'}`}
-                          >
-                            Edit Bond
-                          </button>
-                          <button
-                            type="button"
-                            className="danger-button"
-                            onClick={() => setDeletingBond(bond)}
-                            aria-label={`Remove Bond between ${workingDossier.name} and ${connectedDossier?.name ?? 'missing Dossier'}`}
-                          >
-                            Remove Bond
-                          </button>
-                        </div>
-                      ) : null}
                     </li>
                   );
                 })}
               </ul>
-            ) : (
-              <p className="dossier-reveal__empty">No Bonds recorded.</p>
-            )}
+            ) : null}
           </section>
 
           <section className="dossier-reveal__section dossier-reveal__section--meta">
@@ -1389,40 +1093,17 @@ export function DossierSheet({
         </div>
       </section>
 
-      {isCreatingBond ? (
+      {creatingBondFromEvidence ? (
         <BondFormDialog
-          dossiers={dossiers}
-          initialSourceDossierId={workingDossier.id}
-          onCancel={() => setIsCreatingBond(false)}
+          dossiers={dossiers.filter((candidate) => candidate.caseId === workingDossier.caseId)}
+          initialSourceDossierId={creatingBondFromEvidence.originDossier.id}
+          initialTargetDossierId={workingDossier.id}
+          initialEvidenceRecordIds={[creatingBondFromEvidence.record.id]}
+          evidenceRecords={evidenceRecords}
+          requireEvidenceRecords
+          defaultLabelsEmpty
+          onCancel={() => setCreatingBondFromEvidence(null)}
           onSubmit={handleCreateBond}
-        />
-      ) : null}
-
-      {isQuickCreateDossierOpen ? (
-        <DossierFormDialog
-          dossierType={quickMissingType}
-          initialName={quickConnectedName.trim()}
-          onCancel={() => setIsQuickCreateDossierOpen(false)}
-          onSubmit={handleQuickCreateMissingDossier}
-        />
-      ) : null}
-
-      {editingBond ? (
-        <BondFormDialog
-          dossiers={dossiers}
-          initialBond={editingBond}
-          onCancel={() => setEditingBond(null)}
-          onSubmit={handleUpdateBond}
-        />
-      ) : null}
-
-      {deletingBond ? (
-        <DeleteBondDialog
-          bond={deletingBond}
-          sourceDossier={dossiers.find((candidate) => candidate.id === deletingBond.sourceDossierId)}
-          targetDossier={dossiers.find((candidate) => candidate.id === deletingBond.targetDossierId)}
-          onCancel={() => setDeletingBond(null)}
-          onConfirm={handleDeleteBond}
         />
       ) : null}
     </div>

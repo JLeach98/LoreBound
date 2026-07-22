@@ -14,12 +14,17 @@ import {
 import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTypes';
 import { dossierTypeLabels, dossierTypes } from '../types/dossierTypes';
 import { DossierFormDialog } from './DossierFormDialog';
+import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 
 type BondFormDialogProps = {
   dossiers: Dossier[];
   initialBond?: Bond;
   initialSourceDossierId?: string;
   initialTargetDossierId?: string;
+  initialEvidenceRecordIds?: string[];
+  evidenceRecords?: EvidenceRecord[];
+  requireEvidenceRecords?: boolean;
+  defaultLabelsEmpty?: boolean;
   onCancel: () => void;
   onSubmit: (values: BondFormValues) => Promise<void>;
 };
@@ -37,6 +42,10 @@ export function BondFormDialog({
   initialBond,
   initialSourceDossierId,
   initialTargetDossierId,
+  initialEvidenceRecordIds = [],
+  evidenceRecords = [],
+  requireEvidenceRecords = false,
+  defaultLabelsEmpty = false,
   onCancel,
   onSubmit,
 }: BondFormDialogProps) {
@@ -53,10 +62,10 @@ export function BondFormDialog({
     initialBond?.bondBehavior ?? initialDefinition?.behavior ?? 'Symmetric',
   );
   const [sourceLabel, setSourceLabel] = useState(
-    initialBond?.sourceLabel ?? initialDefinition?.sourceLabel ?? builtInBondTypes[0].sourceLabel,
+    initialBond?.sourceLabel ?? (defaultLabelsEmpty ? '' : initialDefinition?.sourceLabel ?? builtInBondTypes[0].sourceLabel),
   );
   const [targetLabel, setTargetLabel] = useState(
-    initialBond?.targetLabel ?? initialDefinition?.targetLabel ?? '',
+    initialBond?.targetLabel ?? (defaultLabelsEmpty ? '' : initialDefinition?.targetLabel ?? ''),
   );
   const [status, setStatus] = useState<BondStatus | ''>(initialBond?.status ?? '');
   const [notes, setNotes] = useState(initialBond?.notes ?? '');
@@ -65,6 +74,9 @@ export function BondFormDialog({
   const [reference, setReference] = useState(initialBond?.evidence?.reference ?? '');
   const [evidenceNotes, setEvidenceNotes] = useState(
     initialBond?.evidence?.evidenceNotes ?? '',
+  );
+  const [selectedEvidenceRecordIds, setSelectedEvidenceRecordIds] = useState<string[]>(
+    initialBond?.evidence?.evidenceRecordIds ?? initialEvidenceRecordIds,
   );
   const [targetSearch, setTargetSearch] = useState('');
   const [newDossierType, setNewDossierType] = useState<DossierType>('Character');
@@ -75,7 +87,10 @@ export function BondFormDialog({
 
   const filteredTargets = useMemo(() => {
     const query = normalizeSearch(targetSearch);
-    const candidates = dossiers.filter((dossier) => dossier.id !== sourceDossierId);
+    const sourceDossier = dossiers.find((dossier) => dossier.id === sourceDossierId);
+    const candidates = dossiers
+      .filter((dossier) => dossier.id !== sourceDossierId)
+      .filter((dossier) => !sourceDossier || dossier.caseId === sourceDossier.caseId);
 
     if (!query) {
       return candidates;
@@ -87,21 +102,41 @@ export function BondFormDialog({
   }, [dossiers, sourceDossierId, targetSearch]);
 
   const canOfferCreate =
+    !requireEvidenceRecords &&
     normalizeSearch(targetSearch).length > 0 &&
     !dossiers.some(
       (dossier) => dossier.name.toLocaleLowerCase() === normalizeSearch(targetSearch),
     );
-  const canSubmit =
-    Boolean(sourceDossierId) &&
-    Boolean(targetDossierId) &&
-    sourceDossierId !== targetDossierId &&
-    Boolean(bondType.trim()) &&
-    Boolean(sourceLabel.trim()) &&
-    !isSaving;
   const sourceDossier =
     dossiers.find((dossier) => dossier.id === sourceDossierId) ?? null;
   const targetDossier =
     dossiers.find((dossier) => dossier.id === targetDossierId) ?? null;
+  const availableEvidenceRecords = useMemo(
+    () =>
+      sourceDossier && targetDossier && sourceDossier.caseId === targetDossier.caseId
+        ? evidenceRecords
+            .filter((record) => record.status === 'active')
+            .filter((record) => record.caseId === sourceDossier.caseId)
+            .filter(
+              (record) =>
+                (record.originDossierId === sourceDossier.id && record.targetDossierId === targetDossier.id) ||
+                (record.originDossierId === targetDossier.id && record.targetDossierId === sourceDossier.id),
+            )
+        : [],
+    [evidenceRecords, sourceDossier, targetDossier],
+  );
+  const selectedEvidenceRecords = availableEvidenceRecords.filter((record) =>
+    selectedEvidenceRecordIds.includes(record.id),
+  );
+  const endpointsShareCase = !sourceDossier || !targetDossier || sourceDossier.caseId === targetDossier.caseId;
+  const canSubmit =
+    Boolean(sourceDossierId) &&
+    Boolean(targetDossierId) &&
+    sourceDossierId !== targetDossierId &&
+    endpointsShareCase &&
+    Boolean(bondType.trim()) &&
+    (!requireEvidenceRecords || selectedEvidenceRecords.length > 0) &&
+    !isSaving;
   const reciprocalTargetLabel =
     bondBehavior === 'Directional'
       ? `Connected through ${sourceLabel.trim() || bondType.trim()}`
@@ -146,7 +181,11 @@ export function BondFormDialog({
     event.preventDefault();
 
     if (!canSubmit) {
-      setSubmitError('Choose two different Dossiers and define the Bond label.');
+      setSubmitError(
+        requireEvidenceRecords
+          ? 'Choose two different Dossiers from the same Investigation and attach supporting Evidence.'
+          : 'Choose two different Dossiers from the same Investigation.',
+      );
       return;
     }
 
@@ -168,6 +207,7 @@ export function BondFormDialog({
           sourceType,
           reference,
           evidenceNotes,
+          evidenceRecordIds: selectedEvidenceRecords.map((record) => record.id),
         },
       });
     } catch (error) {
@@ -281,6 +321,12 @@ export function BondFormDialog({
                       return;
                     }
 
+                    if (defaultLabelsEmpty) {
+                      setBondType(event.target.value);
+                      setBondBehavior(findBondDefinition(event.target.value)?.behavior ?? 'Symmetric');
+                      return;
+                    }
+
                     handleBondTypeChange(event.target.value);
                   }}
                 >
@@ -328,7 +374,6 @@ export function BondFormDialog({
                   id="source-label"
                   value={sourceLabel}
                   onChange={(event) => setSourceLabel(event.target.value)}
-                  required
                 />
               </div>
               <div className="case-form__field">
@@ -416,6 +461,43 @@ export function BondFormDialog({
                 />
               </div>
             </details>
+
+            {requireEvidenceRecords ? (
+              <section className="bond-form__evidence" aria-labelledby="bond-evidence-records-title">
+                <h3 id="bond-evidence-records-title">Supporting Evidence</h3>
+                {availableEvidenceRecords.length > 0 ? (
+                  <div className="settings-compact-list">
+                    {availableEvidenceRecords.map((record) => {
+                      const isRequiredEvidence = initialEvidenceRecordIds.includes(record.id);
+                      const selectedText =
+                        record.selectedText.length > 120
+                          ? `${record.selectedText.slice(0, 119)}...`
+                          : record.selectedText;
+
+                      return (
+                        <label key={record.id} className="case-form__field">
+                          <input
+                            type="checkbox"
+                            checked={selectedEvidenceRecordIds.includes(record.id)}
+                            disabled={isRequiredEvidence}
+                            onChange={(event) => {
+                              setSelectedEvidenceRecordIds((currentIds) =>
+                                event.target.checked
+                                  ? [...new Set([...currentIds, record.id])]
+                                  : currentIds.filter((id) => id !== record.id),
+                              );
+                            }}
+                          />
+                          "{selectedText}"
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="case-form__error">No supporting Evidence Records are available for this endpoint pair.</p>
+                )}
+              </section>
+            ) : null}
 
             {submitError ? <p className="case-form__error">{submitError}</p> : null}
 

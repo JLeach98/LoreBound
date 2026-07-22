@@ -92,7 +92,6 @@ export function BoardEvidenceLayer({
   const {
     bonds,
     bondsForDossier,
-    createNewBond,
     updateExistingBond,
     deleteExistingBond,
     refreshBonds,
@@ -113,8 +112,6 @@ export function BoardEvidenceLayer({
   const [selectedCategory, setSelectedCategory] = useState<DossierType>('Character');
   const [selectedPinIds, setSelectedPinIds] = useState<Set<string>>(new Set());
   const [isShowingBonds, setIsShowingBonds] = useState(true);
-  const [bondSourcePinId, setBondSourcePinId] = useState<string | null>(null);
-  const [bondTargetPinId, setBondTargetPinId] = useState<string | null>(null);
   const [selectedBond, setSelectedBond] = useState<Bond | null>(null);
   const [editingBond, setEditingBond] = useState<Bond | null>(null);
   const [deletingBond, setDeletingBond] = useState<Bond | null>(null);
@@ -183,11 +180,6 @@ export function BoardEvidenceLayer({
       ),
     [bonds, pinnedDossierById],
   );
-  const selectedPin = useMemo(() => {
-    const [selectedPinId] = Array.from(selectedPinIds);
-    return boardPins.find((pin) => pin.id === selectedPinId) ?? null;
-  }, [boardPins, selectedPinIds]);
-
   function openDossier(dossier: Dossier, opener: HTMLElement) {
     if (suppressedOpenDossierIdsRef.current.has(dossier.id)) {
       return;
@@ -230,13 +222,6 @@ export function BoardEvidenceLayer({
   async function handleAddToInvestigation(dossier: Dossier, position?: { x: number; y: number }) {
     const pin = await pinDossier(dossier.id, position);
     selectPin(pin.id);
-  }
-
-  async function handleCreateBond(values: BondFormValues) {
-    const createdBond = await createNewBond(values);
-    setSelectedBond(createdBond);
-    setBondSourcePinId(null);
-    setBondTargetPinId(null);
   }
 
   async function handleUpdateBond(values: BondFormValues) {
@@ -395,11 +380,6 @@ export function BoardEvidenceLayer({
 
     event.stopPropagation();
 
-    if (bondSourcePinId && bondSourcePinId !== pin.id) {
-      setBondTargetPinId(pin.id);
-      return;
-    }
-
     selectPin(pin.id);
   }
 
@@ -432,11 +412,6 @@ export function BoardEvidenceLayer({
     const delta = keyMovement[event.key];
 
     if (event.key === 'Enter') {
-      if (bondSourcePinId && bondSourcePinId !== pin.id) {
-        setBondTargetPinId(pin.id);
-        return;
-      }
-
       const dossier = dossiers.find((candidate) => candidate.id === pin.dossierId);
 
       if (dossier) {
@@ -543,20 +518,6 @@ export function BoardEvidenceLayer({
           <button
             type="button"
             className="board-control-button"
-            disabled={!selectedPin}
-            aria-pressed={Boolean(bondSourcePinId)}
-            onClick={() => {
-              setBondSourcePinId((currentPinId) =>
-                currentPinId ? null : selectedPin?.id ?? null,
-              );
-              setBondTargetPinId(null);
-            }}
-          >
-            {bondSourcePinId ? 'Cancel Connect' : 'Connect'}
-          </button>
-          <button
-            type="button"
-            className="board-control-button"
             aria-pressed={isShowingBonds}
             onClick={() => setIsShowingBonds((currentValue) => !currentValue)}
           >
@@ -574,12 +535,6 @@ export function BoardEvidenceLayer({
         data-drop-target={trayDragState?.isOverBoard ? 'true' : 'false'}
         onClick={() => setSelectedPinIds(new Set())}
       >
-        {bondSourcePinId ? (
-          <div className="board-evidence__connect-hint" role="status">
-            Select a second pinned Dossier to create a Bond.
-          </div>
-        ) : null}
-
         {errorMessage ? (
           <div className="board-evidence__alert" role="alert">
             <p>{errorMessage}</p>
@@ -817,20 +772,6 @@ export function BoardEvidenceLayer({
           bondCount={bondsForDossier(deletingDossier.id).length}
           onCancel={() => setDeletingDossier(null)}
           onConfirm={handleDeleteDossier}
-        />
-      ) : null}
-
-      {bondSourcePinId && bondTargetPinId ? (
-        <BondFormDialog
-          dossiers={dossiers}
-          initialSourceDossierId={
-            boardPins.find((pin) => pin.id === bondSourcePinId)?.dossierId
-          }
-          initialTargetDossierId={
-            boardPins.find((pin) => pin.id === bondTargetPinId)?.dossierId
-          }
-          onCancel={() => setBondTargetPinId(null)}
-          onSubmit={handleCreateBond}
         />
       ) : null}
 
