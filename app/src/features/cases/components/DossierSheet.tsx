@@ -51,6 +51,8 @@ import {
 } from '../utils/dossierSections';
 import {
   createEvidenceAnchorContext,
+  formatEvidenceLogSelectedText,
+  getEvidenceLogEntries,
   hasDuplicateEvidenceRecord,
   reconcileEvidenceRecordsForSection,
 } from '../../threadmarks/evidenceRecordSelectors';
@@ -274,6 +276,16 @@ export function DossierSheet({
   const activeThreadmarkTarget = activeThreadmark
     ? dossiers.find((candidate) => candidate.id === activeThreadmark.targetDossierId)
     : null;
+  const evidenceLogEntries = useMemo(
+    () =>
+      getEvidenceLogEntries({
+        records: evidenceRecords,
+        dossiers,
+        caseId: workingDossier.caseId,
+        targetDossierId: workingDossier.id,
+      }),
+    [dossiers, evidenceRecords, workingDossier.caseId, workingDossier.id],
+  );
   const quickDefinition = findRelationshipDefinition(quickRelationshipName);
   const quickSearchResults = useMemo(() => {
     const query = normalizeDossierName(quickConnectedName);
@@ -607,6 +619,41 @@ export function DossierSheet({
 
     nodes.push(text.slice(cursor));
     return nodes;
+  }
+
+  function renderEvidenceLog() {
+    return (
+      <details className="dossier-reveal__section" open>
+        <summary>
+          <h3>Evidence Log</h3>
+        </summary>
+        {evidenceLogEntries.length > 0 ? (
+          <ol className="dossier-bonds__list" aria-label={`${workingDossier.name} Evidence Log`}>
+            {evidenceLogEntries.map((entry) => (
+              <li key={entry.record.id} className="dossier-bonds__item">
+                <article className="dossier-bonds__link">
+                  <span>
+                    <strong>{entry.originDossier.name}</strong>
+                    <small>{entry.originDossier.dossierType}</small>
+                    <blockquote style={{ margin: '0.65rem 0', whiteSpace: 'pre-wrap' }}>
+                      "{formatEvidenceLogSelectedText(entry.record.selectedText)}"
+                    </blockquote>
+                    <small>{formatRecordDate(entry.record.createdAt)}</small>
+                  </span>
+                  {onOpenDossier ? (
+                    <Button type="button" variant="secondary" onClick={() => onOpenDossier(entry.originDossier)}>
+                      Open Origin Dossier
+                    </Button>
+                  ) : null}
+                </article>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="dossier-reveal__empty">No evidence has been linked to this Dossier.</p>
+        )}
+      </details>
+    );
   }
 
   function enterSectionEditMode() {
@@ -1001,6 +1048,8 @@ export function DossierSheet({
               <p className="dossier-reveal__empty">No Evidence Collected</p>
             )}
           </section>
+
+          {renderEvidenceLog()}
 
           {activeThreadmark ? (
             <section

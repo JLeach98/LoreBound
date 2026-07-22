@@ -30,6 +30,8 @@ import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import {
   createEvidenceAnchorContext,
+  formatEvidenceLogSelectedText,
+  getEvidenceLogEntries,
   hasDuplicateEvidenceRecord,
   reconcileEvidenceRecordsForSection,
 } from '../../threadmarks/evidenceRecordSelectors';
@@ -1035,6 +1037,16 @@ function FieldKitDossierView({
   const activeThreadmarkTarget = activeThreadmark
     ? dossiers.find((candidate) => candidate.id === activeThreadmark.targetDossierId)
     : null;
+  const evidenceLogEntries = useMemo(
+    () =>
+      getEvidenceLogEntries({
+        records: evidenceRecords,
+        dossiers,
+        caseId: dossier.caseId,
+        targetDossierId: dossier.id,
+      }),
+    [dossier.caseId, dossier.id, dossiers, evidenceRecords],
+  );
 
   useEffect(() => {
     if (isEditing) {
@@ -1435,6 +1447,35 @@ function FieldKitDossierView({
             </section>
           );
         })}
+
+      <details className="field-kit-file-section" open>
+        <summary>
+          <h3>Evidence Log</h3>
+        </summary>
+        {evidenceLogEntries.length > 0 ? (
+          <ol className="settings-compact-list" aria-label={`${dossier.name} Evidence Log`}>
+            {evidenceLogEntries.map((entry) => (
+              <li key={entry.record.id}>
+                <article>
+                  <strong>{entry.originDossier.name}</strong>
+                  <small>{entry.originDossier.dossierType}</small>
+                  <blockquote style={{ margin: '0.65rem 0', whiteSpace: 'pre-wrap' }}>
+                    "{formatEvidenceLogSelectedText(entry.record.selectedText)}"
+                  </blockquote>
+                  <small>{formatShortDate(entry.record.createdAt)}</small>
+                  <div className="field-kit-dossier-actions">
+                    <Button type="button" variant="secondary" onClick={() => onOpenDossier(entry.originDossier)}>
+                      Open Origin Dossier
+                    </Button>
+                  </div>
+                </article>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>No evidence has been linked to this Dossier.</p>
+        )}
+      </details>
 
       {activeThreadmark ? (
         <section

@@ -1,4 +1,10 @@
 import type { EvidenceRecord } from './evidenceRecordTypes';
+import type { Dossier } from '../cases/types/dossierTypes';
+
+export type EvidenceLogEntry = {
+  record: EvidenceRecord;
+  originDossier: Dossier;
+};
 
 export function getEvidenceRecordsByCaseId(records: readonly EvidenceRecord[], caseId: string) {
   return records.filter((record) => record.caseId === caseId);
@@ -18,6 +24,42 @@ export function getEvidenceRecordsByOriginSectionId(records: readonly EvidenceRe
 
 export function getActiveEvidenceRecords(records: readonly EvidenceRecord[]) {
   return records.filter((record) => record.status === 'active');
+}
+
+export function getEvidenceLogEntries({
+  records,
+  dossiers,
+  caseId,
+  targetDossierId,
+}: {
+  records: readonly EvidenceRecord[];
+  dossiers: readonly Dossier[];
+  caseId: string;
+  targetDossierId: string;
+}): EvidenceLogEntry[] {
+  const dossiersById = new Map(
+    dossiers
+      .filter((dossier) => dossier.caseId === caseId)
+      .map((dossier) => [dossier.id, dossier]),
+  );
+
+  return records
+    .filter((record) => record.status === 'active')
+    .filter((record) => record.caseId === caseId)
+    .filter((record) => record.targetDossierId === targetDossierId)
+    .map((record) => {
+      const originDossier = dossiersById.get(record.originDossierId);
+      return originDossier ? { record, originDossier } : null;
+    })
+    .filter((entry): entry is EvidenceLogEntry => Boolean(entry))
+    .sort(
+      (left, right) =>
+        new Date(left.record.createdAt).getTime() - new Date(right.record.createdAt).getTime(),
+    );
+}
+
+export function formatEvidenceLogSelectedText(value: string, maxLength = 250) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }
 
 export function hasDuplicateEvidenceRecord(
