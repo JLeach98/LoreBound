@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-labelledby="title">
-  <title id="title">LoreBound Apple Touch Icon</title>
-  <rect width="180" height="180" rx="40" fill="#171514"/>
-  <rect x="44" y="30" width="92" height="118" rx="8" fill="#d9c7a8"/>
-  <path d="M58 52h64M58 70h64M58 88h42" stroke="#5c3a26" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="114" cy="112" r="18" fill="none" stroke="#8f1d2c" stroke-width="9"/>
-  <path d="m128 126 20 20" stroke="#b88a3d" stroke-width="10" stroke-linecap="round"/>
-</svg>

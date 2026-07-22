@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
-  <title id="title">LoreBound Maskable</title>
-  <rect width="512" height="512" fill="#171514"/>
-  <circle cx="256" cy="256" r="214" fill="#2f1d14"/>
-  <rect x="132" y="96" width="248" height="320" rx="20" fill="#d9c7a8"/>
-  <path d="M174 156h164M174 204h164M174 252h104" stroke="#5c3a26" stroke-width="21" stroke-linecap="round"/>
-  <circle cx="320" cy="320" r="52" fill="none" stroke="#8f1d2c" stroke-width="25"/>
-  <path d="m360 360 54 54" stroke="#b88a3d" stroke-width="27" stroke-linecap="round"/>
-</svg>
