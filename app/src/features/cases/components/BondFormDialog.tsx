@@ -15,6 +15,7 @@ import type { Dossier, DossierFormValues, DossierType } from '../types/dossierTy
 import { dossierTypeLabels, dossierTypes } from '../types/dossierTypes';
 import { DossierFormDialog } from './DossierFormDialog';
 import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
+import { threadmarkKeyToBondType } from '../../threadmarks/bondThreadmarkCompatibility';
 
 type BondFormDialogProps = {
   dossiers: Dossier[];
@@ -128,15 +129,33 @@ export function BondFormDialog({
   const selectedEvidenceRecords = availableEvidenceRecords.filter((record) =>
     selectedEvidenceRecordIds.includes(record.id),
   );
+  const isRecordBondMode = requireEvidenceRecords && !initialBond && initialEvidenceRecordIds.length > 0;
+  const primaryEvidenceRecord = selectedEvidenceRecords.find((record) =>
+    initialEvidenceRecordIds.includes(record.id),
+  ) ?? selectedEvidenceRecords[0] ?? null;
+  const relationshipKey =
+    typeof primaryEvidenceRecord?.metadata.relationshipKey === 'string'
+      ? primaryEvidenceRecord.metadata.relationshipKey
+      : undefined;
+  const evidenceBondType = relationshipKey ? threadmarkKeyToBondType(relationshipKey) : undefined;
+  const evidenceBondDefinition = evidenceBondType ? findBondDefinition(evidenceBondType) : undefined;
   const endpointsShareCase = !sourceDossier || !targetDossier || sourceDossier.caseId === targetDossier.caseId;
   const canSubmit =
-    Boolean(sourceDossierId) &&
-    Boolean(targetDossierId) &&
-    sourceDossierId !== targetDossierId &&
-    endpointsShareCase &&
-    Boolean(bondType.trim()) &&
-    (!requireEvidenceRecords || selectedEvidenceRecords.length > 0) &&
-    !isSaving;
+    isRecordBondMode
+      ? Boolean(sourceDossierId) &&
+        Boolean(targetDossierId) &&
+        sourceDossierId !== targetDossierId &&
+        endpointsShareCase &&
+        Boolean(evidenceBondDefinition) &&
+        selectedEvidenceRecords.length > 0 &&
+        !isSaving
+      : Boolean(sourceDossierId) &&
+        Boolean(targetDossierId) &&
+        sourceDossierId !== targetDossierId &&
+        endpointsShareCase &&
+        Boolean(bondType.trim()) &&
+        (!requireEvidenceRecords || selectedEvidenceRecords.length > 0) &&
+        !isSaving;
   const reciprocalTargetLabel =
     bondBehavior === 'Directional'
       ? `Connected through ${sourceLabel.trim() || bondType.trim()}`
@@ -193,6 +212,22 @@ export function BondFormDialog({
     setSubmitError(undefined);
 
     try {
+      if (isRecordBondMode && evidenceBondDefinition) {
+        await onSubmit({
+          sourceDossierId,
+          targetDossierId,
+          bondType: evidenceBondDefinition.name,
+          bondBehavior: evidenceBondDefinition.behavior,
+          sourceLabel: evidenceBondDefinition.sourceLabel,
+          targetLabel: evidenceBondDefinition.targetLabel,
+          notes,
+          evidence: {
+            evidenceRecordIds: selectedEvidenceRecords.map((record) => record.id),
+          },
+        });
+        return;
+      }
+
       await onSubmit({
         sourceDossierId,
         targetDossierId,
@@ -227,11 +262,70 @@ export function BondFormDialog({
           aria-modal="true"
           aria-labelledby="bond-dialog-title"
         >
+          {isRecordBondMode ? (
+            <form className="case-form bond-form__record" onSubmit={handleSubmit}>
+              <div className="case-dialog__header">
+                <p>Evidence Conclusion</p>
+                <h2 id="bond-dialog-title">Record Bond</h2>
+              </div>
+
+              <dl className="bond-form__record-summary">
+                <div>
+                  <dt>Relationship</dt>
+                  <dd>{evidenceBondDefinition?.name ?? 'Unavailable'}</dd>
+                </div>
+                <div>
+                  <dt>Origin</dt>
+                  <dd>{sourceDossier?.name ?? 'Unknown Dossier'}</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd>{targetDossier?.name ?? 'Unknown Dossier'}</dd>
+                </div>
+                <div>
+                  <dt>Supporting Evidence</dt>
+                  <dd>
+                    {selectedEvidenceRecords.map((record) => (
+                      <span key={record.id} className="bond-form__evidence-chip">
+                        "{record.selectedText}"
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              </dl>
+
+              <label className="case-form__field" htmlFor="bond-investigator-notes">
+                Investigator Notes
+                <textarea
+                  id="bond-investigator-notes"
+                  rows={4}
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                />
+              </label>
+
+              {!evidenceBondDefinition ? (
+                <p className="case-form__error">
+                  This Evidence Record does not contain a registered relationship.
+                </p>
+              ) : null}
+              {submitError ? <p className="case-form__error">{submitError}</p> : null}
+
+              <div className="case-dialog__actions">
+                <Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="brass" disabled={!canSubmit}>
+                  {isSaving ? 'Recording...' : 'Record Bond'}
+                </Button>
+              </div>
+            </form>
+          ) : (
           <form className="case-form" onSubmit={handleSubmit}>
             <div className="case-dialog__header">
-              <p>{initialBond ? 'Edit Bond' : 'New Bond'}</p>
+              <p>{initialBond ? 'Edit Bond' : 'Bond Record'}</p>
               <h2 id="bond-dialog-title">
-                {initialBond ? 'Edit Connection' : 'Create Connection'}
+                {initialBond ? 'Edit Bond' : 'Record Bond'}
               </h2>
             </div>
 
@@ -506,10 +600,11 @@ export function BondFormDialog({
                 Cancel
               </Button>
               <Button type="submit" variant="brass" disabled={!canSubmit}>
-                {isSaving ? 'Saving...' : 'Save Bond'}
+                {isSaving ? 'Saving...' : initialBond ? 'Save Bond' : 'Record Bond'}
               </Button>
             </div>
           </form>
+          )}
         </section>
       </div>
 

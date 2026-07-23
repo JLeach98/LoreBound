@@ -219,6 +219,7 @@ export function CaseFileDocumentEditor({
     authoringState,
     suggestions: threadmarkSuggestions,
     highlightedSuggestionIndex,
+    menuAnchorPosition,
     updateAuthoringFromCursor,
     selectSuggestion,
     handleKeyDown: handleThreadmarkKeyDown,
@@ -378,6 +379,7 @@ export function CaseFileDocumentEditor({
           suggestions={threadmarkSuggestions}
           highlightedIndex={highlightedSuggestionIndex}
           isMobile={false}
+          anchorPosition={menuAnchorPosition}
           onSelect={selectSuggestion}
         />
       ) : null}

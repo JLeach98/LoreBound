@@ -41,6 +41,7 @@ export function DossierSectionView({
   const { bondsForDossier, refreshBonds } = useBonds();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
+  const [focusedEvidenceRecordId, setFocusedEvidenceRecordId] = useState<string | null>(null);
   const [isSelectedDossierNewDraft, setIsSelectedDossierNewDraft] = useState(false);
   const [shouldOpenSelectedDossierInEditMode, setShouldOpenSelectedDossierInEditMode] = useState(false);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
@@ -132,6 +133,7 @@ export function DossierSectionView({
 
   function closeDossier() {
     setSelectedDossier(null);
+    setFocusedEvidenceRecordId(null);
     setIsSelectedDossierNewDraft(false);
     setShouldOpenSelectedDossierInEditMode(false);
     window.setTimeout(() => lastOpenedControlRef.current?.focus(), 0);
@@ -321,7 +323,13 @@ export function DossierSectionView({
           isNewDraft={isSelectedDossierNewDraft}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveFromBoard}
-          onOpenDossier={setSelectedDossier}
+          focusedEvidenceRecordId={focusedEvidenceRecordId}
+          onOpenDossier={(dossier, options) => {
+            setSelectedDossier(dossier);
+            setFocusedEvidenceRecordId(options?.evidenceRecordId ?? null);
+            setShouldOpenSelectedDossierInEditMode(false);
+            setIsSelectedDossierNewDraft(false);
+          }}
         />
       ) : null}
 

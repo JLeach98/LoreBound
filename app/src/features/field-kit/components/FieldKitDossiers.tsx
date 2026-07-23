@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { createStableId } from '../../../lib/stableId';
 import {
@@ -32,6 +32,7 @@ import {
   reconcileEvidenceRecordsForSection,
 } from '../../threadmarks/evidenceRecordSelectors';
 import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
+import { threadmarkKeyToBondType } from '../../threadmarks/bondThreadmarkCompatibility';
 import {
   builtInSectionTemplates,
   createDefaultDossierSections,
@@ -301,6 +302,11 @@ function FieldKitDossierRow({ dossier, onOpen, getBondCount }: FieldKitDossierRo
   );
 }
 
+function canRecordBondFromEvidence(record: EvidenceRecord) {
+  return typeof record.metadata.relationshipKey === 'string' &&
+    Boolean(threadmarkKeyToBondType(record.metadata.relationshipKey));
+}
+
 export function FieldKitDossiers({
   initialType = 'Character',
   initialDossierId,
@@ -321,6 +327,7 @@ export function FieldKitDossiers({
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
+  const [highlightedEvidenceRecordId, setHighlightedEvidenceRecordId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<DossierEditorState>(null);
   const [isEditingDossier, setIsEditingDossier] = useState(false);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
@@ -684,15 +691,18 @@ export function FieldKitDossiers({
           dossiers={safeDossiers}
           bonds={bondsForDossier(selectedDossier.id)}
           evidenceRecords={evidenceRecords}
+          highlightedEvidenceRecordId={highlightedEvidenceRecordId}
           isPinned={isDossierPinned(selectedDossier.id)}
           isEditing={isEditingDossier}
           onBack={() => {
             setIsEditingDossier(false);
+            setHighlightedEvidenceRecordId(null);
             setSelectedDossier(null);
           }}
-          onOpenDossier={(dossier) => {
+          onOpenDossier={(dossier, options) => {
             setIsEditingDossier(false);
             setSelectedDossier(dossier);
+            setHighlightedEvidenceRecordId(options?.evidenceRecordId ?? null);
           }}
           onEnterEdit={() => setIsEditingDossier(true)}
           onDoneEditing={() => setIsEditingDossier(false)}
@@ -719,7 +729,10 @@ export function FieldKitDossiers({
               onRemoveFromBoard={async (dossier) => {
                 await removeDossierFromBoard(dossier.id);
               }}
-              onOpenDossier={setSelectedDossier}
+              onOpenDossier={(dossier, options) => {
+                setSelectedDossier(dossier);
+                setHighlightedEvidenceRecordId(options?.evidenceRecordId ?? null);
+              }}
             />
           ) : null}
           {creatingBondFromEvidence ? (
@@ -867,11 +880,12 @@ type FieldKitDossierViewProps = {
   dossiers: Dossier[];
   bonds: Bond[];
   evidenceRecords: EvidenceRecord[];
+  highlightedEvidenceRecordId?: string | null;
   isPinned: boolean;
   isEditing: boolean;
   children: ReactNode;
   onBack: () => void;
-  onOpenDossier: (dossier: Dossier) => void;
+  onOpenDossier: (dossier: Dossier, options?: { evidenceRecordId?: string }) => void;
   onEnterEdit: () => void;
   onDoneEditing: () => void;
   onSaveSections: (dossier: Dossier, sections: DossierSection[]) => Promise<Dossier>;
@@ -894,6 +908,7 @@ function FieldKitDossierView({
   dossiers,
   bonds,
   evidenceRecords,
+  highlightedEvidenceRecordId,
   isPinned,
   isEditing,
   children,
@@ -928,6 +943,10 @@ function FieldKitDossierView({
   const [lastSaveStatus, setLastSaveStatus] = useState('Not saved this session');
   const [mobileChangeDetected, setMobileChangeDetected] = useState(false);
   const [activeThreadmarkId, setActiveThreadmarkId] = useState<string | null>(null);
+  const [activeEvidenceHighlightId, setActiveEvidenceHighlightId] = useState<string | null>(
+    highlightedEvidenceRecordId ?? null,
+  );
+  const evidenceEntryRefs = useRef(new Map<string, HTMLLIElement>());
   const typeConfig = getKnowledgeTypeConfig(dossier.dossierType);
   const typeConfigurationFound = hasKnowledgeTypeConfig(dossier.dossierType);
   const dossierSections = useMemo(() => ensureDossierSections(dossier), [dossier]);
@@ -1011,6 +1030,25 @@ function FieldKitDossierView({
       }),
     [dossier.caseId, dossier.id, dossiers, evidenceRecords],
   );
+
+  useEffect(() => {
+    setActiveEvidenceHighlightId(highlightedEvidenceRecordId ?? null);
+  }, [highlightedEvidenceRecordId, dossier.id]);
+
+  useEffect(() => {
+    if (!activeEvidenceHighlightId) {
+      return undefined;
+    }
+
+    window.requestAnimationFrame(() => {
+      evidenceEntryRefs.current.get(activeEvidenceHighlightId)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    });
+    const timeoutId = window.setTimeout(() => setActiveEvidenceHighlightId(null), 4200);
+    return () => window.clearTimeout(timeoutId);
+  }, [activeEvidenceHighlightId, evidenceLogEntries.length]);
 
   useEffect(() => {
     if (isEditing) {
@@ -1404,7 +1442,16 @@ function FieldKitDossierView({
                   updateSectionBody,
                   evidenceRecords,
                   onCreateEvidenceRecord,
-                  (record) => setActiveThreadmarkId(record.id),
+                  (record) => {
+                    const targetDossier = dossiers.find((candidate) => candidate.id === record.targetDossierId);
+
+                    if (targetDossier) {
+                      onOpenDossier(targetDossier, { evidenceRecordId: record.id });
+                      return;
+                    }
+
+                    setActiveThreadmarkId(record.id);
+                  },
                   setSectionNotice,
                 )
               )}
@@ -1419,21 +1466,36 @@ function FieldKitDossierView({
         {evidenceLogEntries.length > 0 ? (
           <ol className="settings-compact-list" aria-label={`${dossier.name} Evidence Log`}>
             {evidenceLogEntries.map((entry) => (
-              <li key={entry.record.id}>
+              <li
+                key={entry.record.id}
+                ref={(element) => {
+                  if (element) {
+                    evidenceEntryRefs.current.set(entry.record.id, element);
+                  } else {
+                    evidenceEntryRefs.current.delete(entry.record.id);
+                  }
+                }}
+                data-highlighted={activeEvidenceHighlightId === entry.record.id ? 'true' : undefined}
+              >
                 <article>
-                  <strong>{entry.originDossier.name}</strong>
+                  <button
+                    type="button"
+                    className="dossier-evidence-origin-link"
+                    onClick={() => onOpenDossier(entry.originDossier)}
+                  >
+                    {entry.originDossier.name}
+                  </button>
                   <small>{entry.originDossier.dossierType}</small>
                   <blockquote style={{ margin: '0.65rem 0', whiteSpace: 'pre-wrap' }}>
                     "{formatEvidenceLogSelectedText(entry.record.selectedText)}"
                   </blockquote>
                   <small>{formatShortDate(entry.record.createdAt)}</small>
                   <div className="field-kit-dossier-actions">
-                    <Button type="button" variant="secondary" onClick={() => onOpenDossier(entry.originDossier)}>
-                      Open Origin Dossier
-                    </Button>
-                    <Button type="button" variant="brass" onClick={() => onCreateBondFromEvidence(entry)}>
-                      Create Bond
-                    </Button>
+                    {canRecordBondFromEvidence(entry.record) ? (
+                      <Button type="button" variant="brass" onClick={() => onCreateBondFromEvidence(entry)}>
+                        Record Bond
+                      </Button>
+                    ) : null}
                   </div>
                 </article>
               </li>

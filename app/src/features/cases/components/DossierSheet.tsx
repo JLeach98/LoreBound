@@ -46,6 +46,7 @@ import {
   reconcileEvidenceRecordsForSection,
 } from '../../threadmarks/evidenceRecordSelectors';
 import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
+import { threadmarkKeyToBondType } from '../../threadmarks/bondThreadmarkCompatibility';
 import { BondFormDialog } from './BondFormDialog';
 import { CaseFileDocumentEditor } from './CaseFileDocumentEditor';
 import { CoverImageInput } from './CoverImageInput';
@@ -59,7 +60,8 @@ type DossierSheetProps = {
   isNewDraft?: boolean;
   isPinned?: boolean;
   onRemoveFromBoard?: (dossier: Dossier) => void;
-  onOpenDossier?: (dossier: Dossier) => void;
+  focusedEvidenceRecordId?: string | null;
+  onOpenDossier?: (dossier: Dossier, options?: { evidenceRecordId?: string }) => void;
 };
 
 type DisplayField = {
@@ -147,6 +149,11 @@ function getBondEvidenceCount(bond: Bond) {
   return evidenceNoteCount + (bond.evidence.evidenceRecordIds?.length ?? 0);
 }
 
+function canRecordBondFromEvidence(record: EvidenceRecord) {
+  return typeof record.metadata.relationshipKey === 'string' &&
+    Boolean(threadmarkKeyToBondType(record.metadata.relationshipKey));
+}
+
 function threadmarkButtonStyle(isDark = false) {
   return {
     background: 'transparent',
@@ -171,6 +178,7 @@ export function DossierSheet({
   isNewDraft = false,
   isPinned = false,
   onRemoveFromBoard,
+  focusedEvidenceRecordId,
   onOpenDossier,
 }: DossierSheetProps) {
   const { dossiers, createNewDossier, updateExistingDossier } = useDossiers();
@@ -182,6 +190,8 @@ export function DossierSheet({
   } = useBonds();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const documentRef = useRef<HTMLElement>(null);
+  const evidenceLogRef = useRef<HTMLDetailsElement>(null);
+  const evidenceEntryRefs = useRef(new Map<string, HTMLLIElement>());
   const [workingDossier, setWorkingDossier] = useState(dossier);
   const [isDraftNewDossier, setIsDraftNewDossier] = useState(isNewDraft);
   const [creatingBondFromEvidence, setCreatingBondFromEvidence] = useState<EvidenceLogEntry | null>(null);
@@ -195,6 +205,9 @@ export function DossierSheet({
   const [detailSaveError, setDetailSaveError] = useState<string | undefined>();
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
   const [activeThreadmarkId, setActiveThreadmarkId] = useState<string | null>(null);
+  const [highlightedEvidenceRecordId, setHighlightedEvidenceRecordId] = useState<string | null>(
+    focusedEvidenceRecordId ?? null,
+  );
   const sections = useMemo(() => ensureDossierSections(workingDossier), [workingDossier]);
   const caseFileSections = useMemo(
     () => getVisibleCaseFileSections(sections),
@@ -271,6 +284,26 @@ export function DossierSheet({
     void refreshEvidenceRecords(dossier.caseId);
     setActiveThreadmarkId(null);
   }, [dossier.caseId, dossier.id]);
+
+  useEffect(() => {
+    setHighlightedEvidenceRecordId(focusedEvidenceRecordId ?? null);
+  }, [focusedEvidenceRecordId, dossier.id]);
+
+  useEffect(() => {
+    if (!highlightedEvidenceRecordId) {
+      return undefined;
+    }
+
+    evidenceLogRef.current?.setAttribute('open', '');
+    window.requestAnimationFrame(() => {
+      evidenceEntryRefs.current.get(highlightedEvidenceRecordId)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+    });
+    const timeoutId = window.setTimeout(() => setHighlightedEvidenceRecordId(null), 4200);
+    return () => window.clearTimeout(timeoutId);
+  }, [highlightedEvidenceRecordId, evidenceLogEntries.length]);
 
   useEffect(() => {
     if (initialEditMode) {
@@ -468,15 +501,28 @@ export function DossierSheet({
       }
 
       nodes.push(text.slice(cursor, localStart));
+      const targetDossier = dossiers.find((candidate) => candidate.id === record.targetDossierId);
       nodes.push(
         <button
           key={record.id}
           type="button"
           style={threadmarkButtonStyle(isDark)}
-          onClick={() => setActiveThreadmarkId(record.id)}
+          onClick={() => {
+            if (targetDossier && onOpenDossier) {
+              onOpenDossier(targetDossier, { evidenceRecordId: record.id });
+              return;
+            }
+
+            setActiveThreadmarkId(record.id);
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
+              if (targetDossier && onOpenDossier) {
+                onOpenDossier(targetDossier, { evidenceRecordId: record.id });
+                return;
+              }
+
               setActiveThreadmarkId(record.id);
             }
           }}
@@ -493,31 +539,49 @@ export function DossierSheet({
 
   function renderEvidenceLog() {
     return (
-      <details className="dossier-reveal__section" open>
+      <details ref={evidenceLogRef} className="dossier-reveal__section" open>
         <summary>
           <h3>Evidence Log</h3>
         </summary>
         {evidenceLogEntries.length > 0 ? (
           <ol className="dossier-bonds__list" aria-label={`${workingDossier.name} Evidence Log`}>
             {evidenceLogEntries.map((entry) => (
-              <li key={entry.record.id} className="dossier-bonds__item">
+              <li
+                key={entry.record.id}
+                ref={(element) => {
+                  if (element) {
+                    evidenceEntryRefs.current.set(entry.record.id, element);
+                  } else {
+                    evidenceEntryRefs.current.delete(entry.record.id);
+                  }
+                }}
+                className="dossier-bonds__item"
+                data-highlighted={highlightedEvidenceRecordId === entry.record.id ? 'true' : undefined}
+              >
                 <article className="dossier-bonds__link">
                   <span>
-                    <strong>{entry.originDossier.name}</strong>
+                    {onOpenDossier ? (
+                      <button
+                        type="button"
+                        className="dossier-evidence-origin-link"
+                        onClick={() => onOpenDossier(entry.originDossier)}
+                      >
+                        {entry.originDossier.name}
+                      </button>
+                    ) : (
+                      <strong>{entry.originDossier.name}</strong>
+                    )}
                     <small>{entry.originDossier.dossierType}</small>
                     <blockquote style={{ margin: '0.65rem 0', whiteSpace: 'pre-wrap' }}>
                       "{formatEvidenceLogSelectedText(entry.record.selectedText)}"
                     </blockquote>
                     <small>{formatRecordDate(entry.record.createdAt)}</small>
                   </span>
-                  {onOpenDossier ? (
-                    <Button type="button" variant="secondary" onClick={() => onOpenDossier(entry.originDossier)}>
-                      Open Origin Dossier
+                  {canRecordBondFromEvidence(entry.record) ? (
+                    <Button type="button" variant="brass" onClick={() => setCreatingBondFromEvidence(entry)}>
+                      Record Bond
                     </Button>
                   ) : null}
-                  <Button type="button" variant="brass" onClick={() => setCreatingBondFromEvidence(entry)}>
-                    Create Bond
-                  </Button>
                 </article>
               </li>
             ))}

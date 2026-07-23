@@ -107,6 +107,7 @@ export function BoardEvidenceLayer({
     isDossierPinned,
   } = useBoard();
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
+  const [focusedEvidenceRecordId, setFocusedEvidenceRecordId] = useState<string | null>(null);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
   const [isTrayOpen, setIsTrayOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<DossierType>('Character');
@@ -195,6 +196,7 @@ export function BoardEvidenceLayer({
 
   function closeDossier() {
     setSelectedDossier(null);
+    setFocusedEvidenceRecordId(null);
     window.setTimeout(() => lastOpenedControlRef.current?.focus(), 0);
   }
 
@@ -762,7 +764,11 @@ export function BoardEvidenceLayer({
           onDelete={setDeletingDossier}
           isPinned={isDossierPinned(selectedDossier.id)}
           onRemoveFromBoard={handleRemoveDossierFromBoard}
-          onOpenDossier={setSelectedDossier}
+          focusedEvidenceRecordId={focusedEvidenceRecordId}
+          onOpenDossier={(dossier, options) => {
+            setSelectedDossier(dossier);
+            setFocusedEvidenceRecordId(options?.evidenceRecordId ?? null);
+          }}
         />
       ) : null}
 

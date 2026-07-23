@@ -42,6 +42,7 @@ export function ThreadmarkAuthoringTextarea({
     authoringState,
     suggestions,
     highlightedSuggestionIndex,
+    menuAnchorPosition,
     updateAuthoringFromCursor,
     selectSuggestion,
     handleKeyDown,
@@ -121,6 +122,7 @@ export function ThreadmarkAuthoringTextarea({
           suggestions={suggestions}
           highlightedIndex={highlightedSuggestionIndex}
           isMobile={isMobile}
+          anchorPosition={menuAnchorPosition}
           onSelect={selectSuggestion}
         />
       ) : null}

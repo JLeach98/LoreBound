@@ -26,6 +26,63 @@ import { replaceThreadmarkTextRange } from './threadmarkTextInsertion';
 
 const closedRange = Object.freeze({ start: 0, end: 0 });
 
+function getTextareaCaretAnchor(textarea: HTMLTextAreaElement, value: string, offset: number) {
+  const computedStyle = window.getComputedStyle(textarea);
+  const mirror = document.createElement('div');
+  const marker = document.createElement('span');
+  const styleProperties = [
+    'boxSizing',
+    'width',
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'fontStyle',
+    'letterSpacing',
+    'textTransform',
+    'wordSpacing',
+    'lineHeight',
+    'paddingTop',
+    'paddingRight',
+    'paddingBottom',
+    'paddingLeft',
+    'borderTopWidth',
+    'borderRightWidth',
+    'borderBottomWidth',
+    'borderLeftWidth',
+    'whiteSpace',
+    'wordBreak',
+    'overflowWrap',
+    'tabSize',
+  ] as const;
+
+  styleProperties.forEach((property) => {
+    mirror.style[property] = computedStyle[property];
+  });
+
+  mirror.style.position = 'absolute';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.visibility = 'hidden';
+  mirror.style.overflow = 'hidden';
+  mirror.style.minHeight = '0';
+  mirror.style.height = 'auto';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.wordWrap = 'break-word';
+  mirror.textContent = value.slice(0, offset);
+  marker.textContent = value.slice(offset, offset + 1) || '\u200b';
+  mirror.append(marker);
+  document.body.append(mirror);
+
+  const lineHeight = Number.parseFloat(computedStyle.lineHeight) || Number.parseFloat(computedStyle.fontSize) * 1.4;
+  const anchor = {
+    left: Math.min(textarea.clientWidth - 12, Math.max(0, marker.offsetLeft - textarea.scrollLeft)),
+    top: Math.max(0, marker.offsetTop - textarea.scrollTop + lineHeight + 6),
+  };
+
+  mirror.remove();
+  return anchor;
+}
+
 function createIdleState({
   editorId,
   dossierId,
@@ -126,10 +183,28 @@ export function useThreadmarkAuthoring({
       sourceKnowledgeType: dossier.dossierType,
     }),
   );
+  const [menuAnchorPosition, setMenuAnchorPosition] = useState<{ left: number; top: number } | undefined>();
   const [insertionFailureCount, setInsertionFailureCount] = useState(0);
   const [selectionInserted, setSelectionInserted] = useState(false);
 
+  function updateMenuAnchorPosition(cursorOffset: number) {
+    if (isMobile) {
+      setMenuAnchorPosition(undefined);
+      return;
+    }
+
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      setMenuAnchorPosition(undefined);
+      return;
+    }
+
+    setMenuAnchorPosition(getTextareaCaretAnchor(textarea, value, cursorOffset));
+  }
+
   function closeSuggestions(nextState: ThreadmarkAuthoringState['state'] = 'dismissed') {
+    setMenuAnchorPosition(undefined);
     setAuthoringState((current) =>
       Object.freeze({
         ...current,
@@ -150,6 +225,7 @@ export function useThreadmarkAuthoring({
       const selectedText = value.slice(cursorOffset, selectionEnd);
 
       if (onCreateEvidenceRecord && selectionEnd > cursorOffset && selectedText.trim()) {
+        updateMenuAnchorPosition(selectionEnd);
         setAuthoringState(
           Object.freeze({
             state: 'targetSearch',
@@ -174,6 +250,7 @@ export function useThreadmarkAuthoring({
       const relationshipContext = getRelationshipFragmentBeforeCursor(value, cursorOffset);
 
       if (relationshipContext) {
+        updateMenuAnchorPosition(cursorOffset);
         setAuthoringState(
           Object.freeze({
             state: 'relationshipSearch',
@@ -198,6 +275,7 @@ export function useThreadmarkAuthoring({
       const targetContext = getTargetFragmentFromParse(value, cursorOffset);
 
       if (targetContext) {
+        updateMenuAnchorPosition(cursorOffset);
         setAuthoringState(
           Object.freeze({
             state: 'targetSearch',
@@ -312,6 +390,9 @@ export function useThreadmarkAuthoring({
         const result = replaceThreadmarkTextRange(value, authoringState.replacementRange, insertion);
         onChange(result.value);
         setSelectionInserted(true);
+        setMenuAnchorPosition(
+          textareaRef.current ? getTextareaCaretAnchor(textareaRef.current, result.value, result.cursorOffset) : undefined,
+        );
         setAuthoringState((current) =>
           Object.freeze({
             ...current,
@@ -436,6 +517,7 @@ export function useThreadmarkAuthoring({
     authoringState,
     suggestions,
     highlightedSuggestionIndex: authoringState.highlightedSuggestionIndex,
+    menuAnchorPosition,
     updateAuthoringFromCursor,
     closeSuggestions,
     selectSuggestion,
