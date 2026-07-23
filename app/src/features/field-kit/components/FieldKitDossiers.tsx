@@ -28,6 +28,7 @@ import {
   createDefaultDossierSections,
   ensureDossierSections,
 } from '../../cases/utils/dossierSections';
+import { getCaseFileBlockType } from '../../cases/utils/dossierBlocks';
 import {
   fieldKitDossierPluralLabels,
   fieldKitDossierTypes,
@@ -799,9 +800,11 @@ function FieldKitDossierView({
     () =>
       dossierSections
         .filter((section) => section.kind !== 'relationships')
+        .filter((section) => section.kind !== 'identity')
         .filter(hasReadableFieldKitSection),
     [dossierSections],
   );
+  const metadataRows = useMemo(() => getFieldKitMetadataRows(dossier), [dossier]);
   const displayBonds = useMemo(
     () =>
       bonds
@@ -925,6 +928,14 @@ function FieldKitDossierView({
         </div>
       </div>
 
+      {metadataRows.length > 0 ? (
+        <dl className="field-kit-dossier-metadata" aria-label={`${dossier.name} metadata`}>
+          {metadataRows.map((field) => (
+            <InfoRow key={field.label} label={field.label} value={field.value} />
+          ))}
+        </dl>
+      ) : null}
+
       <div className="field-kit-dossier-actions">
         <Button type="button" variant="brass" onClick={onEditDossier} aria-label={`Edit ${dossier.name}`}>
           Edit Dossier
@@ -963,10 +974,10 @@ function FieldKitDossierView({
         ) : null}
       </div>
 
-      {visibleContentSections
-        .map((section) => (
-          <section key={section.id} className="field-kit-file-section field-kit-reading-section">
-            {renderFieldKitReadingSection({
+      <article className="field-kit-dossier-document" aria-label={`${dossier.name} document`}>
+        {visibleContentSections.length > 0 ? (
+          visibleContentSections.map((section) =>
+            renderFieldKitReadingSection({
               section,
               dossier,
               evidenceRecords,
@@ -980,11 +991,14 @@ function FieldKitDossierView({
 
                 setActiveThreadmarkId(record.id);
               },
-            })}
-          </section>
-        ))}
+            }),
+          )
+        ) : (
+          <p className="field-kit-section-empty">No dossier notes have been recorded.</p>
+        )}
+      </article>
 
-      <details className="field-kit-file-section" open>
+      <details className="field-kit-file-module" open>
         <summary>
           <h3>Evidence Log</h3>
         </summary>
@@ -1033,7 +1047,7 @@ function FieldKitDossierView({
 
       {activeThreadmark ? (
         <section
-          className="field-kit-file-section"
+          className="field-kit-file-module"
           role="dialog"
           aria-label="Threadmark preview"
           onKeyDown={(event) => {
@@ -1086,14 +1100,14 @@ function FieldKitDossierView({
         </section>
       ) : null}
 
-      <section className="field-kit-file-section">
+      <section className="field-kit-file-module field-kit-record-details">
           <h3>Record Details</h3>
           <dl className="settings-compact-list">
             <InfoRow label="Modified" value={formatShortDate(dossier.dateModified)} />
           </dl>
       </section>
 
-      <section className="field-kit-file-section">
+      <section className="field-kit-file-module">
         <div className="field-kit-section-heading">
           <h3>Bonds</h3>
         </div>
@@ -1147,29 +1161,44 @@ function renderFieldKitThreadmarkedText({
   dossier,
   evidenceRecords,
   onActivate,
+  offset,
 }: {
   text: string;
   section: DossierSection;
   dossier: Dossier;
   evidenceRecords: EvidenceRecord[];
   onActivate: (record: EvidenceRecord) => void;
+  offset?: number;
 }) {
+  const anchorOffset = offset ?? 0;
   const records = evidenceRecords
     .filter((record) => record.status === 'active')
     .filter((record) => record.caseId === dossier.caseId)
     .filter((record) => record.originDossierId === dossier.id)
     .filter((record) => record.originSectionId === section.id)
-    .filter((record) => text.slice(record.anchorStart, record.anchorEnd) === record.selectedText)
+    .filter((record) => {
+      const relativeStart = record.anchorStart - anchorOffset;
+      const relativeEnd = record.anchorEnd - anchorOffset;
+
+      return (
+        relativeStart >= 0 &&
+        relativeEnd <= text.length &&
+        text.slice(relativeStart, relativeEnd) === record.selectedText
+      );
+    })
     .sort((left, right) => left.anchorStart - right.anchorStart);
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
   records.forEach((record) => {
-    if (record.anchorStart < cursor) {
+    const relativeStart = record.anchorStart - anchorOffset;
+    const relativeEnd = record.anchorEnd - anchorOffset;
+
+    if (relativeStart < cursor) {
       return;
     }
 
-    nodes.push(text.slice(cursor, record.anchorStart));
+    nodes.push(text.slice(cursor, relativeStart));
     nodes.push(
       <button
         key={record.id}
@@ -1192,10 +1221,10 @@ function renderFieldKitThreadmarkedText({
           }
         }}
       >
-        {text.slice(record.anchorStart, record.anchorEnd)}
+        {text.slice(relativeStart, relativeEnd)}
       </button>,
     );
-    cursor = record.anchorEnd;
+    cursor = relativeEnd;
   });
 
   nodes.push(text.slice(cursor));
@@ -1226,6 +1255,7 @@ function renderFieldKitReadingSection({
   onActivateEvidenceRecord: (record: EvidenceRecord) => void;
 }) {
   const body = section.body?.trim() ?? '';
+  const blockType = getCaseFileBlockType(section);
 
   if (section.kind === 'identity') {
     return section.fields?.length ? (
@@ -1266,14 +1296,61 @@ function renderFieldKitReadingSection({
     );
   }
 
+  if (blockType === 'divider') {
+    return <hr key={section.id} className="field-kit-document-divider" />;
+  }
+
   if (!body) {
     return null;
   }
 
-  return (
-    <>
-      <h3>{section.title}</h3>
-      <p>
+  if (blockType === 'section-heading') {
+    return (
+      <h3 key={section.id} className="field-kit-document-heading">
+        {body || section.title}
+      </h3>
+    );
+  }
+
+  if (blockType === 'bulleted-list' || blockType === 'numbered-list') {
+    const listItems = body
+      .split(/\n+/)
+      .map((item) => item.replace(/^[-\d.\s]+/, '').trim())
+      .filter(Boolean);
+    let searchOffset = 0;
+    const listItemsWithOffsets = listItems.map((item) => {
+      const offset = Math.max(0, body.indexOf(item, searchOffset));
+      searchOffset = offset + item.length;
+      return { item, offset };
+    });
+
+    if (listItemsWithOffsets.length === 0) {
+      return null;
+    }
+
+    const ListTag = blockType === 'bulleted-list' ? 'ul' : 'ol';
+
+    return (
+      <ListTag key={section.id} className="field-kit-document-list">
+        {listItemsWithOffsets.map(({ item, offset }) => (
+          <li key={`${section.id}-${offset}`}>
+            {renderFieldKitThreadmarkedText({
+              text: item,
+              section,
+              dossier,
+              evidenceRecords,
+              onActivate: onActivateEvidenceRecord,
+              offset,
+            })}
+          </li>
+        ))}
+      </ListTag>
+    );
+  }
+
+  if (blockType === 'quote') {
+    return (
+      <blockquote key={section.id} className="field-kit-document-quote">
         {renderFieldKitThreadmarkedText({
           text: body,
           section,
@@ -1281,9 +1358,71 @@ function renderFieldKitReadingSection({
           evidenceRecords,
           onActivate: onActivateEvidenceRecord,
         })}
-      </p>
-    </>
+      </blockquote>
+    );
+  }
+
+  const shouldShowSectionTitle =
+    section.kind === 'custom' &&
+    section.title.trim() &&
+    section.title !== 'Paragraph' &&
+    section.title !== 'Overview' &&
+    section.title !== 'Investigation Notes';
+  let paragraphSearchOffset = 0;
+  const paragraphsWithOffsets = body.split(/\n{2,}/).map((paragraph) => {
+    const offset = Math.max(0, body.indexOf(paragraph, paragraphSearchOffset));
+    paragraphSearchOffset = offset + paragraph.length;
+    return { paragraph, offset };
+  });
+
+  return (
+    <section key={section.id} className="field-kit-document-section">
+      {shouldShowSectionTitle ? <h3>{section.title}</h3> : null}
+      {paragraphsWithOffsets.map(({ paragraph, offset }) => (
+        <p key={`${section.id}-paragraph-${offset}`}>
+          {renderFieldKitThreadmarkedText({
+            text: paragraph,
+            section,
+            dossier,
+            evidenceRecords,
+            onActivate: onActivateEvidenceRecord,
+            offset,
+          })}
+        </p>
+      ))}
+    </section>
   );
+}
+
+function getFieldKitMetadataRows(dossier: Dossier) {
+  const fieldsByType: Record<DossierType, Array<{ label: string; value?: string }>> = {
+    Character: [
+      { label: 'Alias', value: dossier.alias },
+      { label: 'Status', value: dossier.characterStatus },
+      { label: 'Affiliation', value: dossier.affiliation },
+    ],
+    Location: [
+      { label: 'Region', value: dossier.region },
+      { label: 'World', value: dossier.world },
+    ],
+    Event: [
+      { label: 'Date', value: dossier.eventDate },
+      { label: 'Era', value: dossier.era },
+    ],
+    Organization: [
+      { label: 'Leader', value: dossier.leader },
+      { label: 'Type', value: dossier.organizationType },
+    ],
+    Theory: [
+      { label: 'Confidence', value: dossier.theoryConfidence },
+      { label: 'Status', value: dossier.theoryStatus },
+    ],
+    Artifact: [],
+  };
+
+  return fieldsByType[dossier.dossierType]
+    .map((field) => ({ label: field.label, value: field.value?.trim() ?? '' }))
+    .filter((field) => field.value);
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
