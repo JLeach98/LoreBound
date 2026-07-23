@@ -62,6 +62,8 @@ type DossierSheetProps = {
   onRemoveFromBoard?: (dossier: Dossier) => void;
   focusedEvidenceRecordId?: string | null;
   onOpenDossier?: (dossier: Dossier, options?: { evidenceRecordId?: string }) => void;
+  closeAfterSave?: boolean;
+  closeAfterCancel?: boolean;
 };
 
 type DisplayField = {
@@ -180,6 +182,8 @@ export function DossierSheet({
   onRemoveFromBoard,
   focusedEvidenceRecordId,
   onOpenDossier,
+  closeAfterSave = false,
+  closeAfterCancel = false,
 }: DossierSheetProps) {
   const { dossiers, createNewDossier, updateExistingDossier } = useDossiers();
   const {
@@ -639,6 +643,10 @@ export function DossierSheet({
       });
       setIsEditingSections(false);
       setSectionNotice('Investigation Updated');
+
+      if (closeAfterSave) {
+        onClose();
+      }
     } catch (error) {
       if (isDraftNewDossier) {
         setDetailSaveError(
@@ -658,6 +666,11 @@ export function DossierSheet({
 
   function cancelSectionDraft() {
     if (isDraftNewDossier) {
+      onClose();
+      return;
+    }
+
+    if (closeAfterCancel) {
       onClose();
       return;
     }

@@ -136,6 +136,10 @@ function getTargetFragmentFromParse(value: string, cursorOffset: number) {
     return null;
   }
 
+  if (activeResult.status === 'valid' && cursorOffset >= activeResult.endOffset) {
+    return null;
+  }
+
   const targetStart = activeResult.rawText.lastIndexOf('@');
   const absoluteTargetStart = activeResult.startOffset + targetStart + 1;
 

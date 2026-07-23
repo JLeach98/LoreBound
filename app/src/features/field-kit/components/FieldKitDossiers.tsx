@@ -1,10 +1,6 @@
 import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/ui/Button';
-import { createStableId } from '../../../lib/stableId';
-import {
-  isThreadmarkGeneratedBond,
-  ThreadmarkAuthoringTextarea,
-} from '../../threadmarks';
+import { isThreadmarkGeneratedBond } from '../../threadmarks';
 import { BondFormDialog } from '../../cases/components/BondFormDialog';
 import { DossierSheet } from '../../cases/components/DossierSheet';
 import { useBonds } from '../../cases/context/BondContext';
@@ -15,7 +11,6 @@ import type { Bond, BondFormValues } from '../../cases/types/bondTypes';
 import type {
   Dossier,
   DossierSection,
-  DossierSectionKind,
   DossierType,
 } from '../../cases/types/dossierTypes';
 import { syncService } from '../../../services/sync/SyncService';
@@ -23,28 +18,15 @@ import { requestAutomaticSynchronization } from '../../../services/sync/Automati
 import type { SyncPlan } from '../../../services/sync/SyncTypes';
 import { evidenceRecordRepository } from '../../../repositories/EvidenceRecordRepository';
 import {
-  createEvidenceAnchorContext,
-  createMissingEvidenceRecordsFromThreadmarks,
   type EvidenceLogEntry,
   formatEvidenceLogSelectedText,
   getEvidenceLogEntries,
-  hasDuplicateEvidenceRecord,
-  reconcileEvidenceRecordsForSection,
 } from '../../threadmarks/evidenceRecordSelectors';
 import type { EvidenceRecord } from '../../threadmarks/evidenceRecordTypes';
 import { threadmarkKeyToBondType } from '../../threadmarks/bondThreadmarkCompatibility';
 import {
-  builtInSectionTemplates,
   createDefaultDossierSections,
-  createSectionFromTemplate,
-  dossierToFormValues,
-  duplicateSection,
   ensureDossierSections,
-  getSectionCapabilities,
-  normalizeSectionOrder,
-  readCustomSectionTemplates,
-  saveCustomSectionTemplate,
-  type SectionTemplate,
 } from '../../cases/utils/dossierSections';
 import {
   fieldKitDossierPluralLabels,
@@ -315,7 +297,7 @@ export function FieldKitDossiers({
   onReturnToFieldKit,
 }: FieldKitDossiersProps) {
   const { activeCase } = useCases();
-  const { dossiers, updateExistingDossier, deleteExistingDossier, refreshDossiers } = useDossiers();
+  const { dossiers, deleteExistingDossier, refreshDossiers } = useDossiers();
   const {
     createNewBond,
     refreshBonds,
@@ -329,7 +311,6 @@ export function FieldKitDossiers({
   const [selectedDossier, setSelectedDossier] = useState<Dossier | null>(null);
   const [highlightedEvidenceRecordId, setHighlightedEvidenceRecordId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<DossierEditorState>(null);
-  const [isEditingDossier, setIsEditingDossier] = useState(false);
   const [deletingDossier, setDeletingDossier] = useState<Dossier | null>(null);
   const [creatingBondFromEvidence, setCreatingBondFromEvidence] = useState<{
     dossier: Dossier;
@@ -419,7 +400,6 @@ export function FieldKitDossiers({
 
     setActiveType(initialCreateType);
     setSelectedDossier(null);
-    setIsEditingDossier(false);
     setEditorState({ mode: 'create', dossierType: initialCreateType });
     onInitialCreateConsumed?.();
   }, [initialCreateType, onInitialCreateConsumed]);
@@ -518,7 +498,7 @@ export function FieldKitDossiers({
 
   function handleCanonicalDossierSaved(dossier: Dossier) {
     setSelectedDossier(dossier);
-    setIsEditingDossier(false);
+    setEditorState(null);
   }
 
   async function handleDeleteDossier() {
@@ -535,104 +515,6 @@ export function FieldKitDossiers({
     await createNewBond(values);
     setCreatingBondFromEvidence(null);
     await refreshBonds();
-  }
-
-  async function handleSaveSections(dossier: Dossier, sections: DossierSection[]) {
-    const previousSections = ensureDossierSections(dossier);
-    const normalizedSections = normalizeSectionOrder(sections);
-    const updatedDossier = await updateExistingDossier(dossier.id, {
-      ...dossierToFormValues(dossier),
-      sections: normalizedSections,
-    });
-    const now = new Date().toISOString();
-    const recordsForDossier = await evidenceRecordRepository.listByOriginDossier(dossier.id);
-    const reconciledRecords = previousSections.flatMap((previousSection) => {
-      const nextSection = normalizedSections.find((candidate) => candidate.id === previousSection.id);
-
-      if (!nextSection || (previousSection.body ?? '') === (nextSection.body ?? '')) {
-        return [];
-      }
-
-      return reconcileEvidenceRecordsForSection({
-        records: recordsForDossier,
-        originSectionId: previousSection.id,
-        previousText: previousSection.body ?? '',
-        updatedText: nextSection.body ?? '',
-        updatedAt: now,
-      });
-    });
-
-    await Promise.all(reconciledRecords.map((record) => evidenceRecordRepository.update(record)));
-    const latestCaseRecords = await evidenceRecordRepository.listByCase(updatedDossier.caseId);
-    const createdThreadmarkRecords = createMissingEvidenceRecordsFromThreadmarks({
-      records: latestCaseRecords,
-      sourceDossier: updatedDossier,
-      sections: normalizedSections,
-      dossiers: safeDossiers,
-      updatedAt: now,
-      createId: () => createStableId('evidence'),
-    });
-
-    await Promise.all(createdThreadmarkRecords.map((record) => evidenceRecordRepository.create(record)));
-    setSelectedDossier(updatedDossier);
-    await refreshEvidenceRecords(updatedDossier.caseId);
-    await refreshBonds();
-
-    if (createdThreadmarkRecords.length > 0) {
-      requestAutomaticSynchronization('threadmark evidence record created');
-    }
-    return updatedDossier;
-  }
-
-  async function handleCreateEvidenceRecord({
-    dossier,
-    section,
-    targetDossier,
-    selectionRange,
-  }: {
-    dossier: Dossier;
-    section: DossierSection;
-    targetDossier: Dossier;
-    selectionRange: { start: number; end: number };
-  }) {
-    if (targetDossier.caseId !== dossier.caseId) {
-      throw new Error('Threadmarks can only reference Dossiers from the active Investigation.');
-    }
-
-    const originText = section.body ?? '';
-    const selectedText = originText.slice(selectionRange.start, selectionRange.end);
-
-    if (!selectedText.trim()) {
-      throw new Error('Select Dossier text before creating a Threadmark.');
-    }
-
-    const currentRecords = await evidenceRecordRepository.listByCase(dossier.caseId);
-    const incoming = {
-      caseId: dossier.caseId,
-      originDossierId: dossier.id,
-      originSectionId: section.id,
-      targetDossierId: targetDossier.id,
-      anchorStart: selectionRange.start,
-      anchorEnd: selectionRange.end,
-    };
-
-    if (hasDuplicateEvidenceRecord(currentRecords, incoming)) {
-      throw new Error('This Threadmark already exists.');
-    }
-
-    const now = new Date().toISOString();
-    await evidenceRecordRepository.create({
-      id: createStableId('evidence'),
-      ...incoming,
-      selectedText,
-      anchorContext: createEvidenceAnchorContext(originText, selectionRange.start, selectionRange.end),
-      metadata: {},
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    });
-    await refreshEvidenceRecords(dossier.caseId);
-    requestAutomaticSynchronization('threadmark evidence record created');
   }
 
   async function handleRemoveEvidenceRecord(record: EvidenceRecord) {
@@ -667,7 +549,6 @@ export function FieldKitDossiers({
             type="button"
             variant="brass"
             onClick={() => {
-              setIsEditingDossier(false);
               setSelectedDossier(null);
             }}
           >
@@ -682,7 +563,6 @@ export function FieldKitDossiers({
     return (
       <FieldKitDossierErrorBoundary
         onReturn={() => {
-          setIsEditingDossier(false);
           setSelectedDossier(null);
         }}
       >
@@ -693,21 +573,15 @@ export function FieldKitDossiers({
           evidenceRecords={evidenceRecords}
           highlightedEvidenceRecordId={highlightedEvidenceRecordId}
           isPinned={isDossierPinned(selectedDossier.id)}
-          isEditing={isEditingDossier}
           onBack={() => {
-            setIsEditingDossier(false);
             setHighlightedEvidenceRecordId(null);
             setSelectedDossier(null);
           }}
           onOpenDossier={(dossier, options) => {
-            setIsEditingDossier(false);
             setSelectedDossier(dossier);
             setHighlightedEvidenceRecordId(options?.evidenceRecordId ?? null);
           }}
-          onEnterEdit={() => setIsEditingDossier(true)}
-          onDoneEditing={() => setIsEditingDossier(false)}
-          onSaveSections={handleSaveSections}
-          onEditDetails={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
+          onEditDossier={() => setEditorState({ mode: 'edit', dossier: selectedDossier })}
           onDelete={() => setDeletingDossier(selectedDossier)}
           onPin={async () => {
             await pinDossier(selectedDossier.id);
@@ -716,7 +590,6 @@ export function FieldKitDossiers({
             await removeDossierFromBoard(selectedDossier.id);
           }}
           onCreateBondFromEvidence={(entry) => setCreatingBondFromEvidence({ dossier: selectedDossier, entry })}
-          onCreateEvidenceRecord={handleCreateEvidenceRecord}
           onRemoveEvidenceRecord={handleRemoveEvidenceRecord}
         >
           {editorState?.mode === 'edit' ? (
@@ -729,10 +602,14 @@ export function FieldKitDossiers({
               onRemoveFromBoard={async (dossier) => {
                 await removeDossierFromBoard(dossier.id);
               }}
+              onCreated={handleCanonicalDossierSaved}
               onOpenDossier={(dossier, options) => {
+                setEditorState(null);
                 setSelectedDossier(dossier);
                 setHighlightedEvidenceRecordId(options?.evidenceRecordId ?? null);
               }}
+              closeAfterSave
+              closeAfterCancel
             />
           ) : null}
           {creatingBondFromEvidence ? (
@@ -790,7 +667,6 @@ export function FieldKitDossiers({
             className={normalizeKnowledgeType(activeType) === normalizeKnowledgeType(type) ? 'field-kit-type-tabs__active' : ''}
             onClick={() => {
               setSelectedDossier(null);
-              setIsEditingDossier(false);
               setActiveType(type);
             }}
           >
@@ -882,24 +758,14 @@ type FieldKitDossierViewProps = {
   evidenceRecords: EvidenceRecord[];
   highlightedEvidenceRecordId?: string | null;
   isPinned: boolean;
-  isEditing: boolean;
   children: ReactNode;
   onBack: () => void;
   onOpenDossier: (dossier: Dossier, options?: { evidenceRecordId?: string }) => void;
-  onEnterEdit: () => void;
-  onDoneEditing: () => void;
-  onSaveSections: (dossier: Dossier, sections: DossierSection[]) => Promise<Dossier>;
-  onEditDetails: () => void;
+  onEditDossier: () => void;
   onDelete: () => void;
   onPin: () => Promise<void>;
   onUnpin: () => Promise<void>;
   onCreateBondFromEvidence: (entry: EvidenceLogEntry) => void;
-  onCreateEvidenceRecord: (details: {
-    dossier: Dossier;
-    section: DossierSection;
-    targetDossier: Dossier;
-    selectionRange: { start: number; end: number };
-  }) => Promise<void>;
   onRemoveEvidenceRecord: (record: EvidenceRecord) => Promise<void>;
 };
 
@@ -910,38 +776,17 @@ function FieldKitDossierView({
   evidenceRecords,
   highlightedEvidenceRecordId,
   isPinned,
-  isEditing,
   children,
   onBack,
   onOpenDossier,
-  onEnterEdit,
-  onDoneEditing,
-  onSaveSections,
-  onEditDetails,
+  onEditDossier,
   onDelete,
   onPin,
   onUnpin,
   onCreateBondFromEvidence,
-  onCreateEvidenceRecord,
   onRemoveEvidenceRecord,
 }: FieldKitDossierViewProps) {
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [draftSections, setDraftSections] = useState<DossierSection[]>([]);
-  const [isAddSectionOpen, setIsAddSectionOpen] = useState(false);
-  const [sectionSearchQuery, setSectionSearchQuery] = useState('');
-  const [availableCustomTemplates, setAvailableCustomTemplates] = useState<SectionTemplate[]>(
-    readCustomSectionTemplates,
-  );
-  const [customSectionTitle, setCustomSectionTitle] = useState('');
-  const [customSectionKind, setCustomSectionKind] = useState<DossierSectionKind>('custom');
-  const [customSectionReusable, setCustomSectionReusable] = useState(true);
-  const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [removingSection, setRemovingSection] = useState<DossierSection | null>(null);
-  const [sectionNotice, setSectionNotice] = useState<string | undefined>();
-  const [isSavingSections, setIsSavingSections] = useState(false);
-  const [lastSaveStatus, setLastSaveStatus] = useState('Not saved this session');
-  const [mobileChangeDetected, setMobileChangeDetected] = useState(false);
   const [activeThreadmarkId, setActiveThreadmarkId] = useState<string | null>(null);
   const [activeEvidenceHighlightId, setActiveEvidenceHighlightId] = useState<string | null>(
     highlightedEvidenceRecordId ?? null,
@@ -950,44 +795,13 @@ function FieldKitDossierView({
   const typeConfig = getKnowledgeTypeConfig(dossier.dossierType);
   const typeConfigurationFound = hasKnowledgeTypeConfig(dossier.dossierType);
   const dossierSections = useMemo(() => ensureDossierSections(dossier), [dossier]);
-  const visibleSections = isEditing ? draftSections : dossierSections;
   const visibleContentSections = useMemo(
-    () => visibleSections.filter((section) => section.kind !== 'relationships'),
-    [visibleSections],
+    () =>
+      dossierSections
+        .filter((section) => section.kind !== 'relationships')
+        .filter(hasReadableFieldKitSection),
+    [dossierSections],
   );
-  const sectionKindOptions: Array<{ value: DossierSectionKind; label: string }> = [
-    { value: 'custom', label: 'Freeform Notes' },
-    { value: 'overview', label: 'Overview' },
-    { value: 'notes', label: 'Investigation Notes' },
-    { value: 'timeline', label: 'Timeline Foundation' },
-    { value: 'gallery', label: 'Gallery Foundation' },
-    { value: 'evidence', label: 'Evidence Foundation' },
-  ];
-  const availableSectionTemplates = useMemo(() => {
-    const query = sectionSearchQuery.trim().toLocaleLowerCase();
-
-    return [...builtInSectionTemplates, ...availableCustomTemplates].filter((template) => {
-      const singletonExists =
-        template.isSingleton &&
-        draftSections.some((section) => section.templateId === template.id);
-      const matchesSearch =
-        !query ||
-        template.title.toLocaleLowerCase().includes(query) ||
-        template.category.toLocaleLowerCase().includes(query);
-
-      return !singletonExists && matchesSearch;
-    });
-  }, [availableCustomTemplates, draftSections, sectionSearchQuery]);
-  const sectionTemplatesByCategory = useMemo(() => {
-    const categories = new Map<string, SectionTemplate[]>();
-
-    availableSectionTemplates.forEach((template) => {
-      const existingTemplates = categories.get(template.category) ?? [];
-      categories.set(template.category, [...existingTemplates, template]);
-    });
-
-    return Array.from(categories.entries());
-  }, [availableSectionTemplates]);
   const displayBonds = useMemo(
     () =>
       bonds
@@ -1051,32 +865,17 @@ function FieldKitDossierView({
   }, [activeEvidenceHighlightId, evidenceLogEntries.length]);
 
   useEffect(() => {
-    if (isEditing) {
-      setDraftSections(dossierSections);
-      setSectionNotice('Editing Dossier');
-      return;
-    }
-
-    setDraftSections([]);
-    setIsAddSectionOpen(false);
-    setRenamingSectionId(null);
-    setRenameValue('');
-    setRemovingSection(null);
-    setSectionNotice(undefined);
-  }, [dossierSections, isEditing]);
-
-  useEffect(() => {
     writeFieldKitDossierDiagnostics({
       renderer: 'Field Kit',
-      sharedSectionCount: visibleSections.length,
-      sectionTypesReceived: Array.from(new Set(visibleSections.map((section) => section.kind))).sort(),
+      sharedSectionCount: dossierSections.length,
+      sectionTypesReceived: Array.from(new Set(dossierSections.map((section) => section.kind))).sort(),
       unsupportedSectionRendererCount: 0,
       legacyCompatibilityMappingUsed: !dossier.sections?.length,
-      currentDossierEditMode: isEditing,
-      draftSectionCount: draftSections.length,
+      currentDossierEditMode: false,
+      draftSectionCount: 0,
       persistedSectionCount: dossierSections.length,
-      lastFieldKitDossierSaveStatus: lastSaveStatus,
-      synchronizationDetectedMobileChange: mobileChangeDetected,
+      lastFieldKitDossierSaveStatus: 'Canonical Open Canvas available',
+      synchronizationDetectedMobileChange: false,
       selectedDossierIdPresent: Boolean(dossier.id),
       selectedDossierFound: true,
       sectionCollectionValid: Array.isArray(dossier.sections) || !dossier.sections,
@@ -1091,12 +890,8 @@ function FieldKitDossierView({
   }, [
     dossier.sections?.length,
     dossierSections.length,
-    draftSections.length,
-    isEditing,
-    lastSaveStatus,
-    mobileChangeDetected,
     typeConfigurationFound,
-    visibleSections,
+    dossierSections,
   ]);
 
   function getConnectedDossier(bond: Bond) {
@@ -1104,166 +899,6 @@ function FieldKitDossierView({
       bond.sourceDossierId === dossier.id ? bond.targetDossierId : bond.sourceDossierId;
 
     return dossiers.find((candidate) => candidate.id === connectedId) ?? null;
-  }
-
-  function updateDraftSections(nextSections: DossierSection[]) {
-    setDraftSections(normalizeSectionOrder(nextSections));
-  }
-
-  function updateSectionBody(sectionId: string, body: string) {
-    updateDraftSections(
-      draftSections.map((section) =>
-        section.id === sectionId ? { ...section, body } : section,
-      ),
-    );
-  }
-
-  async function toggleSection(sectionId: string) {
-    const sourceSections = isEditing ? draftSections : dossierSections;
-    const nextSections = sourceSections.map((section) =>
-      section.id === sectionId ? { ...section, isCollapsed: !section.isCollapsed } : section,
-    );
-
-    if (isEditing) {
-      updateDraftSections(nextSections);
-      return;
-    }
-
-    await onSaveSections(dossier, nextSections);
-  }
-
-  function moveSection(sectionId: string, direction: -1 | 1) {
-    const currentIndex = draftSections.findIndex((section) => section.id === sectionId);
-    const nextIndex = currentIndex + direction;
-
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= draftSections.length) {
-      return;
-    }
-
-    const nextSections = [...draftSections];
-    const [section] = nextSections.splice(currentIndex, 1);
-    nextSections.splice(nextIndex, 0, section);
-    updateDraftSections(nextSections);
-    setSectionNotice('Section order updated');
-  }
-
-  function addSection(template: SectionTemplate) {
-    const singletonExists =
-      template.isSingleton && draftSections.some((section) => section.templateId === template.id);
-
-    if (singletonExists) {
-      setSectionNotice(`${template.title} already exists in this Dossier.`);
-      return;
-    }
-
-    updateDraftSections([...draftSections, createSectionFromTemplate(template, draftSections.length)]);
-    setIsAddSectionOpen(false);
-    setSectionNotice(`${template.title} added`);
-  }
-
-  function addCustomSection() {
-    const title = customSectionTitle.trim();
-
-    if (!title || title.length > 80) {
-      setSectionNotice('Name the custom Section before adding it.');
-      return;
-    }
-
-    const template = customSectionReusable
-      ? saveCustomSectionTemplate(title, customSectionKind)
-      : {
-          id: createStableId('custom'),
-          title,
-          kind: customSectionKind,
-          isSingleton: false,
-          category: 'Custom',
-          isRenameable: true,
-          isDuplicable: true,
-        };
-
-    if (customSectionReusable) {
-      setAvailableCustomTemplates(readCustomSectionTemplates());
-    }
-
-    setCustomSectionTitle('');
-    setCustomSectionKind('custom');
-    addSection(template);
-  }
-
-  function startRenameSection(section: DossierSection) {
-    setRenamingSectionId(section.id);
-    setRenameValue(section.title);
-  }
-
-  function applySectionRename(section: DossierSection) {
-    const title = renameValue.trim();
-
-    if (!title || title.length > 80) {
-      setSectionNotice('Section names must be between 1 and 80 characters.');
-      return;
-    }
-
-    updateDraftSections(
-      draftSections.map((candidate) =>
-        candidate.id === section.id ? { ...candidate, title } : candidate,
-      ),
-    );
-    setRenamingSectionId(null);
-    setRenameValue('');
-    setSectionNotice(`${title} renamed`);
-  }
-
-  function duplicateDraftSection(section: DossierSection) {
-    const capabilities = getSectionCapabilities(section);
-
-    if (!capabilities.canDuplicate) {
-      setSectionNotice(`${section.title} cannot be duplicated.`);
-      return;
-    }
-
-    const index = draftSections.findIndex((candidate) => candidate.id === section.id);
-    const nextSections = [...draftSections];
-    nextSections.splice(index + 1, 0, duplicateSection(section));
-    updateDraftSections(nextSections);
-    setSectionNotice(`${section.title} duplicated`);
-  }
-
-  function confirmRemoveSection() {
-    if (!removingSection) {
-      return;
-    }
-
-    updateDraftSections(draftSections.filter((section) => section.id !== removingSection.id));
-    setSectionNotice(`${removingSection.title} removed from draft`);
-    setRemovingSection(null);
-  }
-
-  async function saveSectionDraft() {
-    setIsSavingSections(true);
-    setSectionNotice(undefined);
-    setLastSaveStatus('Saving');
-
-    try {
-      await onSaveSections(dossier, draftSections);
-      setMobileChangeDetected(true);
-      setLastSaveStatus('Saved');
-      setSectionNotice('Investigation Updated');
-      onDoneEditing();
-    } catch {
-      setMobileChangeDetected(true);
-      setLastSaveStatus('Relationship Update Incomplete');
-      setSectionNotice(
-        'Relationship Update Incomplete. LoreBound saved the Dossier, but one or more Threadmark relationships could not be completed.',
-      );
-      onDoneEditing();
-    } finally {
-      setIsSavingSections(false);
-    }
-  }
-
-  function cancelSectionDraft() {
-    setDraftSections(dossierSections);
-    onDoneEditing();
   }
 
   return (
@@ -1291,23 +926,9 @@ function FieldKitDossierView({
       </div>
 
       <div className="field-kit-dossier-actions">
-        {isEditing ? (
-          <>
-            <Button type="button" variant="brass" onClick={saveSectionDraft} disabled={isSavingSections}>
-              {isSavingSections ? 'Saving' : 'Save Changes'}
-            </Button>
-            <Button type="button" variant="secondary" onClick={cancelSectionDraft} disabled={isSavingSections}>
-              Cancel
-            </Button>
-            <Button type="button" variant="secondary" onClick={onEditDetails}>
-              Edit Details
-            </Button>
-          </>
-        ) : (
-          <Button type="button" variant="brass" onClick={onEnterEdit}>
-            Edit Dossier
-          </Button>
-        )}
+        <Button type="button" variant="brass" onClick={onEditDossier} aria-label={`Edit ${dossier.name}`}>
+          Edit Dossier
+        </Button>
         <Button
           type="button"
           variant="secondary"
@@ -1342,122 +963,26 @@ function FieldKitDossierView({
         ) : null}
       </div>
 
-      {isEditing ? (
-        <div className="field-kit-edit-status" role="status">
-          <span>Editing Dossier</span>
-          {sectionNotice ? <p>{sectionNotice}</p> : null}
-          <Button type="button" variant="secondary" onClick={() => setIsAddSectionOpen(true)}>
-            Add Section
-          </Button>
-        </div>
-      ) : null}
-
       {visibleContentSections
-        .map((section, index) => {
-          const capabilities = getSectionCapabilities(section);
-          const isRenaming = renamingSectionId === section.id;
+        .map((section) => (
+          <section key={section.id} className="field-kit-file-section field-kit-reading-section">
+            {renderFieldKitReadingSection({
+              section,
+              dossier,
+              evidenceRecords,
+              onActivateEvidenceRecord: (record) => {
+                const targetDossier = dossiers.find((candidate) => candidate.id === record.targetDossierId);
 
-          return (
-            <section key={section.id} className="field-kit-file-section field-kit-dynamic-section">
-              <div className="field-kit-section-title-row">
-                <button
-                  type="button"
-                  aria-expanded={!section.isCollapsed}
-                  aria-label={`${section.isCollapsed ? 'Expand' : 'Collapse'} ${section.title}`}
-                  onClick={() => void toggleSection(section.id)}
-                >
-                  <h3>{section.title}</h3>
-                </button>
-                {isEditing ? (
-                  <details className="field-kit-section-actions">
-                    <summary aria-label={`Section actions for ${section.title}`}>
-                      Actions
-                    </summary>
-                    <div>
-                      {capabilities.canRename ? (
-                        <button type="button" onClick={() => startRenameSection(section)}>
-                          Rename
-                        </button>
-                      ) : null}
-                      {capabilities.canDuplicate ? (
-                        <button type="button" onClick={() => duplicateDraftSection(section)}>
-                          Duplicate
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => moveSection(section.id, -1)}
-                        disabled={index === 0}
-                      >
-                        Move Up
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveSection(section.id, 1)}
-                        disabled={index === visibleContentSections.length - 1}
-                      >
-                        Move Down
-                      </button>
-                      {capabilities.canRemove ? (
-                        <button type="button" onClick={() => setRemovingSection(section)}>
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-              {isRenaming ? (
-                <div className="field-kit-section-rename">
-                  <label>
-                    Section Name
-                    <input
-                      value={renameValue}
-                      onChange={(event) => setRenameValue(event.target.value)}
-                    />
-                  </label>
-                  <Button type="button" variant="secondary" onClick={() => applySectionRename(section)}>
-                    Apply
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setRenamingSectionId(null);
-                      setRenameValue('');
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : null}
-              {section.isCollapsed ? (
-                <p className="field-kit-section-empty">Section collapsed.</p>
-              ) : (
-                renderFieldKitSection(
-                  section,
-                  isEditing,
-                  dossier,
-                  dossiers,
-                  updateSectionBody,
-                  evidenceRecords,
-                  onCreateEvidenceRecord,
-                  (record) => {
-                    const targetDossier = dossiers.find((candidate) => candidate.id === record.targetDossierId);
+                if (targetDossier) {
+                  onOpenDossier(targetDossier, { evidenceRecordId: record.id });
+                  return;
+                }
 
-                    if (targetDossier) {
-                      onOpenDossier(targetDossier, { evidenceRecordId: record.id });
-                      return;
-                    }
-
-                    setActiveThreadmarkId(record.id);
-                  },
-                  setSectionNotice,
-                )
-              )}
-            </section>
-          );
-        })}
+                setActiveThreadmarkId(record.id);
+              },
+            })}
+          </section>
+        ))}
 
       <details className="field-kit-file-section" open>
         <summary>
@@ -1561,12 +1086,12 @@ function FieldKitDossierView({
         </section>
       ) : null}
 
-        <section className="field-kit-file-section">
+      <section className="field-kit-file-section">
           <h3>Record Details</h3>
           <dl className="settings-compact-list">
             <InfoRow label="Modified" value={formatShortDate(dossier.dateModified)} />
           </dl>
-        </section>
+      </section>
 
       <section className="field-kit-file-section">
         <div className="field-kit-section-heading">
@@ -1611,106 +1136,6 @@ function FieldKitDossierView({
         })}
       </section>
 
-      {isAddSectionOpen ? (
-        <div className="field-kit-section-sheet-backdrop" role="presentation">
-          <section
-            className="field-kit-section-sheet"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="field-kit-add-section-title"
-          >
-            <header>
-              <div>
-                <span>Dossier Edit Mode</span>
-                <h2 id="field-kit-add-section-title">Add Section</h2>
-              </div>
-              <button type="button" onClick={() => setIsAddSectionOpen(false)}>
-                Close
-              </button>
-            </header>
-
-            <label className="field-kit-search">
-              <span>Search Section Library</span>
-              <input
-                value={sectionSearchQuery}
-                onChange={(event) => setSectionSearchQuery(event.target.value)}
-                placeholder="Abilities, Timeline, Quotes"
-              />
-            </label>
-
-            <div className="field-kit-section-library">
-              {sectionTemplatesByCategory.length > 0 ? (
-                sectionTemplatesByCategory.map(([category, templates]) => (
-                  <section key={category}>
-                    <h3>{category}</h3>
-                    <div>
-                      {templates.map((template) => (
-                        <button
-                          key={template.id}
-                          type="button"
-                          onClick={() => addSection(template)}
-                        >
-                          Add {template.title}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))
-              ) : (
-                <p>No matching Sections found.</p>
-              )}
-            </div>
-
-            <section className="field-kit-custom-section" aria-labelledby="field-kit-custom-section-title">
-              <h3 id="field-kit-custom-section-title">Custom Section</h3>
-              <label>
-                Section Name
-                <input
-                  value={customSectionTitle}
-                  onChange={(event) => setCustomSectionTitle(event.target.value)}
-                  placeholder="Field Notes"
-                />
-              </label>
-              <label>
-                Section Type
-                <select
-                  value={customSectionKind}
-                  onChange={(event) => setCustomSectionKind(event.target.value as DossierSectionKind)}
-                >
-                  {sectionKindOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-kit-check-row">
-                <input
-                  type="checkbox"
-                  checked={customSectionReusable}
-                  onChange={(event) => setCustomSectionReusable(event.target.checked)}
-                />
-                Save as reusable Section
-              </label>
-              <Button type="button" variant="brass" onClick={addCustomSection}>
-                Add Custom Section
-              </Button>
-            </section>
-          </section>
-        </div>
-      ) : null}
-
-      {removingSection ? (
-        <ConfirmPanel
-          title="Remove Section?"
-          message={`${removingSection.title} will be removed from this Dossier draft. Save Changes is still required to make it permanent.`}
-          onCancel={() => setRemovingSection(null)}
-          onConfirm={async () => {
-            confirmRemoveSection();
-          }}
-          confirmLabel="Remove Section"
-        />
-      ) : null}
       {children}
     </section>
   );
@@ -1777,22 +1202,31 @@ function renderFieldKitThreadmarkedText({
   return nodes;
 }
 
-function renderFieldKitSection(
-  section: DossierSection,
-  isEditing: boolean,
-  dossier: Dossier,
-  dossiers: Dossier[],
-  onBodyChange: (sectionId: string, body: string) => void,
-  evidenceRecords: EvidenceRecord[],
-  onCreateEvidenceRecord: (details: {
-    dossier: Dossier;
-    section: DossierSection;
-    targetDossier: Dossier;
-    selectionRange: { start: number; end: number };
-  }) => Promise<void>,
-  onActivateEvidenceRecord: (record: EvidenceRecord) => void,
-  onNotice: (message: string) => void,
-) {
+function hasReadableFieldKitSection(section: DossierSection) {
+  if (section.kind === 'identity') {
+    return Boolean(section.fields?.some((field) => field.value.trim()));
+  }
+
+  if (section.kind === 'timeline' || section.kind === 'gallery' || section.kind === 'evidence') {
+    return true;
+  }
+
+  return Boolean(section.body?.trim());
+}
+
+function renderFieldKitReadingSection({
+  section,
+  dossier,
+  evidenceRecords,
+  onActivateEvidenceRecord,
+}: {
+  section: DossierSection;
+  dossier: Dossier;
+  evidenceRecords: EvidenceRecord[];
+  onActivateEvidenceRecord: (record: EvidenceRecord) => void;
+}) {
+  const body = section.body?.trim() ?? '';
+
   if (section.kind === 'identity') {
     return section.fields?.length ? (
       <dl className="settings-compact-list">
@@ -1801,55 +1235,54 @@ function renderFieldKitSection(
         ))}
       </dl>
     ) : (
-      <p>No identity facts have been recorded.</p>
+      <p className="field-kit-section-empty">No identity facts have been recorded.</p>
     );
   }
 
   if (section.kind === 'timeline') {
-    return <p>Timeline Sections are reserved for a future LoreBound update.</p>;
-  }
-
-  if (section.kind === 'gallery') {
-    return <p>Gallery Sections are reserved for a future LoreBound update.</p>;
-  }
-
-  if (section.kind === 'evidence') {
-    return <p>Evidence Sections are reserved for a future LoreBound update.</p>;
-  }
-
-  if (isEditing && ['custom', 'overview', 'notes'].includes(section.kind)) {
     return (
-      <label className="field-kit-section-editor">
-        Section Notes
-        <ThreadmarkAuthoringTextarea
-          rows={5}
-          value={section.body ?? ''}
-          dossier={dossier}
-          sectionId={section.id}
-          dossiers={dossiers}
-          isMobile
-          onChange={(value) => onBodyChange(section.id, value)}
-          onCreateEvidenceRecord={(targetDossier, selectionRange) =>
-            onCreateEvidenceRecord({ dossier, section, targetDossier, selectionRange })
-          }
-          onAuthoringNotice={onNotice}
-        />
-      </label>
+      <>
+        <h3>{section.title}</h3>
+        <p className="field-kit-section-empty">Timeline Sections are reserved for a future LoreBound update.</p>
+      </>
     );
   }
 
-  return section.body ? (
-    <p>
-      {renderFieldKitThreadmarkedText({
-        text: section.body,
-        section,
-        dossier,
-        evidenceRecords,
-        onActivate: onActivateEvidenceRecord,
-      })}
-    </p>
-  ) : (
-    <p>No entries recorded.</p>
+  if (section.kind === 'gallery') {
+    return (
+      <>
+        <h3>{section.title}</h3>
+        <p className="field-kit-section-empty">Gallery Sections are reserved for a future LoreBound update.</p>
+      </>
+    );
+  }
+
+  if (section.kind === 'evidence') {
+    return (
+      <>
+        <h3>{section.title}</h3>
+        <p className="field-kit-section-empty">Evidence Sections are reserved for a future LoreBound update.</p>
+      </>
+    );
+  }
+
+  if (!body) {
+    return null;
+  }
+
+  return (
+    <>
+      <h3>{section.title}</h3>
+      <p>
+        {renderFieldKitThreadmarkedText({
+          text: body,
+          section,
+          dossier,
+          evidenceRecords,
+          onActivate: onActivateEvidenceRecord,
+        })}
+      </p>
+    </>
   );
 }
 
