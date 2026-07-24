@@ -796,6 +796,7 @@ function FieldKitDossierView({
   const typeConfig = getKnowledgeTypeConfig(dossier.dossierType);
   const typeConfigurationFound = hasKnowledgeTypeConfig(dossier.dossierType);
   const dossierSections = useMemo(() => ensureDossierSections(dossier), [dossier]);
+  const dossierDetailLine = getFieldKitDetailLine(dossier, typeConfig.getDetailHeader(dossier));
   const visibleContentSections = useMemo(
     () =>
       dossierSections
@@ -910,68 +911,68 @@ function FieldKitDossierView({
         <button type="button" onClick={onBack} aria-label="Back to Dossiers">
           Back
         </button>
-        <div>
-          <span>{typeConfigurationFound ? String(dossier.dossierType) : 'Unknown Dossier Type'}</span>
-          <h2 id="mobile-dossier-title">{typeConfig.singularLabel}</h2>
-        </div>
+        <span>{typeConfigurationFound ? `${typeConfig.singularLabel} File` : 'Dossier File'}</span>
       </header>
 
-      <div className="field-kit-dossier-hero">
-        <FieldKitThumbnail image={dossier.coverImage} name={dossier.name} />
-        <div>
-          <h3>{dossier.name}</h3>
-          {!typeConfigurationFound ? (
-            <p>LoreBound can display the shared Dossier information, but some specialized details are unavailable.</p>
-          ) : (
-            <p>{typeConfig.getDetailHeader(dossier)}</p>
-          )}
-        </div>
-      </div>
-
-      {metadataRows.length > 0 ? (
-        <dl className="field-kit-dossier-metadata" aria-label={`${dossier.name} metadata`}>
-          {metadataRows.map((field) => (
-            <InfoRow key={field.label} label={field.label} value={field.value} />
-          ))}
-        </dl>
-      ) : null}
-
-      <div className="field-kit-dossier-actions">
-        <Button type="button" variant="brass" onClick={onEditDossier} aria-label={`Edit ${dossier.name}`}>
-          Edit Dossier
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          aria-expanded={isActionMenuOpen}
-          aria-label="More Dossier actions"
-          onClick={() => setIsActionMenuOpen((current) => !current)}
-        >
-          More Actions
-        </Button>
-        {isActionMenuOpen ? (
-          <div className="field-kit-action-menu">
-            <button
-              type="button"
-              onClick={() => {
-                setIsActionMenuOpen(false);
-                void (isPinned ? onUnpin() : onPin());
-              }}
-            >
-              {isPinned ? 'Remove From Board' : 'Pin to Board'}
-            </button>
-            <button
-              type="button"
-              className="field-kit-action-menu__danger"
-              onClick={() => {
-                setIsActionMenuOpen(false);
-                onDelete();
-              }}
-            >
-              Delete Dossier
-            </button>
+      <div className="field-kit-dossier-intro">
+        <div className="field-kit-dossier-hero">
+          <FieldKitThumbnail image={dossier.coverImage} name={dossier.name} />
+          <div>
+            <span>{typeConfigurationFound ? typeConfig.singularLabel : 'Unknown Dossier Type'}</span>
+            <h2 id="mobile-dossier-title">{dossier.name}</h2>
+            {!typeConfigurationFound ? (
+              <p>LoreBound can display the shared Dossier information, but some specialized details are unavailable.</p>
+            ) : dossierDetailLine ? (
+              <p>{dossierDetailLine}</p>
+            ) : null}
           </div>
+        </div>
+
+        {metadataRows.length > 0 ? (
+          <dl className="field-kit-dossier-metadata" aria-label={`${dossier.name} metadata`}>
+            {metadataRows.map((field) => (
+              <InfoRow key={field.label} label={field.label} value={field.value} />
+            ))}
+          </dl>
         ) : null}
+
+        <div className="field-kit-dossier-actions">
+          <Button type="button" variant="brass" onClick={onEditDossier} aria-label={`Edit ${dossier.name}`}>
+            Edit Dossier
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            aria-expanded={isActionMenuOpen}
+            aria-label="More Dossier actions"
+            onClick={() => setIsActionMenuOpen((current) => !current)}
+          >
+            More Actions
+          </Button>
+          {isActionMenuOpen ? (
+            <div className="field-kit-action-menu">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsActionMenuOpen(false);
+                  void (isPinned ? onUnpin() : onPin());
+                }}
+              >
+                {isPinned ? 'Remove From Board' : 'Pin to Board'}
+              </button>
+              <button
+                type="button"
+                className="field-kit-action-menu__danger"
+                onClick={() => {
+                  setIsActionMenuOpen(false);
+                  onDelete();
+                }}
+              >
+                Delete Dossier
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <article className="field-kit-dossier-document" aria-label={`${dossier.name} document`}>
@@ -1423,6 +1424,17 @@ function getFieldKitMetadataRows(dossier: Dossier) {
   return fieldsByType[dossier.dossierType]
     .map((field) => ({ label: field.label, value: field.value?.trim() ?? '' }))
     .filter((field) => field.value);
+}
+
+function getFieldKitDetailLine(dossier: Dossier, detailHeader: string) {
+  const trimmedDetail = detailHeader.trim();
+  const typeFallback = `${dossier.dossierType} Dossier`;
+
+  if (!trimmedDetail || trimmedDetail === typeFallback || trimmedDetail === dossier.dossierType) {
+    return '';
+  }
+
+  return trimmedDetail;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {

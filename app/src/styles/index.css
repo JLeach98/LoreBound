@@ -5828,15 +5828,23 @@ textarea {
   padding: 0 0.75rem;
 }
 
+.field-kit-dossier-intro {
+  display: grid;
+  gap: 0.72rem;
+  border: 1px solid rgb(184 138 61 / 0.14);
+  border-radius: var(--radius-lg);
+  background: rgb(23 21 20 / 0.52);
+  box-shadow: var(--shadow-control);
+  padding: 0.82rem;
+}
+
 .field-kit-dossier-hero {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.7rem;
-  border: 1px solid rgb(184 138 61 / 0.16);
-  border-radius: var(--radius-lg);
-  background: var(--color-warm-ivory);
-  color: var(--color-deep-graphite);
-  padding: 0.78rem;
+  align-items: center;
+  color: var(--color-warm-ivory);
+  min-width: 0;
 }
 
 .field-kit-dossier-hero .field-kit-thumbnail {
@@ -5852,19 +5860,27 @@ textarea {
   text-transform: uppercase;
 }
 
-.field-kit-dossier-hero h3 {
-  margin: 0 0 0.18rem;
+.field-kit-dossier-hero h2 {
+  overflow-wrap: anywhere;
+  margin: 0.08rem 0 0.12rem;
   font-family: var(--font-display);
-  font-size: 1.35rem;
+  font-size: clamp(1.55rem, 10vw, 2.05rem);
+  line-height: 1.02;
+}
+
+.field-kit-dossier-hero p {
+  margin: 0;
+  color: rgb(246 240 230 / 0.72);
+  line-height: 1.45;
 }
 
 .field-kit-dossier-metadata {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.72rem 0.9rem;
+  gap: 0.62rem 0.85rem;
   margin: 0;
-  border-block: 1px solid rgb(184 138 61 / 0.18);
-  padding: 0.72rem 0.12rem;
+  border-top: 1px solid rgb(184 138 61 / 0.18);
+  padding: 0.68rem 0.06rem 0;
 }
 
 .field-kit-dossier-metadata div {
@@ -5940,7 +5956,7 @@ textarea {
 
 .field-kit-dossier-document {
   display: grid;
-  gap: 0.78rem;
+  gap: 0.92rem;
   overflow-wrap: anywhere;
   border: 1px solid rgb(184 138 61 / 0.18);
   border-radius: var(--radius-lg);
@@ -5949,7 +5965,7 @@ textarea {
     var(--color-muted-parchment);
   box-shadow: var(--shadow-panel-soft);
   color: var(--color-deep-graphite);
-  padding: 1rem 0.92rem 1.08rem;
+  padding: 1.15rem 1rem 1.2rem;
 }
 
 .field-kit-document-section {
@@ -5958,7 +5974,7 @@ textarea {
 }
 
 .field-kit-document-section + .field-kit-document-section {
-  padding-top: 0.3rem;
+  padding-top: 0.42rem;
 }
 
 .field-kit-document-heading,
@@ -5980,7 +5996,7 @@ textarea {
   margin: 0;
   color: rgb(37 32 27 / 0.86);
   font-size: 0.98rem;
-  line-height: 1.68;
+  line-height: 1.72;
 }
 
 .field-kit-document-list {
@@ -5999,7 +6015,7 @@ textarea {
   font-family: var(--font-display);
   font-size: 1.06rem;
   font-style: italic;
-  padding: 0.12rem 0 0.12rem 0.85rem;
+  padding: 0.18rem 0 0.18rem 0.85rem;
   white-space: pre-wrap;
 }
 
