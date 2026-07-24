@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lorebound-shell-v1';
+const CACHE_NAME = 'lorebound-shell-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/lorebound-icon-192.png'];
 
 self.addEventListener('install', (event) => {
