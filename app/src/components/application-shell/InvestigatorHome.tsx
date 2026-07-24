@@ -111,8 +111,18 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
   return (
     <main className={`entry-screen investigator-home ${isEnteringStudy ? 'investigator-home--entering' : ''}`}>
       <section className="investigator-home__scene" aria-labelledby="investigator-home-title">
+        <div className="investigator-home__brand" aria-hidden="true">
+          LoreBound
+        </div>
         <div className="investigator-home__lintel" aria-hidden="true" />
         <div className="investigator-home__side-window investigator-home__side-window--left" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="investigator-home__plant" aria-hidden="true">
+          <span />
+          <span />
           <span />
           <span />
           <span />
@@ -146,84 +156,73 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
                 </span>
               </button>
             </div>
-            <div className="investigator-home__door-rail">
-              <div className="investigator-home__content">
-                <p className="entry-panel__eyebrow">Private Study</p>
-                <h1 id="investigator-home-title">LoreBound</h1>
-                <p className="investigator-home__lede">Investigate Every Story.</p>
-
-                {hasContinueTarget ? (
-                  <div className="investigator-home__case-note" aria-live="polite">
-                    <span>Current Investigation</span>
-                    <strong>{continueCase?.caseName}</strong>
-                    <p>{continueContext}</p>
-                  </div>
-                ) : null}
-
-                {homeError ? (
-                  <p className="investigator-home__error" role="alert">
-                    {homeError}
-                  </p>
-                ) : null}
-
-                <div className="investigator-home__actions" aria-label="Investigation actions">
-                  {hasContinueTarget ? (
-                    <button
-                      type="button"
-                      className="auth-button auth-button--primary investigator-home__primary-action"
-                      onClick={handleContinueInvestigation}
-                      disabled={isEnteringStudy || isLoading}
-                    >
-                      <span>Continue Investigation</span>
-                      <small>{continueCase?.caseName}</small>
-                    </button>
-                  ) : null}
-                  {hasAnyCases ? (
-                    <>
-                      <button
-                        ref={selectButtonRef}
-                        type="button"
-                        className="auth-button auth-button--secondary"
-                        onClick={() => openArchive('select')}
-                        disabled={isEnteringStudy}
-                      >
-                        Select a Case
-                      </button>
-                      <button
-                        ref={createButtonRef}
-                        type="button"
-                        className="auth-button auth-button--quiet investigator-home__quiet-action"
-                        onClick={() => openArchive('create')}
-                        disabled={isEnteringStudy}
-                      >
-                        Create a Case
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      ref={createButtonRef}
-                      type="button"
-                      className="auth-button auth-button--primary investigator-home__primary-action"
-                      onClick={() => openArchive('create')}
-                      disabled={isEnteringStudy || isLoading}
-                    >
-                      <span>Create Your First Case</span>
-                      <small>Every fictional universe begins as a Case.</small>
-                    </button>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  className="investigator-home__sign-out"
-                  onClick={handleSignOut}
-                  disabled={isSigningOut || isEnteringStudy}
-                >
-                  {isSigningOut ? 'Signing Out...' : 'Sign Out'}
-                </button>
-              </div>
-            </div>
+            <div className="investigator-home__door-rail" aria-hidden="true" />
             <div className="investigator-home__handle" />
+          </div>
+        </div>
+        <div className="investigator-home__content">
+          <h1 id="investigator-home-title">LoreBound</h1>
+          <p className="investigator-home__lede">Investigate Every Story.</p>
+
+          {hasContinueTarget ? (
+            <div className="investigator-home__case-note" aria-live="polite">
+              <span>Current Investigation</span>
+              <strong>{continueCase?.caseName}</strong>
+              <p>{continueContext}</p>
+            </div>
+          ) : null}
+
+          {homeError ? (
+            <p className="investigator-home__error" role="alert">
+              {homeError}
+            </p>
+          ) : null}
+
+          <div className="investigator-home__actions" aria-label="Investigation actions">
+            {hasContinueTarget ? (
+              <button
+                type="button"
+                className="auth-button auth-button--primary investigator-home__primary-action"
+                onClick={handleContinueInvestigation}
+                disabled={isEnteringStudy || isLoading}
+              >
+                <span>Continue Investigation</span>
+                <small>{continueCase?.caseName}</small>
+              </button>
+            ) : null}
+            {hasAnyCases ? (
+              <>
+                <button
+                  ref={selectButtonRef}
+                  type="button"
+                  className="auth-button auth-button--secondary"
+                  onClick={() => openArchive('select')}
+                  disabled={isEnteringStudy}
+                >
+                  Select Case
+                </button>
+                <button
+                  ref={createButtonRef}
+                  type="button"
+                  className="auth-button auth-button--quiet investigator-home__quiet-action"
+                  onClick={() => openArchive('create')}
+                  disabled={isEnteringStudy}
+                >
+                  Create Case
+                </button>
+              </>
+            ) : (
+              <button
+                ref={createButtonRef}
+                type="button"
+                className="auth-button auth-button--primary investigator-home__primary-action"
+                onClick={() => openArchive('create')}
+                disabled={isEnteringStudy || isLoading}
+              >
+                <span>Create Case</span>
+                <small>Every fictional universe begins as a Case.</small>
+              </button>
+            )}
           </div>
         </div>
         <div className="investigator-home__side-window investigator-home__side-window--right" aria-hidden="true">
@@ -231,6 +230,14 @@ export function InvestigatorHome({ onEnterInvestigation }: InvestigatorHomeProps
           <span />
           <span />
         </div>
+        <button
+          type="button"
+          className="investigator-home__sign-out"
+          onClick={handleSignOut}
+          disabled={isSigningOut || isEnteringStudy}
+        >
+          {isSigningOut ? 'Signing Off...' : 'Sign Off'}
+        </button>
       </section>
 
       <div className="investigator-home__entry-transition" aria-hidden="true" />
