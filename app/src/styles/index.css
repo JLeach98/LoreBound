@@ -4884,14 +4884,33 @@ textarea {
 }
 
 .investigator-home {
+  --home-floor-offset: 3rem;
+  --home-floor-height: clamp(4.8rem, 12vh, 7rem);
+  --home-floor-contact-gap: clamp(0.672rem, 1.68vh, 0.98rem);
+  --home-scene-bottom-padding: clamp(1rem, 3vh, 1.8rem);
+  --home-door-junction-offset: calc(
+    var(--home-floor-offset) + var(--home-floor-height) - var(--home-scene-bottom-padding) -
+      var(--home-floor-contact-gap)
+  );
+
   position: relative;
   isolation: isolate;
   place-items: stretch;
-  overflow: hidden auto;
+  overflow: hidden;
   background:
-    radial-gradient(circle at 50% 22%, rgb(184 138 61 / 0.16), transparent 28rem),
+    radial-gradient(circle at 50% 28%, rgb(184 138 61 / 0.18), transparent 29rem),
+    linear-gradient(180deg, rgb(42 30 23 / 0.72), rgb(16 13 11 / 0.94) 76%, rgb(8 7 6)),
     linear-gradient(90deg, rgb(10 9 8 / 0.72), transparent 22%, transparent 78%, rgb(10 9 8 / 0.72)),
+    linear-gradient(180deg, rgb(16 13 11 / 0.72), rgb(16 13 11 / 0.86)),
+    url("/assets/home/wall/stucco-base-color.jpg"),
     var(--color-deep-graphite);
+  background-size:
+    auto,
+    auto,
+    auto,
+    auto,
+    28rem 28rem,
+    auto;
 }
 
 .investigator-home::before,
@@ -4911,22 +4930,33 @@ textarea {
 }
 
 .investigator-home::after {
-  inset: auto 0 0;
-  height: 28vh;
-  background: linear-gradient(180deg, transparent, rgb(0 0 0 / 0.52));
+  inset: auto 0 var(--home-floor-offset);
+  height: var(--home-floor-height);
+  background:
+    linear-gradient(180deg, transparent 0, rgb(31 18 12 / 0.62) 14%, rgb(13 9 7 / 0.92)),
+    repeating-linear-gradient(90deg, rgb(184 138 61 / 0.16) 0 1px, transparent 1px 5.8rem),
+    url("/assets/home/floor/wood-color.jpg"),
+    var(--color-walnut-dark);
+  background-size:
+    auto,
+    auto,
+    24rem 24rem,
+    auto;
 }
 
 .investigator-home__scene {
   display: grid;
   position: relative;
-  grid-template-columns: minmax(11rem, 1fr) minmax(22rem, 28rem) minmax(11rem, 1fr);
-  grid-template-rows: minmax(4.5rem, 0.18fr) auto auto minmax(5rem, 0.22fr);
-  align-items: center;
-  gap: clamp(0.65rem, 1.7vw, 1.35rem) clamp(1rem, 4vw, 4.25rem);
+  grid-template-columns: minmax(14rem, 1fr) minmax(24rem, 30rem) minmax(14rem, 1fr);
+  grid-template-rows: clamp(4.25rem, 8vh, 5.4rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 0 clamp(1.6rem, 4.6vw, 5rem);
   width: min(100%, 78rem);
-  min-height: calc(100dvh - clamp(1.6rem, 5vw, 3.4rem));
+  height: 100dvh;
+  min-height: 43rem;
   margin: 0 auto;
-  padding: clamp(0.8rem, 3vw, 2rem);
+  padding: clamp(0.8rem, 2.6vw, 1.8rem) clamp(0.8rem, 2.6vw, 1.8rem)
+    var(--home-scene-bottom-padding);
 }
 
 .investigator-home__brand {
@@ -4967,30 +4997,49 @@ textarea {
   grid-row: 2;
   justify-self: center;
   align-self: end;
-  width: min(100%, clamp(21rem, 31vw, 27rem), calc(62dvh - 2.3rem));
+  width: min(100%, clamp(22.5rem, 30vw, 29rem), calc((100dvh - 8rem) * 0.52));
+  margin-bottom: var(--home-door-junction-offset);
   padding: clamp(0.58rem, 1.35vw, 0.86rem);
   border: 1px solid rgb(184 138 61 / 0.36);
   border-radius: var(--radius-2xl);
   background:
+    linear-gradient(180deg, rgb(8 5 4 / 0.34), rgb(8 5 4 / 0.1)),
+    url("/assets/home/door/dark-wood-diffuse.jpg"),
     linear-gradient(90deg, rgb(18 13 11), rgb(92 58 38 / 0.9) 8%, rgb(31 20 15) 18%, rgb(92 58 38 / 0.75) 92%, rgb(17 13 11)),
     var(--color-walnut-dark);
+  background-size:
+    auto,
+    18rem 18rem,
+    auto,
+    auto;
   box-shadow:
-    0 44px 90px rgb(0 0 0 / 0.46),
-    inset 0 0 0 1px rgb(246 240 230 / 0.08);
+    0 18px 38px rgb(0 0 0 / 0.34),
+    0 0 0 1px rgb(12 8 6 / 0.42),
+    inset 0 1px 0 rgb(246 240 230 / 0.12),
+    inset 0 0 0 0.34rem rgb(0 0 0 / 0.16);
   perspective: 900px;
 }
 
 .investigator-home__door {
   position: relative;
   display: grid;
-  grid-template-rows: 46% 54%;
+  grid-template-rows: 49% 51%;
   aspect-ratio: 0.66;
   border: 1px solid rgb(246 240 230 / 0.1);
   border-radius: calc(var(--radius-xl) - 0.12rem);
   background:
     linear-gradient(90deg, rgb(0 0 0 / 0.18), transparent 18%, transparent 82%, rgb(0 0 0 / 0.25)),
+    linear-gradient(180deg, rgb(44 24 16 / 0.08), rgb(8 5 4 / 0.38)),
+    url("/assets/home/door/dark-wood-diffuse.jpg"),
     linear-gradient(180deg, #5f3b27, #372015 52%, #24140f);
+  background-size:
+    auto,
+    auto,
+    24rem 24rem,
+    auto;
   box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.34),
+    0 0 24px rgb(0 0 0 / 0.32),
     inset 0 0 0 0.34rem rgb(34 20 14 / 0.58),
     inset 0 0 0 0.47rem rgb(184 138 61 / 0.12);
   transform-origin: left center;
@@ -5019,8 +5068,15 @@ textarea {
   border: 1px solid rgb(127 90 37 / 0.68);
   border-radius: var(--radius-md);
   background:
+    linear-gradient(180deg, rgb(255 250 241 / 0.2), rgb(65 38 11 / 0.16)),
+    url("/assets/home/metals/brass/brushed-gold-base-color.jpg"),
     linear-gradient(180deg, #d4aa61, #a9742e 54%, #815620),
     var(--color-brass-gold);
+  background-size:
+    auto,
+    12rem 12rem,
+    auto,
+    auto;
   padding: clamp(0.75rem, 3vw, 1.05rem);
   color: #1f1712;
   font: inherit;
@@ -5131,77 +5187,29 @@ textarea {
   border: 1px solid rgb(246 240 230 / 0.24);
   border-radius: 999px;
   background:
+    linear-gradient(90deg, rgb(50 27 10 / 0.2), rgb(255 224 157 / 0.18), rgb(38 22 9 / 0.28)),
+    url("/assets/home/metals/bronze/bronze-base-color.jpg"),
     linear-gradient(90deg, #6b451f, #d0a354 48%, #7f5a25),
     var(--color-brass-gold);
+  background-size:
+    auto,
+    9rem 9rem,
+    auto,
+    auto;
   box-shadow:
     0 10px 22px rgb(0 0 0 / 0.36),
     0 0 0 0.52rem rgb(0 0 0 / 0.16);
 }
 
 .investigator-home__content {
-  grid-column: 2;
-  grid-row: 3;
-  align-self: start;
-  justify-self: center;
+  align-self: center;
   display: grid;
   justify-items: center;
-  width: min(100%, 18.5rem);
-  margin: 0;
+  width: min(100%, 16.25rem);
+  margin: auto;
   text-align: center;
 }
 
-.investigator-home__content h1 {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.investigator-home__lede {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.investigator-home__case-note {
-  display: grid;
-  gap: 0.12rem;
-  width: 100%;
-  margin-bottom: 0.48rem;
-  border: 1px solid rgb(184 138 61 / 0.24);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(180deg, rgb(246 240 230 / 0.07), rgb(0 0 0 / 0.14)),
-    rgb(16 15 15 / 0.58);
-  box-shadow:
-    0 16px 34px rgb(0 0 0 / 0.24),
-    inset 0 1px 0 rgb(246 240 230 / 0.08);
-  padding: 0.58rem 0.68rem;
-}
-
-.investigator-home__case-note span {
-  color: var(--color-brass-light);
-  font-size: 0.68rem;
-  font-weight: 900;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.investigator-home__case-note strong {
-  color: var(--color-warm-ivory);
-  font-family: var(--font-display);
-  font-size: 1.02rem;
-  line-height: 1.08;
-}
-
-.investigator-home__case-note p,
 .investigator-home__error {
   margin: 0;
   color: rgb(246 240 230 / 0.72);
@@ -5210,19 +5218,19 @@ textarea {
 }
 
 .investigator-home__error {
-  margin-top: 0.85rem;
+  margin-bottom: 0.58rem;
   color: #ffd3d9;
 }
 
 .investigator-home__actions {
   display: grid;
-  gap: 0.48rem;
-  width: min(100%, 15.5rem);
+  gap: clamp(0.42rem, 1.1vh, 0.62rem);
+  width: min(100%, 15.2rem);
   margin-top: 0;
 }
 
 .investigator-home__actions .auth-button {
-  min-height: 2.55rem;
+  min-height: clamp(2.5rem, 5.4vh, 3.25rem);
   justify-content: center;
   border-radius: var(--radius-md);
   padding: 0.58rem 0.74rem;
@@ -5253,7 +5261,7 @@ textarea {
 .investigator-home__sign-out {
   position: absolute;
   right: clamp(1rem, 3vw, 2rem);
-  bottom: clamp(1rem, 3vw, 2rem);
+  bottom: calc(clamp(1rem, 3vw, 2rem) + var(--home-floor-offset));
   z-index: 2;
   border: 1px solid rgb(184 138 61 / 0.22);
   border-radius: var(--radius-md);
@@ -5267,20 +5275,22 @@ textarea {
 
 .investigator-home__side-window {
   position: relative;
-  grid-row: 2 / span 2;
+  grid-row: 2;
+  align-self: start;
   justify-self: stretch;
   width: min(100%, 18rem);
-  height: min(calc(100dvh - 12rem), clamp(17rem, 25vw, 22rem));
-  max-height: calc(100dvh - 4rem);
+  height: min(clamp(17rem, 29vh, 21rem), calc((100dvh - 8rem) * 0.42));
+  max-height: calc(100dvh - 9rem);
+  margin-top: 0;
   justify-self: center;
   border: 1px solid rgb(184 138 61 / 0.2);
   border-radius: var(--radius-xl);
   background:
-    radial-gradient(circle at 72% 28%, rgb(184 138 61 / 0.16), transparent 5rem),
+    radial-gradient(circle at 72% 28%, rgb(184 138 61 / 0.1), transparent 5rem),
     linear-gradient(180deg, transparent 0 16%, rgb(184 138 61 / 0.08) 16% 17%, transparent 17% 31%, rgb(184 138 61 / 0.07) 31% 32%, transparent 32%),
     linear-gradient(90deg, transparent 0 22%, rgb(246 240 230 / 0.045) 22% 34%, transparent 34% 61%, rgb(246 240 230 / 0.035) 61% 76%, transparent 76%),
-    linear-gradient(135deg, rgb(246 240 230 / 0.12), rgb(16 18 20 / 0.82) 38%, rgb(246 240 230 / 0.04)),
-    rgb(9 10 11 / 0.78);
+    linear-gradient(135deg, rgb(246 240 230 / 0.08), rgb(12 12 13 / 0.9) 38%, rgb(246 240 230 / 0.03)),
+    rgb(9 10 11 / 0.9);
   box-shadow:
     inset 0 0 30px rgb(0 0 0 / 0.6),
     0 26px 52px rgb(0 0 0 / 0.28);
@@ -5333,10 +5343,10 @@ textarea {
 
 .investigator-home__plant {
   position: absolute;
-  left: clamp(4rem, 13vw, 11.5rem);
-  bottom: clamp(1.35rem, 4vw, 3.3rem);
-  width: clamp(6.8rem, 12vw, 10.5rem);
-  height: clamp(8.2rem, 16vw, 13rem);
+  left: clamp(1.2rem, 5.5vw, 4.8rem);
+  bottom: calc(clamp(1rem, 3vh, 1.8rem) + var(--home-floor-offset));
+  width: clamp(7.6rem, 12vw, 11rem);
+  height: clamp(9rem, 17vw, 13.5rem);
   pointer-events: none;
 }
 
@@ -5349,8 +5359,15 @@ textarea {
   border: 1px solid rgb(184 138 61 / 0.22);
   border-radius: 0 0 32% 32%;
   background:
+    linear-gradient(180deg, rgb(20 12 8 / 0.08), rgb(20 12 8 / 0.28)),
+    url("/assets/home/plant/textures/potted_plant_01_pot_diff_4k.png"),
     linear-gradient(180deg, rgb(92 58 38), rgb(47 29 20)),
     var(--color-walnut-dark);
+  background-size:
+    auto,
+    10rem 10rem,
+    auto,
+    auto;
   box-shadow:
     0 20px 34px rgb(0 0 0 / 0.28),
     inset 0 1px 0 rgb(246 240 230 / 0.08);
@@ -5364,7 +5381,12 @@ textarea {
   width: 0.42rem;
   height: 50%;
   border-radius: 999px;
-  background: linear-gradient(180deg, #74662e, #3a381f);
+  background:
+    linear-gradient(180deg, rgb(117 102 46 / 0.72), rgb(58 56 31 / 0.84)),
+    url("/assets/home/plant/textures/potted_plant_01_leaves_diff_4k.png");
+  background-size:
+    auto,
+    12rem 12rem;
   content: "";
   transform: translateX(-50%) rotate(12deg);
   transform-origin: bottom center;
@@ -5379,7 +5401,16 @@ textarea {
   border-radius: 100% 0 100% 0;
   background:
     linear-gradient(135deg, rgb(201 154 75 / 0.38), transparent 46%),
+    url("/assets/home/plant/textures/potted_plant_01_leaves_diff_4k.png"),
     #445137;
+  background-position:
+    0 0,
+    center,
+    0 0;
+  background-size:
+    auto,
+    12rem 12rem,
+    auto;
   box-shadow: 0 12px 18px rgb(0 0 0 / 0.22);
   transform-origin: 0 100%;
 }
@@ -5468,6 +5499,11 @@ textarea {
 }
 
 @media (max-width: 860px) {
+  .investigator-home {
+    --home-door-junction-offset: 0rem;
+    --home-floor-offset: 0rem;
+  }
+
   .investigator-home__scene {
     grid-template-columns: 1fr;
     align-content: start;
@@ -5491,9 +5527,7 @@ textarea {
   }
 
   .investigator-home__content {
-    grid-column: 1;
     width: min(100%, 17.5rem);
-    margin-top: 0.68rem;
   }
 }
 
@@ -5542,14 +5576,6 @@ textarea {
 
   .investigator-home__nameplate-photo {
     width: 2.8rem;
-  }
-
-  .investigator-home__content h1 {
-    font-size: 1.75rem;
-  }
-
-  .investigator-home__lede {
-    font-size: 0.82rem;
   }
 
   .investigator-home__actions .auth-button {
